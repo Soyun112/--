@@ -1,0 +1,7 @@
+{
+  "name": "kids-safe-route-frontend",
+  "private": true,
+  "scripts": {
+    "build": "node build-vercel.js"
+  }
+}

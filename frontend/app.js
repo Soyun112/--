@@ -1,6 +1,15 @@
-// AI 어린이 안심 길찾기 - 프론트엔드
-// 백엔드가 8000번 포트가 아닌 다른 포트에서 실행 중이면 아래 API_BASE만 바꾸면 된다.
-const API_BASE = window.API_BASE || "http://127.0.0.1:8000";
+// 로컬: http://127.0.0.1:8000 / Vercel: 같은 도메인 /api → Render 백엔드 프록시
+function resolveApiBase() {
+  if (window.API_BASE !== undefined && window.API_BASE !== null && window.API_BASE !== "") {
+    return window.API_BASE;
+  }
+  const host = window.location.hostname;
+  if (host === "localhost" || host === "127.0.0.1") {
+    return "http://127.0.0.1:8000";
+  }
+  return "";
+}
+const API_BASE = resolveApiBase();
 
 const CATEGORY_COLORS = {
   cctv: "#2f7dd1",

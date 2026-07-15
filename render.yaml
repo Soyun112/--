@@ -1,0 +1,15 @@
+# Render Blueprint — GitHub 연결 후 "New Blueprint" 또는 Web Service 수동 생성
+# 환경 변수(TMAP_APP_KEY 등)는 Render 대시보드에서 직접 추가 (Git에 넣지 않음)
+services:
+  - type: web
+    name: kids-safe-route-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: PUBLIC_DATA_MOCK
+        value: "true"

@@ -10,3 +10,5 @@ node_modules/
 dist/
 .DS_Store
 backend/app/data/uploads/
+server_8000_err.txt
+server_8000_out.txt
