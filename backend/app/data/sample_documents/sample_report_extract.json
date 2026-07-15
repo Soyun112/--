@@ -1,0 +1,27 @@
+{
+  "document_name": "OO구_2024_통학로_안전진단_보고서(SAMPLE).pdf",
+  "risk_points": [
+    {
+      "location_text": "OO초등학교 서측 골목 교차로",
+      "lat": 37.502,
+      "lng": 127.0399,
+      "risk_type": "무단횡단 위험",
+      "is_risk": true,
+      "report_date": "2024-06-30",
+      "recommendation": "횡단보도 신설 및 옐로카펫 설치, 등하교 시간대 교통지도 인력 배치",
+      "snippet": "이 구간은 보행자 신호등이 없어 아동의 무단횡단 사고가 반복적으로 발생하고 있음. 2024년 상반기 기준 인근 2건의 경미한 접촉사고가 보고됨.",
+      "page": 1
+    },
+    {
+      "location_text": "OO초등학교 동측 통학로",
+      "lat": 37.5012,
+      "lng": 127.041,
+      "risk_type": "CCTV 추가설치 완료",
+      "is_risk": false,
+      "report_date": "2024-06-30",
+      "recommendation": "없음 (조치 완료)",
+      "snippet": "2023년 안전진단 지적 이후 해당 구간에 CCTV 2대가 추가 설치 완료되었으며, 보호구역 표시 도로포장(옐로카펫)도 함께 시공되어 시야 확보 및 심리적 감속 효과가 확인됨.",
+      "page": 1
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "grid_key": "37.499_127.037",
+    "lat_center": 37.499,
+    "lng_center": 127.037,
+    "region_name": "OO동 1구역 (샘플)",
+    "risk_index": 32.0,
+    "출처": "safemap.go.kr_생활안전지도_범죄주의구간(SAMPLE, 행정동 근사치)"
+  },
+  {
+    "grid_key": "37.501_127.040",
+    "lat_center": 37.501,
+    "lng_center": 127.04,
+    "region_name": "OO동 2구역 (샘플)",
+    "risk_index": 48.0,
+    "출처": "safemap.go.kr_생활안전지도_범죄주의구간(SAMPLE, 행정동 근사치)"
+  },
+  {
+    "grid_key": "37.503_127.041",
+    "lat_center": 37.503,
+    "lng_center": 127.041,
+    "region_name": "OO동 3구역 (샘플)",
+    "risk_index": 20.0,
+    "출처": "safemap.go.kr_생활안전지도_범죄주의구간(SAMPLE, 행정동 근사치)"
+  }
+]
