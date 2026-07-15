@@ -61,7 +61,19 @@ const state = {
 };
 
 async function fetchJson(path, options) {
-  const res = await fetch(`${API_BASE}${path}`, options);
+  const url = `${API_BASE}${path}`;
+  let res;
+  try {
+    res = await fetch(url, options);
+  } catch (err) {
+    const onVercel = /\.vercel\.app$/i.test(window.location.hostname);
+    if (onVercel) {
+      throw new Error(
+        "백엔드에 연결할 수 없습니다. Vercel에 BACKEND_URL(Render URL)이 설정됐는지 확인해 주세요."
+      );
+    }
+    throw new Error("백엔드(127.0.0.1:8000)에 연결할 수 없습니다. backend 폴더에서 서버를 켜 주세요.");
+  }
   if (!res.ok) {
     const detail = await res.text();
     throw new Error(`${path} 요청 실패 (${res.status}): ${detail}`);

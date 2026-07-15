@@ -12,12 +12,16 @@ app = FastAPI(
     title="AI 어린이 안심 길찾기 서비스",
     description="공공데이터 + Upstage Document Parse/Information Extract + Solar LLM 기반 어린이 안심 통학로 추천 API",
     version="0.1.0",
+    docs_url="/docs" if settings.enable_openapi_docs else None,
+    redoc_url="/redoc" if settings.enable_openapi_docs else None,
+    openapi_url="/openapi.json" if settings.enable_openapi_docs else None,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=settings.cors_origins,
+    allow_origin_regex=r"https://([a-z0-9-]+\.)*vercel\.app",
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -70,7 +74,6 @@ def on_startup() -> None:
 @app.get("/api/config")
 def get_public_config() -> dict:
     return {
-        "tmap_app_key": settings.tmap_app_key or None,
         "demo_center": {"lat": settings.demo_center_lat, "lng": settings.demo_center_lng},
         "mock": {
             "routing": settings.routing_mock,

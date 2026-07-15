@@ -127,13 +127,6 @@
     </div>
   </div>
 
-  <script>
-    // 2번 모드: Vercel(HTTPS)에서 열어도 본인 PC 백엔드(127.0.0.1:8000)로 API 호출
-    // 나중에 Render 쓰면 이 블록 삭제하고 Vercel에 BACKEND_URL 설정하면 됨
-    if (location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
-      window.API_BASE = "http://127.0.0.1:8000";
-    }
-  </script>
   <script src="app.js"></script>
 </body>
 </html>

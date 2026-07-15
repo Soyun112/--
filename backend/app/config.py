@@ -44,6 +44,26 @@ class Settings:
     # 개별 키가 없으면 해당 구간만 MOCK으로 동작한다. MOCK_MODE로 전체를 강제할 수도 있다.
     force_mock: bool = _bool_env("MOCK_MODE", False)
 
+    # 보안: 기본값은 디버그 로그·문서 업로드·OpenAPI 문서 비활성
+    tmap_debug_logging: bool = _bool_env("TMAP_DEBUG_LOGGING", False)
+    document_ingest_enabled: bool = _bool_env("DOCUMENT_INGEST_ENABLED", False)
+    enable_openapi_docs: bool = _bool_env("ENABLE_OPENAPI_DOCS", False)
+
+    @property
+    def cors_origins(self) -> list[str]:
+        raw = os.getenv("CORS_ORIGINS", "").strip()
+        defaults = [
+            "http://127.0.0.1:5500",
+            "http://localhost:5500",
+            "http://127.0.0.1:8000",
+            "http://localhost:8000",
+            "null",
+        ]
+        if not raw:
+            return defaults
+        extra = [part.strip() for part in raw.split(",") if part.strip()]
+        return list(dict.fromkeys(defaults + extra))
+
     @property
     def routing_mock(self) -> bool:
         return self.force_mock or not self.tmap_app_key

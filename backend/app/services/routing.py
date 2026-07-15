@@ -260,7 +260,9 @@ def _steps_from_linestrings(features: list[dict[str, Any]]) -> list[NavigationSt
 
 
 def _log_tmap_response(data: dict[str, Any], *, label: str = "direct") -> None:
-    """Tmap 보행자 API 응답 전체를 백엔드 콘솔에 출력 (디버깅용)."""
+    """Tmap 보행자 API 응답 전체를 백엔드 콘솔에 출력 (TMAP_DEBUG_LOGGING=true 일 때만)."""
+    if not settings.tmap_debug_logging:
+        return
     print(f"\n[Tmap] ===== 보행자 API 응답 전체 ({label}) =====")
     try:
         payload = json.dumps(data, ensure_ascii=False, indent=2)
@@ -468,8 +470,9 @@ def _call_tmap(origin: Tuple[float, float], destination: Tuple[float, float], pa
     if pass_point is not None:
         body["passList"] = f"{pass_point[1]},{pass_point[0]}"
 
-    print(f"[Tmap] 보행자 API 요청 ({route_label}): POST {TMAP_PEDESTRIAN_URL}")
-    print(f"[Tmap] 요청 body: {json.dumps(body, ensure_ascii=False)}")
+    if settings.tmap_debug_logging:
+        print(f"[Tmap] 보행자 API 요청 ({route_label}): POST {TMAP_PEDESTRIAN_URL}")
+        print(f"[Tmap] 요청 body: {json.dumps(body, ensure_ascii=False)}")
 
     resp: requests.Response | None = None
     try:
