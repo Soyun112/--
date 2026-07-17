@@ -142,11 +142,26 @@ function routeDisplaySortKey(routeId) {
   return 3;
 }
 
-function candidatesForDisplay(routeData) {
-  const recommended = routeData.candidates.find((candidate) => candidate.id === routeData.recommended_id);
-  if (!recommended) return routeData.candidates;
+function isDuplicateRouteCard(first, second) {
+  return (
+    Math.abs(first.distance_m - second.distance_m) <= 10 &&
+    Math.abs(first.duration_s - second.duration_s) <= 20
+  );
+}
 
-  const alternatives = routeData.candidates
+function candidatesForDisplay(routeData) {
+  const uniqueCandidates = [...routeData.candidates]
+    .sort((first, second) => routeDisplaySortKey(first.id) - routeDisplaySortKey(second.id))
+    .filter(
+      (candidate, index, candidates) =>
+        !candidates.slice(0, index).some((existing) => isDuplicateRouteCard(existing, candidate))
+    );
+  const recommended =
+    uniqueCandidates.find((candidate) => candidate.id === routeData.recommended_id) ||
+    uniqueCandidates[0];
+  if (!recommended) return [];
+
+  const alternatives = uniqueCandidates
     .filter(
       (candidate) =>
         candidate.id !== recommended.id && candidate.safety_score < recommended.safety_score
@@ -160,7 +175,13 @@ function candidatesForDisplay(routeData) {
 }
 
 function activeRouteId(routeData) {
-  return state.selectedRouteId || routeData.recommended_id;
+  const visibleCandidates = candidatesForDisplay(routeData);
+  if (state.selectedRouteId && visibleCandidates.some((candidate) => candidate.id === state.selectedRouteId)) {
+    return state.selectedRouteId;
+  }
+  return visibleCandidates.some((candidate) => candidate.id === routeData.recommended_id)
+    ? routeData.recommended_id
+    : visibleCandidates[0]?.id;
 }
 
 function activeRoute(routeData) {
@@ -522,9 +543,10 @@ function startLiveClock() {
 
 function renderCandidates(data) {
   const el = document.getElementById("candidates-list");
-  el.innerHTML = candidatesForDisplay(data)
+  const displayCandidates = candidatesForDisplay(data);
+  el.innerHTML = displayCandidates
     .map((c) => {
-      const isRecommended = c.id === data.recommended_id;
+      const isRecommended = c.id === displayCandidates[0]?.id;
       const isActive = c.id === activeRouteId(data);
       const routeName = isRecommended ? "추천 경로" : routeDisplayName(c.id);
       const docsHtml = c.features.matched_documents
