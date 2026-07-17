@@ -1,13 +1,18 @@
-// 로컬/file://: http://127.0.0.1:8000 / Vercel: 같은 도메인 /api → Render 백엔드 프록시
+// 로컬/file://: http://127.0.0.1:8000 / 배포(Vercel 등): 같은 도메인 /api → 백엔드 프록시
 function resolveApiBase() {
   if (window.API_BASE !== undefined && window.API_BASE !== null && window.API_BASE !== "") {
     return window.API_BASE;
   }
   const host = window.location.hostname;
-  if (/\.vercel\.app$/i.test(host)) {
+  const isLocal =
+    !host ||
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    window.location.protocol === "file:";
+  // Vercel·커스텀 도메인 모두 상대경로(/api) 사용 → vercel.json rewrite로 Render 연결
+  if (!isLocal) {
     return "";
   }
-  // file:// 로 index.html을 열어도 로컬 백엔드로 연결
   return "http://127.0.0.1:8000";
 }
 const API_BASE = resolveApiBase();

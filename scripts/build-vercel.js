@@ -5,26 +5,30 @@
 const fs = require("fs");
 const path = require("path");
 
-const backend = (process.env.BACKEND_URL || "").replace(/\/$/, "");
+// Vercel Environment Variables의 BACKEND_URL 사용.
+// 비어 있으면 이 프로젝트 기본 Render URL로 폴백 (연결 누락 방지).
+const DEFAULT_BACKEND = "https://kids-safe-route-api.onrender.com";
+const backend = (process.env.BACKEND_URL || DEFAULT_BACKEND).replace(/\/$/, "");
 const root = path.join(__dirname, "..");
 
 const config = {
   version: 2,
   outputDirectory: "frontend",
-};
-
-if (backend) {
-  config.rewrites = [
+  rewrites: [
     {
       source: "/api/:path*",
       destination: `${backend}/api/:path*`,
     },
-  ];
-  console.log("[build-vercel] API 프록시 →", backend);
+  ],
+};
+
+if (process.env.BACKEND_URL) {
+  console.log("[build-vercel] API 프록시 →", backend, "(BACKEND_URL)");
 } else {
-  console.warn(
-    "[build-vercel] BACKEND_URL 없음 — Vercel에서 /api 호출이 실패합니다. " +
-      "Render 배포 후 Vercel Environment Variables에 BACKEND_URL을 추가하세요."
+  console.log(
+    "[build-vercel] API 프록시 →",
+    backend,
+    "(기본값 — Vercel에 BACKEND_URL을 넣으면 그 주소로 바뀝니다)"
   );
 }
 
