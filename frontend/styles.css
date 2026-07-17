@@ -143,7 +143,7 @@ body {
 
 .form-panel { grid-column: 1; grid-row: 1 / span 2; }
 .map-panel { grid-column: 2; grid-row: 1; }
-.results-panel { grid-column: 1; grid-row: 3; margin-top: -0; }
+.results-panel { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
 .ai-panel { grid-column: 2; grid-row: 2; }
 
 fieldset {
@@ -263,8 +263,8 @@ button {
 
 .candidate-card {
   border: 1px solid var(--border);
-  border-radius: 20px;
-  padding: 24px 28px 26px;
+  border-radius: 16px;
+  padding: 18px 20px 20px;
   position: relative;
   cursor: pointer;
   background: #fff;
@@ -275,35 +275,35 @@ button {
 }
 .candidate-card:focus-visible { outline: 3px solid rgba(47, 125, 209, 0.35); outline-offset: 2px; }
 .candidate-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.candidate-card h4 { margin: 0; color: #1f2937; font-size: 24px; line-height: 1.2; }
+.candidate-card h4 { margin: 0; color: #1f2937; font-size: 20px; line-height: 1.2; }
 .score-pill {
   flex: 0 0 auto;
-  font-size: 21px;
+  font-size: 17px;
   font-weight: 700;
-  padding: 7px 18px;
+  padding: 6px 13px;
   border-radius: 999px;
   color: white;
 }
 .candidate-meta { font-size: 12px; color: var(--muted); display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.candidate-summary { margin-top: 8px; font-size: 20px; line-height: 1.35; }
-.recommended-tag { font-size: 18px; color: var(--accent-green); font-weight: 700; margin-left: 12px; white-space: nowrap; }
+.candidate-summary { margin-top: 8px; font-size: 17px; line-height: 1.35; }
+.recommended-tag { font-size: 15px; color: var(--accent-green); font-weight: 700; margin-left: 9px; white-space: nowrap; }
 .candidate-time {
-  margin-top: 14px;
-  padding: 6px 16px;
+  margin-top: 12px;
+  padding: 5px 13px;
   border: 2px solid #b6d8ff;
   border-radius: 999px;
   color: var(--primary-dark);
   background: #f3f9ff;
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 700;
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.candidate-details { margin-top: 18px; }
+.candidate-details { margin-top: 14px; }
 .candidate-details summary {
   cursor: pointer;
   color: var(--primary-dark);
-  font-size: 19px;
+  font-size: 17px;
   font-weight: 600;
 }
 .detail-meta { margin-top: 8px; }
@@ -376,19 +376,19 @@ body.theme-dark .turn-step-landmark { color: #ffd79a; }
 
 .doc-evidence { margin-top: 8px; font-size: 12px; background: #fbf7ea; border-left: 3px solid var(--accent-orange); padding: 6px 8px; border-radius: 6px; }
 
-.star-rating { font-size: 26px; letter-spacing: 2px; margin: 14px 0 12px; line-height: 1; }
+.star-rating { font-size: 22px; letter-spacing: 1px; margin: 12px 0 10px; line-height: 1; }
 
-.stamps-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.stamps-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .stamp-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 19px;
+  font-size: 16px;
   font-weight: 500;
   background: #f6fffa;
   border: 2px solid var(--accent-green);
   color: #1f6b3f;
-  padding: 7px 14px;
+  padding: 5px 11px;
   border-radius: 999px;
   cursor: default;
 }
@@ -658,13 +658,13 @@ body.theme-dark .kid-card.arrived { background: linear-gradient(160deg, #3a3010,
 
 @media (max-width: 520px) {
   .candidate-card { border-radius: 16px; padding: 18px; }
-  .candidate-card h4 { font-size: 20px; }
+  .candidate-card h4 { font-size: 18px; }
   .recommended-tag { font-size: 14px; margin-left: 8px; }
-  .score-pill { font-size: 17px; padding: 6px 12px; }
-  .star-rating { font-size: 22px; margin: 12px 0 10px; }
-  .candidate-time, .candidate-summary { font-size: 16px; }
+  .score-pill { font-size: 16px; padding: 5px 10px; }
+  .star-rating { font-size: 20px; margin: 10px 0 8px; }
+  .candidate-time, .candidate-summary { font-size: 15px; }
   .candidate-time { padding: 6px 12px; }
-  .stamp-chip { font-size: 16px; padding: 6px 11px; }
+  .stamp-chip { font-size: 15px; padding: 5px 10px; }
   .candidate-details summary { font-size: 16px; }
   .kid-card-icon { font-size: 82px; width: 132px; height: 132px; }
   .kid-card-text { font-size: 28px; }
