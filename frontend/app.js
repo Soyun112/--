@@ -87,22 +87,6 @@ async function fetchJson(path, options) {
   return res.json();
 }
 
-function renderBadges(config) {
-  const el = document.getElementById("mock-badges");
-  const entries = [
-    ["길찾기(Tmap)", config.mock.routing],
-    ["공공데이터", config.mock.public_data],
-    ["Upstage", config.mock.upstage],
-  ];
-  el.innerHTML = entries
-    .map(([label, isMock]) => {
-      const cls = isMock ? "badge" : "badge live";
-      const tag = isMock ? "MOCK" : "LIVE";
-      return `<span class="${cls}">${label}: ${tag}</span>`;
-    })
-    .join("");
-}
-
 function fillDemoCoordinates() {
   const select = document.getElementById("demo-scenario-select");
   const scenario = DEMO_SCENARIOS[select.value] || DEMO_SCENARIOS.morning_school;
@@ -440,6 +424,13 @@ function etaMessageForDuration(durationS) {
   return `지금 출발하면 약 ${formatKoreanTime(arrival)} 도착`;
 }
 
+function routeTimeRange(durationS) {
+  if (!durationS || durationS <= 0) return "";
+  const departure = new Date();
+  const arrival = new Date(departure.getTime() + durationS * 1000);
+  return `${formatKoreanTime(departure)} 출발 → ${formatKoreanTime(arrival)} 도착`;
+}
+
 function updateEtaForSelectedRoute(routeData) {
   const selected = activeRoute(routeData);
   const eta = document.getElementById("time-eta");
@@ -503,7 +494,6 @@ function renderCandidates(data) {
         )
         .join("");
       const stars = "⭐".repeat(c.star_rating) + "☆".repeat(3 - c.star_rating);
-      const fc = facilityCounts(c.features);
       const stampsHtml = (c.stamps || [])
         .map(
           (s) =>
@@ -512,20 +502,15 @@ function renderCandidates(data) {
         .join("");
       return `
         <div class="candidate-card ${recommended ? "recommended selected" : ""}" data-route-id="${c.id}" role="button" tabindex="0" aria-pressed="${recommended}">
-          <h4>
-            <span>${routeName}${recommended ? '<span class="recommended-tag">★ 선택한 길</span>' : ""}</span>
+          <div class="candidate-heading">
+            <h4>${routeName}${recommended ? '<span class="recommended-tag">★ 선택한 길</span>' : ""}</h4>
             <span class="score-pill" style="background:${scoreColor(c.safety_score)}">${c.safety_score}점</span>
-          </h4>
+          </div>
           <div class="star-rating" title="안전 등급 ${c.star_rating}/3">${stars}</div>
-          <div class="candidate-meta">
+          ${recommended ? `<div class="candidate-time">${routeTimeRange(c.duration_s)}</div>` : ""}
+          <div class="candidate-meta candidate-summary">
             <span>거리: ${(c.distance_m / 1000).toFixed(2)}km</span>
             <span>예상 소요: ${Math.round(c.duration_s / 60)}분</span>
-            ${(() => {
-              const msg = c.id === activeRouteId(data) ? etaMessageForDuration(c.duration_s) : "";
-              return msg ? `<span class="eta-chip">${msg}</span>` : "";
-            })()}
-            <span>CCTV·보안등: ${fc.cctv}개 · ${fc.streetlight}개</span>
-            <span>안심벨·112: ${fc.safetyBell} · ${fc.emergency112}</span>
           </div>
           ${stampsHtml ? `<div class="stamps-row">${stampsHtml}</div>` : ""}
           <details class="candidate-details">
@@ -1173,10 +1158,8 @@ async function init() {
 
   try {
     state.config = await fetchJson("/api/config");
-    renderBadges(state.config);
   } catch (err) {
     console.warn("백엔드 설정을 불러오지 못했습니다. 백엔드가 실행 중인지 확인하세요.", err);
-    document.getElementById("mock-badges").innerHTML = '<span class="badge">백엔드 연결 안됨</span>';
     state.config = { demo_center: { lat: 37.5013, lng: 127.0396 } };
   }
 
