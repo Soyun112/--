@@ -1218,7 +1218,6 @@ function setTheme(theme) {
 }
 
 async function init() {
-  document.getElementById("fill-demo-btn").addEventListener("click", fillDemoCoordinates);
   document.getElementById("demo-scenario-select").addEventListener("change", fillDemoCoordinates);
   document.getElementById("swap-locations").addEventListener("click", swapLocations);
   document.getElementById("route-form").addEventListener("submit", handleSubmit);
