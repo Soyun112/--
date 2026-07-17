@@ -55,6 +55,14 @@ def _load_sample(filename: str) -> list[dict[str, Any]]:
         return json.load(f)
 
 
+def _load_local_dataset(filename: str) -> list[dict[str, Any]] | None:
+    """저장소에 포함한 지역별 공공데이터가 있으면 API/샘플보다 우선 사용한다."""
+    path = settings.data_dir / filename
+    if not path.exists():
+        return None
+    return _load_sample(filename)
+
+
 @lru_cache(maxsize=1)
 def get_gangnam_cctvs() -> list[dict[str, Any]]:
     """사용자가 제공한 강남구 CCTV CSV를 지도 마커용 좌표 목록으로 읽는다."""
@@ -134,6 +142,9 @@ def fetch_child_zones() -> tuple[list[dict[str, Any]], bool]:
 
 
 def fetch_accident_hotspots() -> tuple[list[dict[str, Any]], bool]:
+    local_data = _load_local_dataset("gangnam_accident_hotspots.json")
+    if local_data is not None:
+        return local_data, False
     if settings.public_data_mock:
         return _load_sample("sample_accident_hotspots.json"), True
 
@@ -153,6 +164,9 @@ def fetch_accident_hotspots() -> tuple[list[dict[str, Any]], bool]:
 
 def fetch_guardian_houses() -> tuple[list[dict[str, Any]], bool]:
     """아동안전지킴이집(편의점/약국 등 위험 시 대피 가능한 지정 안전장소)."""
+    local_data = _load_local_dataset("gangnam_guardian_houses.json")
+    if local_data is not None:
+        return local_data, False
     if settings.public_data_mock:
         return _load_sample("sample_guardian_houses.json"), True
 
@@ -175,6 +189,9 @@ def fetch_streetlights() -> tuple[list[dict[str, Any]], bool]:
 
 def fetch_speed_cameras() -> tuple[list[dict[str, Any]], bool]:
     """무인 교통단속카메라 — 스쿨존 주변 설치 시 차량 감속 유도 효과의 근사 지표로 사용."""
+    local_data = _load_local_dataset("gangnam_speed_cameras.json")
+    if local_data is not None:
+        return local_data, False
     if settings.public_data_mock:
         return _load_sample("sample_speed_cameras.json"), True
 
