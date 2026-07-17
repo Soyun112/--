@@ -135,6 +135,30 @@ function routeDisplayName(routeId) {
   return "안전 경로";
 }
 
+function routeDisplaySortKey(routeId) {
+  if (routeId.includes("direct")) return 0;
+  if (routeId.endsWith("-a") || routeId.includes("grid-a")) return 1;
+  if (routeId.endsWith("-b") || routeId.includes("grid-b")) return 2;
+  return 3;
+}
+
+function candidatesForDisplay(routeData) {
+  const recommended = routeData.candidates.find((candidate) => candidate.id === routeData.recommended_id);
+  if (!recommended) return routeData.candidates;
+
+  const alternatives = routeData.candidates
+    .filter(
+      (candidate) =>
+        candidate.id !== recommended.id && candidate.safety_score < recommended.safety_score
+    )
+    .sort(
+      (first, second) =>
+        second.safety_score - first.safety_score ||
+        routeDisplaySortKey(first.id) - routeDisplaySortKey(second.id)
+    );
+  return [recommended, ...alternatives];
+}
+
 function activeRouteId(routeData) {
   return state.selectedRouteId || routeData.recommended_id;
 }
@@ -498,10 +522,11 @@ function startLiveClock() {
 
 function renderCandidates(data) {
   const el = document.getElementById("candidates-list");
-  el.innerHTML = data.candidates
+  el.innerHTML = candidatesForDisplay(data)
     .map((c) => {
-      const recommended = c.id === activeRouteId(data);
-      const routeName = routeDisplayName(c.id);
+      const isRecommended = c.id === data.recommended_id;
+      const isActive = c.id === activeRouteId(data);
+      const routeName = isRecommended ? "추천 경로" : routeDisplayName(c.id);
       const docsHtml = c.features.matched_documents
         .map(
           (d) =>
@@ -516,13 +541,13 @@ function renderCandidates(data) {
         )
         .join("");
       return `
-        <div class="candidate-card ${recommended ? "recommended selected" : ""}" data-route-id="${c.id}" role="button" tabindex="0" aria-pressed="${recommended}">
+        <div class="candidate-card ${isRecommended ? "recommended" : ""} ${isActive ? "selected" : ""}" data-route-id="${c.id}" role="button" tabindex="0" aria-pressed="${isActive}">
           <h4>
-            <span>${routeName}${recommended ? '<span class="recommended-tag">★ 선택한 길</span>' : ""}</span>
+            <span>${routeName}${isRecommended ? '<span class="recommended-tag">★ 가장 안전한 길</span>' : ""}</span>
             <span class="score-pill" style="background:${scoreColor(c.safety_score)}">${c.safety_score}점</span>
           </h4>
           <div class="star-rating" title="안전 등급 ${c.star_rating}/3">${stars}</div>
-          ${recommended ? `<div class="candidate-time">${routeTimeRange(c.duration_s)}</div>` : ""}
+          ${isActive ? `<div class="candidate-time">${routeTimeRange(c.duration_s)}</div>` : ""}
           <div class="candidate-meta candidate-summary">
             <span>거리: ${(c.distance_m / 1000).toFixed(2)}km</span>
             <span>예상 소요: ${Math.round(c.duration_s / 60)}분</span>
