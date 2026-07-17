@@ -128,6 +128,22 @@ function scoreColor(score) {
   return "#d64545";
 }
 
+function scoreExplanation(candidate) {
+  const features = candidate.features;
+  const safetyFacilities =
+    (features.safety_facility_cctv_count || 0) +
+    (features.safety_facility_streetlight_count || 0) +
+    (features.safety_bell_count || 0) +
+    (features.emergency112_count || 0);
+  if (candidate.safety_score >= 70) {
+    return `안전시설 ${safetyFacilities}곳과 보호구역 정보를 반영해 안전한 길로 평가했어요.`;
+  }
+  if (features.accident_hotspot_count > 0 || features.doc_risk_count > 0) {
+    return `사고다발지역 또는 주의 구간이 있어, 다른 경로와 함께 비교해 보세요.`;
+  }
+  return `주변 안전시설과 도로 정보를 종합해 계산한 안전 점수예요.`;
+}
+
 function routeDisplayName(routeId) {
   if (routeId.includes("direct")) return "기본 경로";
   if (routeId.endsWith("-a") || routeId.includes("grid-a")) return "우회 경로 A";
@@ -577,6 +593,7 @@ function renderCandidates(data) {
           ${stampsHtml ? `<div class="stamps-row">${stampsHtml}</div>` : ""}
           <details class="candidate-details">
             <summary>안전 점수 자세히 보기</summary>
+            <p class="score-explanation">💬 ${scoreExplanation(c)}</p>
             <div class="candidate-meta detail-meta">
               <span>안심귀갓길 CCTV: ${c.features.safety_facility_cctv_count || 0}대</span>
               <span>안심귀갓길 보안등: ${c.features.safety_facility_streetlight_count || 0}개</span>

@@ -318,6 +318,29 @@ button {
   font-size: 12px;
   font-weight: 600;
 }
+.score-explanation {
+  position: relative;
+  margin: 12px 0 8px;
+  padding: 8px 10px;
+  border: 1px solid #b6d8ff;
+  border-radius: 8px;
+  background: #f3f9ff;
+  color: var(--primary-dark);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.score-explanation::before {
+  position: absolute;
+  top: -6px;
+  left: 16px;
+  width: 10px;
+  height: 10px;
+  border-top: 1px solid #b6d8ff;
+  border-left: 1px solid #b6d8ff;
+  background: #f3f9ff;
+  content: "";
+  transform: rotate(45deg);
+}
 .detail-meta { margin-top: 8px; }
 .turn-guide {
   display: none;
@@ -465,6 +488,8 @@ body.theme-dark .candidate-card.recommended,
 body.theme-dark .candidate-card.selected { background: rgba(89, 188, 130, 0.12); }
 body.theme-dark .candidate-card h4 { color: var(--text); }
 body.theme-dark .candidate-time { background: #1d3549; border-color: #365774; color: #b5ddff; }
+body.theme-dark .score-explanation { background: #1d3549; border-color: #365774; color: #b5ddff; }
+body.theme-dark .score-explanation::before { background: #1d3549; border-color: #365774; }
 body.theme-dark .route-keyword.score { background: #193126; border-color: #3f8a60; color: #9ce5b8; }
 body.theme-dark .turn-icon { background: #263b50; color: #a9d2fd; }
 body.theme-dark .turn-step.turn .turn-icon { background: #4a351d; color: #ffd293; }
