@@ -31,6 +31,20 @@ const CATEGORY_COLORS = {
   safetyStreetlight: "#f5b800",
 };
 
+const PUBLIC_DATA_LEGEND = [
+  ["safety-cctv", "safetyCctv", "안심귀갓길 CCTV"],
+  ["safety-streetlight", "safetyStreetlight", "안심귀갓길 보안등"],
+  ["safety-bell", "safetyBell", "안심벨"],
+  ["emergency-112", "emergency112", "112신고"],
+  ["cctv", "cctv", "어린이보호구역/CCTV"],
+  ["hotspot", "hotspot", "교통사고다발지역"],
+  ["guardian", "guardian", "아동안전지킴이집"],
+  ["streetlight", "streetlight", "보안등/가로등"],
+  ["speed-camera", "speedCamera", "무인단속카메라"],
+  ["doc-risk", "docRisk", "문서 기반 위험지적"],
+  ["doc-safety", "docSafety", "문서 기반 안전조치완료"],
+];
+
 const DEMO_SCENARIOS = {
   morning_school: {
     origin: "대림역삼아파트",
@@ -61,6 +75,7 @@ const state = {
   leafletLayers: null,
   mode: "parent",
   selectedRouteId: null,
+  activePublicLayer: null,
   kidCardSteps: [],
   kidCardIndex: 0,
   clockTimer: null,
@@ -655,19 +670,30 @@ function stepKidCard(delta) {
 function renderLegend() {
   const el = document.getElementById("legend");
   el.innerHTML = `
-    <span><span class="dot" style="background:${CATEGORY_COLORS.safetyCctv}"></span>안심귀갓길 CCTV</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.safetyStreetlight}"></span>안심귀갓길 보안등</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.safetyBell}"></span>안심벨</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.emergency112}"></span>112신고</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.cctv}"></span>어린이보호구역/CCTV</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.hotspot}"></span>교통사고다발지역</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.guardian}"></span>아동안전지킴이집</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.streetlight}"></span>보안등/가로등</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.speedCamera}"></span>무인단속카메라</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.docRisk}"></span>문서 기반 위험지적</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.docSafety}"></span>문서 기반 안전조치완료</span>
-    <span>실선(굵음) = 추천 경로, 점선 = 다른 후보</span>
+    <span class="legend-instruction">공공데이터 항목에 커서를 올리면 지도에 표시됩니다.</span>
+    ${PUBLIC_DATA_LEGEND.map(
+      ([layer, color, label]) =>
+        `<button type="button" class="legend-item" data-public-layer="${layer}"><span class="dot" style="background:${CATEGORY_COLORS[color]}"></span>${label}</button>`
+    ).join("")}
+    <span class="legend-route-help">실선(굵음) = 추천 경로, 점선 = 다른 후보</span>
   `;
+  el.querySelectorAll("[data-public-layer]").forEach((item) => {
+    const showLayer = () => setActivePublicLayer(item.dataset.publicLayer);
+    item.addEventListener("pointerenter", showLayer);
+    item.addEventListener("focus", showLayer);
+    item.addEventListener("pointerleave", () => setActivePublicLayer(null));
+    item.addEventListener("blur", () => setActivePublicLayer(null));
+  });
+}
+
+function setActivePublicLayer(layer) {
+  if (state.activePublicLayer === layer) return;
+  state.activePublicLayer = layer;
+  if (state.lastResult && state.publicData) renderMap(state.lastResult, state.publicData, false);
+}
+
+function shouldShowPublicLayer(layer) {
+  return state.activePublicLayer === layer;
 }
 
 // ---------- SVG 스키매틱 지도 (Leaflet/OSM 로드 실패 시 오프라인 폴백) ----------
@@ -790,43 +816,43 @@ function renderSvgMap(routeData, publicData) {
     svg.appendChild(node);
   }
 
-  childZones.forEach((z) =>
-    drawMarker(z, CATEGORY_COLORS.cctv, "circle", `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`)
-  );
-  cctvs.forEach((cctv) =>
-    drawMarker(cctv, CATEGORY_COLORS.cctv, "circle", `CCTV ${cctv.camera_count}대 · ${cctv.purpose || "안전"}`)
-  );
-  sf.cctv.forEach((f) =>
+  if (shouldShowPublicLayer("cctv")) {
+    childZones.forEach((z) =>
+      drawMarker(z, CATEGORY_COLORS.cctv, "circle", `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`)
+    );
+    cctvs.forEach((cctv) =>
+      drawMarker(cctv, CATEGORY_COLORS.cctv, "circle", `CCTV ${cctv.camera_count}대 · ${cctv.purpose || "안전"}`)
+    );
+  }
+  if (shouldShowPublicLayer("safety-cctv")) sf.cctv.forEach((f) =>
     drawMarker(f, CATEGORY_COLORS.safetyCctv, "circle", `📹 ${f.label} ${f.install_count > 1 ? `x${f.install_count}` : ""} · ${f.dong || f.district || ""}`)
   );
-  sf.streetlight.forEach((f) =>
+  if (shouldShowPublicLayer("safety-streetlight")) sf.streetlight.forEach((f) =>
     drawMarker(f, CATEGORY_COLORS.safetyStreetlight, "circle", `💡 ${f.label} · ${f.dong || f.district || ""}`)
   );
-  sf.safetyBell.forEach((f) =>
+  if (shouldShowPublicLayer("safety-bell")) sf.safetyBell.forEach((f) =>
     drawMarker(f, CATEGORY_COLORS.safetyBell, "diamond", `🔔 ${f.label} · ${f.dong || f.district || ""}`)
   );
-  sf.emergency112.forEach((f) =>
+  if (shouldShowPublicLayer("emergency-112")) sf.emergency112.forEach((f) =>
     drawMarker(f, CATEGORY_COLORS.emergency112, "triangle", `🚨 ${f.label} · ${f.dong || f.district || ""}`)
   );
-  accidentHotspots.forEach((h) =>
+  if (shouldShowPublicLayer("hotspot")) accidentHotspots.forEach((h) =>
     drawMarker(h, CATEGORY_COLORS.hotspot, "triangle", `${h.name || "사고다발지역"} (${h.occurrence_count}건)`)
   );
-  guardianHouses.forEach((g) =>
+  if (shouldShowPublicLayer("guardian")) guardianHouses.forEach((g) =>
     drawMarker(g, CATEGORY_COLORS.guardian, "diamond", `🏪 ${g.name || "아동안전지킴이집"}`)
   );
-  streetlights.forEach((s) =>
+  if (shouldShowPublicLayer("streetlight")) streetlights.forEach((s) =>
     drawMarker(s, CATEGORY_COLORS.streetlight, "circle", `💡 ${s.light_type || "보안등"}`)
   );
-  speedCameras.forEach((c) =>
+  if (shouldShowPublicLayer("speed-camera")) speedCameras.forEach((c) =>
     drawMarker(c, CATEGORY_COLORS.speedCamera, "square", `📷 ${c.name || "무인단속카메라"} (제한 ${c.speed_limit_kmh || "?"}km/h)`)
   );
-  documentPoints.forEach((d) =>
-    drawMarker(
-      d,
-      d.is_risk ? CATEGORY_COLORS.docRisk : CATEGORY_COLORS.docSafety,
-      "square",
-      `[문서근거] ${d.risk_type} (${d.source_doc})`
-    )
+  if (shouldShowPublicLayer("doc-risk")) documentPoints.filter((d) => d.is_risk).forEach((d) =>
+    drawMarker(d, CATEGORY_COLORS.docRisk, "square", `[문서근거] ${d.risk_type} (${d.source_doc})`)
+  );
+  if (shouldShowPublicLayer("doc-safety")) documentPoints.filter((d) => !d.is_risk).forEach((d) =>
+    drawMarker(d, CATEGORY_COLORS.docSafety, "square", `[문서근거] ${d.risk_type} (${d.source_doc})`)
   );
 
   // 출발/목적지 라벨
@@ -936,42 +962,43 @@ function renderLeafletRoutes(routeData, publicData) {
       .addTo(state.leafletLayers);
   }
 
-  childZones.forEach((z) =>
-    circleMarker(z, CATEGORY_COLORS.cctv, `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`)
-  );
-  cctvs.forEach((cctv) =>
-    circleMarker(cctv, CATEGORY_COLORS.cctv, `CCTV ${cctv.camera_count}대 · ${cctv.purpose || "안전"} · ${cctv.address || ""}`)
-  );
-  sf.cctv.forEach((f) =>
+  if (shouldShowPublicLayer("cctv")) {
+    childZones.forEach((z) =>
+      circleMarker(z, CATEGORY_COLORS.cctv, `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`)
+    );
+    cctvs.forEach((cctv) =>
+      circleMarker(cctv, CATEGORY_COLORS.cctv, `CCTV ${cctv.camera_count}대 · ${cctv.purpose || "안전"} · ${cctv.address || ""}`)
+    );
+  }
+  if (shouldShowPublicLayer("safety-cctv")) sf.cctv.forEach((f) =>
     circleMarker(f, CATEGORY_COLORS.safetyCctv, `📹 ${f.label} ${f.install_count > 1 ? `x${f.install_count}` : ""} · ${f.dong || f.district || ""}`)
   );
-  sf.streetlight.forEach((f) =>
+  if (shouldShowPublicLayer("safety-streetlight")) sf.streetlight.forEach((f) =>
     circleMarker(f, CATEGORY_COLORS.safetyStreetlight, `💡 ${f.label} · ${f.dong || f.district || ""}`)
   );
-  sf.safetyBell.forEach((f) =>
+  if (shouldShowPublicLayer("safety-bell")) sf.safetyBell.forEach((f) =>
     emojiMarker(f, "🔔", `안심벨 · ${f.dong || f.district || ""}`)
   );
-  sf.emergency112.forEach((f) =>
+  if (shouldShowPublicLayer("emergency-112")) sf.emergency112.forEach((f) =>
     emojiMarker(f, "🚨", `112신고 · ${f.dong || f.district || ""}`)
   );
-  accidentHotspots.forEach((h) =>
+  if (shouldShowPublicLayer("hotspot")) accidentHotspots.forEach((h) =>
     circleMarker(h, CATEGORY_COLORS.hotspot, `${h.name || "사고다발지역"} (${h.occurrence_count}건)`)
   );
-  guardianHouses.forEach((g) =>
+  if (shouldShowPublicLayer("guardian")) guardianHouses.forEach((g) =>
     circleMarker(g, CATEGORY_COLORS.guardian, `🏪 ${g.name || "아동안전지킴이집"}`)
   );
-  streetlights.forEach((s) =>
+  if (shouldShowPublicLayer("streetlight")) streetlights.forEach((s) =>
     circleMarker(s, CATEGORY_COLORS.streetlight, `💡 ${s.light_type || "보안등"}`)
   );
-  speedCameras.forEach((c) =>
+  if (shouldShowPublicLayer("speed-camera")) speedCameras.forEach((c) =>
     circleMarker(c, CATEGORY_COLORS.speedCamera, `📷 ${c.name || "무인단속카메라"} (제한 ${c.speed_limit_kmh || "?"}km/h)`)
   );
-  documentPoints.forEach((d) =>
-    circleMarker(
-      d,
-      d.is_risk ? CATEGORY_COLORS.docRisk : CATEGORY_COLORS.docSafety,
-      `[문서근거] ${d.risk_type} (${d.source_doc})`
-    )
+  if (shouldShowPublicLayer("doc-risk")) documentPoints.filter((d) => d.is_risk).forEach((d) =>
+    circleMarker(d, CATEGORY_COLORS.docRisk, `[문서근거] ${d.risk_type} (${d.source_doc})`)
+  );
+  if (shouldShowPublicLayer("doc-safety")) documentPoints.filter((d) => !d.is_risk).forEach((d) =>
+    circleMarker(d, CATEGORY_COLORS.docSafety, `[문서근거] ${d.risk_type} (${d.source_doc})`)
   );
 
   function labelMarker(wp, emoji, label) {
@@ -992,7 +1019,7 @@ function renderLeafletRoutes(routeData, publicData) {
   }
 }
 
-function renderMap(routeData, publicData) {
+function renderMap(routeData, publicData, refreshLegend = true) {
   if (state.leafletReady) {
     renderLeafletRoutes(routeData, publicData);
   } else {
@@ -1000,7 +1027,7 @@ function renderMap(routeData, publicData) {
     document.getElementById("leaflet-map").style.display = "none";
     renderSvgMap(routeData, publicData);
   }
-  renderLegend();
+  if (refreshLegend) renderLegend();
 }
 
 function selectRoute(routeId) {

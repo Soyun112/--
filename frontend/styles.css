@@ -254,8 +254,23 @@ button {
   border: 1px solid var(--border);
 }
 
-.legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: var(--muted); }
-.legend span { display: inline-flex; align-items: center; gap: 4px; }
+.legend { display: flex; gap: 8px 14px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.legend-instruction, .legend-route-help { flex-basis: 100%; }
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 2px 5px;
+  min-height: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.legend-item:hover, .legend-item:focus-visible { border-color: var(--primary); background: #eef7ff; color: var(--primary-dark); outline: none; }
 .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 
 .candidates-list { display: flex; flex-direction: column; gap: 10px; }
