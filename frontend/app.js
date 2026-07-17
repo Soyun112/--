@@ -502,10 +502,10 @@ function renderCandidates(data) {
         .join("");
       return `
         <div class="candidate-card ${recommended ? "recommended selected" : ""}" data-route-id="${c.id}" role="button" tabindex="0" aria-pressed="${recommended}">
-          <div class="candidate-heading">
-            <h4>${routeName}${recommended ? '<span class="recommended-tag">★ 선택한 길</span>' : ""}</h4>
+          <h4>
+            <span>${routeName}${recommended ? '<span class="recommended-tag">★ 선택한 길</span>' : ""}</span>
             <span class="score-pill" style="background:${scoreColor(c.safety_score)}">${c.safety_score}점</span>
-          </div>
+          </h4>
           <div class="star-rating" title="안전 등급 ${c.star_rating}/3">${stars}</div>
           ${recommended ? `<div class="candidate-time">${routeTimeRange(c.duration_s)}</div>` : ""}
           <div class="candidate-meta candidate-summary">

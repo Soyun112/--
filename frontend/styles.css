@@ -263,47 +263,43 @@ button {
 
 .candidate-card {
   border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 18px 20px 20px;
+  border-radius: 10px;
+  padding: 12px 14px;
   position: relative;
   cursor: pointer;
   background: #fff;
 }
 .candidate-card.recommended {
-  border: 2px solid var(--accent-green);
-  background: #f7fcf8;
+  border-color: var(--accent-green);
+  background: rgba(46, 158, 91, 0.06);
 }
 .candidate-card:focus-visible { outline: 3px solid rgba(47, 125, 209, 0.35); outline-offset: 2px; }
-.candidate-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.candidate-card h4 { margin: 0; color: #1f2937; font-size: 20px; line-height: 1.2; }
+.candidate-card h4 { margin: 0 0 6px; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
 .score-pill {
-  flex: 0 0 auto;
-  font-size: 17px;
+  font-size: 13px;
   font-weight: 700;
-  padding: 6px 13px;
+  padding: 2px 10px;
   border-radius: 999px;
   color: white;
 }
 .candidate-meta { font-size: 12px; color: var(--muted); display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.candidate-summary { margin-top: 8px; font-size: 17px; line-height: 1.35; }
-.recommended-tag { font-size: 15px; color: var(--accent-green); font-weight: 700; margin-left: 9px; white-space: nowrap; }
+.candidate-summary { margin-top: 8px; }
 .candidate-time {
-  margin-top: 12px;
-  padding: 5px 13px;
-  border: 2px solid #b6d8ff;
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid #b6d8ff;
   border-radius: 999px;
   color: var(--primary-dark);
   background: #f3f9ff;
-  font-size: 17px;
+  font-size: 12px;
   font-weight: 700;
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
-.candidate-details { margin-top: 14px; }
+.recommended-tag { font-size: 11px; color: var(--accent-green); font-weight: 700; margin-left: 8px; }
+.candidate-details { margin-top: 10px; }
 .candidate-details summary {
   cursor: pointer;
   color: var(--primary-dark);
-  font-size: 17px;
+  font-size: 12px;
   font-weight: 600;
 }
 .detail-meta { margin-top: 8px; }
@@ -376,19 +372,18 @@ body.theme-dark .turn-step-landmark { color: #ffd79a; }
 
 .doc-evidence { margin-top: 8px; font-size: 12px; background: #fbf7ea; border-left: 3px solid var(--accent-orange); padding: 6px 8px; border-radius: 6px; }
 
-.star-rating { font-size: 22px; letter-spacing: 1px; margin: 12px 0 10px; line-height: 1; }
+.star-rating { font-size: 15px; letter-spacing: 2px; margin: 2px 0 8px; }
 
-.stamps-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.stamps-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .stamp-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 16px;
-  font-weight: 500;
-  background: #f6fffa;
-  border: 2px solid var(--accent-green);
+  font-size: 12px;
+  background: #eef7f0;
+  border: 1px solid var(--accent-green);
   color: #1f6b3f;
-  padding: 5px 11px;
+  padding: 3px 9px;
   border-radius: 999px;
   cursor: default;
 }
@@ -657,15 +652,6 @@ body.theme-dark .kid-card-nav-btn { background: #202b36; border-color: var(--bor
 body.theme-dark .kid-card.arrived { background: linear-gradient(160deg, #3a3010, #3a1a22); border-color: var(--accent-orange); }
 
 @media (max-width: 520px) {
-  .candidate-card { border-radius: 16px; padding: 18px; }
-  .candidate-card h4 { font-size: 18px; }
-  .recommended-tag { font-size: 14px; margin-left: 8px; }
-  .score-pill { font-size: 16px; padding: 5px 10px; }
-  .star-rating { font-size: 20px; margin: 10px 0 8px; }
-  .candidate-time, .candidate-summary { font-size: 15px; }
-  .candidate-time { padding: 6px 12px; }
-  .stamp-chip { font-size: 15px; padding: 5px 10px; }
-  .candidate-details summary { font-size: 16px; }
   .kid-card-icon { font-size: 82px; width: 132px; height: 132px; }
   .kid-card-text { font-size: 28px; }
   .kid-card-friendly { font-size: 20px; }
