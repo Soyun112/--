@@ -17,7 +17,7 @@ import requests
 
 from ..config import settings
 from ..console_safe import console_safe as _console_safe, safe_print
-from .geo import route_length_m
+from .geo import min_distance_to_route, route_length_m
 from .landmarks import landmark_for
 
 TMAP_PEDESTRIAN_URL = "https://apis.openapi.sk.com/tmap/routes/pedestrian"
@@ -576,6 +576,38 @@ def _finalize_candidates(candidates: List[RouteCandidateRaw]) -> List[RouteCandi
     return finalized
 
 
+def _candidate_sort_key(candidate: RouteCandidateRaw) -> tuple[int, str]:
+    """기본 경로를 먼저, 우회 경로는 식별자 끝 문자 순으로 정렬한다."""
+    if "direct" in candidate.id:
+        return (0, "")
+    return (1, candidate.id)
+
+
+def _routes_are_equivalent(first: RouteCandidateRaw, second: RouteCandidateRaw, tolerance_m: float = 25.0) -> bool:
+    """좌표 밀도가 달라도 같은 길을 따라간 경로인지 확인한다."""
+    if not first.coordinates or not second.coordinates:
+        return False
+    distance_delta = abs(first.distance_m - second.distance_m)
+    if distance_delta > max(20.0, max(first.distance_m, second.distance_m) * 0.03):
+        return False
+
+    first_to_second = max(min_distance_to_route(second.coordinates, point) for point in first.coordinates)
+    second_to_first = max(min_distance_to_route(first.coordinates, point) for point in second.coordinates)
+    return first_to_second <= tolerance_m and second_to_first <= tolerance_m
+
+
+def _deduplicate_candidates(candidates: List[RouteCandidateRaw]) -> List[RouteCandidateRaw]:
+    """동일 경로는 기본 경로를 우선 보존하고 우회 경로는 A, B 순으로 반환한다."""
+    unique: List[RouteCandidateRaw] = []
+    for candidate in sorted(candidates, key=_candidate_sort_key):
+        matching = next((existing for existing in unique if _routes_are_equivalent(existing, candidate)), None)
+        if matching:
+            print(f"[경로] 중복 후보 제외: {candidate.id} (기존 {matching.id}와 동일)")
+            continue
+        unique.append(candidate)
+    return unique
+
+
 def get_route_candidates(origin: Tuple[float, float], destination: Tuple[float, float], force_mock: bool | None = None) -> List[RouteCandidateRaw]:
     use_mock = settings.routing_mock if force_mock is None else force_mock
     mode_label = "MOCK" if use_mock else "LIVE (Tmap)"
@@ -583,7 +615,7 @@ def get_route_candidates(origin: Tuple[float, float], destination: Tuple[float, 
     print(f"[경로] 출발 (lat,lng)=({origin[0]:.6f}, {origin[1]:.6f}) → 도착 ({destination[0]:.6f}, {destination[1]:.6f})")
     if use_mock:
         print("[경로] MOCK 모드 — 합성 턴바이턴 안내 사용 (route-direct 등)")
-        return _finalize_candidates(_mock_candidates(origin, destination))
+        return _finalize_candidates(_deduplicate_candidates(_mock_candidates(origin, destination)))
 
     candidates: List[RouteCandidateRaw] = []
 
@@ -600,6 +632,6 @@ def get_route_candidates(origin: Tuple[float, float], destination: Tuple[float, 
 
     if not candidates:
         print("[경로] Tmap 전부 실패 → MOCK 폴백 (route-direct 직선 등)")
-        return _finalize_candidates(_mock_candidates(origin, destination))
+        return _finalize_candidates(_deduplicate_candidates(_mock_candidates(origin, destination)))
     print(f"[경로] === Tmap 성공: 후보 {len(candidates)}개 ===")
-    return _finalize_candidates(candidates)
+    return _finalize_candidates(_deduplicate_candidates(candidates))
