@@ -584,10 +584,15 @@ def _candidate_sort_key(candidate: RouteCandidateRaw) -> tuple[int, str]:
 
 
 def _routes_are_equivalent(first: RouteCandidateRaw, second: RouteCandidateRaw, tolerance_m: float = 25.0) -> bool:
-    """좌표 밀도가 달라도 같은 길을 따라간 경로인지 확인한다."""
+    """Tmap 응답 수치 또는 좌표 밀도를 비교해 같은 길인지 확인한다."""
     if not first.coordinates or not second.coordinates:
         return False
     distance_delta = abs(first.distance_m - second.distance_m)
+    duration_delta = abs(first.duration_s - second.duration_s)
+    # Tmap이 서로 다른 좌표 샘플링으로 같은 경로를 반환하는 경우가 있어,
+    # 거리·시간이 사실상 같으면 지도 좌표의 미세한 차이와 무관하게 중복으로 처리한다.
+    if distance_delta <= 10.0 and duration_delta <= 20.0:
+        return True
     if distance_delta > max(20.0, max(first.distance_m, second.distance_m) * 0.03):
         return False
 

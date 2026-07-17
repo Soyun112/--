@@ -41,7 +41,7 @@ def test_duplicate_detour_keeps_only_base_route_and_orders_alternatives():
     duplicate_detour = RouteCandidateRaw(
         id="route-via-a",
         label="우회 경로 A",
-        coordinates=shared_coordinates,
+        coordinates=[ORIGIN, (37.5010, 127.0370), DESTINATION],
         distance_m=600,
         duration_s=540,
         source="TEST",
