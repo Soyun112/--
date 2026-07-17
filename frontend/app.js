@@ -734,7 +734,7 @@ function stepKidCard(delta) {
 function renderLegend() {
   const el = document.getElementById("legend");
   el.innerHTML = `
-    <span class="legend-instruction">공공데이터 항목에 커서를 올리면 지도에 표시됩니다.</span>
+    <span class="legend-instruction">공공데이터 항목에 커서를 올리면 해당 위치가 지도에 표시됩니다.</span>
     ${PUBLIC_DATA_LEGEND.map(
       ([layer, color, label]) =>
         `<button type="button" class="legend-item" data-public-layer="${layer}"><span class="dot" style="background:${CATEGORY_COLORS[color]}"></span>${label}</button>`
@@ -802,20 +802,33 @@ function pointsNearRecommendedRoute(points, routeData, radiusM = 140) {
   );
 }
 
+function pointsForMapLayer(points, routeData, layer) {
+  return layer && shouldShowPublicLayer(layer)
+    ? points
+    : pointsNearRecommendedRoute(points, routeData);
+}
+
 function renderSvgMap(routeData, publicData) {
   const svg = document.getElementById("svg-map");
   const size = 600;
   const padding = 40;
   svg.innerHTML = "";
 
-  const childZones = pointsNearRecommendedRoute(publicData.child_zones || [], routeData);
-  const accidentHotspots = pointsNearRecommendedRoute(publicData.accident_hotspots || [], routeData);
-  const guardianHouses = pointsNearRecommendedRoute(publicData.guardian_houses || [], routeData);
-  const streetlights = pointsNearRecommendedRoute(publicData.streetlights || [], routeData);
-  const speedCameras = pointsNearRecommendedRoute(publicData.speed_cameras || [], routeData);
-  const cctvs = pointsNearRecommendedRoute(publicData.cctvs || [], routeData);
-  const sf = safetyFacilitiesNearRoute(publicData, routeData);
-  const documentPoints = pointsNearRecommendedRoute(publicData.doc_risk_points || [], routeData);
+  const childZones = pointsForMapLayer(publicData.child_zones || [], routeData, "cctv");
+  const accidentHotspots = pointsForMapLayer(publicData.accident_hotspots || [], routeData, "hotspot");
+  const guardianHouses = pointsForMapLayer(publicData.guardian_houses || [], routeData, "guardian");
+  const streetlights = pointsForMapLayer(publicData.streetlights || [], routeData, "streetlight");
+  const speedCameras = pointsForMapLayer(publicData.speed_cameras || [], routeData, "speed-camera");
+  const cctvs = pointsForMapLayer(publicData.cctvs || [], routeData, "cctv");
+  const allSafetyFacilities = publicData.safety_facilities || [];
+  const sf = {
+    cctv: pointsForMapLayer(allSafetyFacilities.filter((p) => p.facility_type === "cctv"), routeData, "safety-cctv"),
+    streetlight: pointsForMapLayer(allSafetyFacilities.filter((p) => p.facility_type === "streetlight"), routeData, "safety-streetlight"),
+    safetyBell: pointsForMapLayer(allSafetyFacilities.filter((p) => p.facility_type === "safety_bell"), routeData, "safety-bell"),
+    emergency112: pointsForMapLayer(allSafetyFacilities.filter((p) => p.facility_type === "emergency112"), routeData, "emergency-112"),
+  };
+  sf.all = [...sf.cctv, ...sf.streetlight, ...sf.safetyBell, ...sf.emergency112];
+  const documentPoints = pointsForMapLayer(publicData.doc_risk_points || [], routeData, state.activePublicLayer);
   const allPoints = [];
   routeData.candidates.forEach((c) => c.coordinates.forEach((pt) => allPoints.push(pt)));
   [childZones, accidentHotspots, guardianHouses, streetlights, speedCameras, cctvs, sf.all, documentPoints]
@@ -978,14 +991,20 @@ function renderLeafletRoutes(routeData, publicData) {
   const L = window.L;
   state.leafletLayers.clearLayers();
   const bounds = [];
-  const childZones = pointsNearRecommendedRoute(publicData.child_zones || [], routeData);
-  const accidentHotspots = pointsNearRecommendedRoute(publicData.accident_hotspots || [], routeData);
-  const guardianHouses = pointsNearRecommendedRoute(publicData.guardian_houses || [], routeData);
-  const streetlights = pointsNearRecommendedRoute(publicData.streetlights || [], routeData);
-  const speedCameras = pointsNearRecommendedRoute(publicData.speed_cameras || [], routeData);
-  const cctvs = pointsNearRecommendedRoute(publicData.cctvs || [], routeData);
-  const sf = safetyFacilitiesNearRoute(publicData, routeData);
-  const documentPoints = pointsNearRecommendedRoute(publicData.doc_risk_points || [], routeData);
+  const childZones = pointsForMapLayer(publicData.child_zones || [], routeData, "cctv");
+  const accidentHotspots = pointsForMapLayer(publicData.accident_hotspots || [], routeData, "hotspot");
+  const guardianHouses = pointsForMapLayer(publicData.guardian_houses || [], routeData, "guardian");
+  const streetlights = pointsForMapLayer(publicData.streetlights || [], routeData, "streetlight");
+  const speedCameras = pointsForMapLayer(publicData.speed_cameras || [], routeData, "speed-camera");
+  const cctvs = pointsForMapLayer(publicData.cctvs || [], routeData, "cctv");
+  const allSafetyFacilities = publicData.safety_facilities || [];
+  const sf = {
+    cctv: pointsForMapLayer(allSafetyFacilities.filter((p) => p.facility_type === "cctv"), routeData, "safety-cctv"),
+    streetlight: pointsForMapLayer(allSafetyFacilities.filter((p) => p.facility_type === "streetlight"), routeData, "safety-streetlight"),
+    safetyBell: pointsForMapLayer(allSafetyFacilities.filter((p) => p.facility_type === "safety_bell"), routeData, "safety-bell"),
+    emergency112: pointsForMapLayer(allSafetyFacilities.filter((p) => p.facility_type === "emergency112"), routeData, "emergency-112"),
+  };
+  const documentPoints = pointsForMapLayer(publicData.doc_risk_points || [], routeData, state.activePublicLayer);
 
   routeData.candidates.forEach((c) => {
     const recommended = c.id === activeRouteId(routeData);
