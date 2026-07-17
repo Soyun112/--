@@ -569,7 +569,7 @@ function renderCandidates(data) {
             <span class="score-pill" style="background:${scoreColor(c.safety_score)}">${c.safety_score}점</span>
           </h4>
           <div class="star-rating" title="안전 등급 ${c.star_rating}/3">${stars}</div>
-          ${isActive ? `<div class="candidate-time">${routeTimeRange(c.duration_s)}</div>` : ""}
+          ${isRecommended ? `<div class="candidate-time">${routeTimeRange(c.duration_s)}</div>` : ""}
           <div class="candidate-meta candidate-summary">
             <span>거리: ${(c.distance_m / 1000).toFixed(2)}km</span>
             <span>예상 소요: ${Math.round(c.duration_s / 60)}분</span>

@@ -284,7 +284,8 @@ button {
   cursor: pointer;
   background: #fff;
 }
-.candidate-card.recommended {
+.candidate-card.recommended,
+.candidate-card.selected {
   border-color: var(--accent-green);
   background: rgba(46, 158, 91, 0.06);
 }
@@ -460,7 +461,8 @@ body.theme-dark .parent-report-card { background: #1a2838; border-color: #365774
 body.theme-dark .time-banner { background: linear-gradient(90deg, #2a2410, #1a2838); border-color: #4a6080; color: #edf3f8; }
 body.theme-dark .eta-chip { background: #1d3549; border-color: #365774; color: #b5ddff; }
 body.theme-dark .candidate-card { background: #18212b; }
-body.theme-dark .candidate-card.recommended { background: rgba(89, 188, 130, 0.12); }
+body.theme-dark .candidate-card.recommended,
+body.theme-dark .candidate-card.selected { background: rgba(89, 188, 130, 0.12); }
 body.theme-dark .candidate-card h4 { color: var(--text); }
 body.theme-dark .candidate-time { background: #1d3549; border-color: #365774; color: #b5ddff; }
 body.theme-dark .route-keyword.score { background: #193126; border-color: #3f8a60; color: #9ce5b8; }
