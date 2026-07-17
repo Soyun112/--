@@ -8,28 +8,36 @@
 
 ```
 kids/
-  PROJECT_PLAN.md        기획서 (루브릭 대응)
+  .env.example            API 키 입력 템플릿 (복사 후 .env 로 이름 변경)
+  run.bat                 Windows: 더블클릭으로 서버+화면 실행
+  PROJECT_PLAN.md         기획서 (루브릭 대응)
   backend/                FastAPI 백엔드 (경로/데이터/안전점수/Upstage 연동)
   frontend/               정적 웹 프론트엔드 (지도/마커/AI 설명 패널)
-  docs/                   아키텍처, 발표자료 개요, 루브릭 매핑
+  docs/                   아키텍처, API 키 목록, 발표자료 개요
 ```
 
-## 빠른 시작 (백엔드)
+## 빠른 시작 (Windows — 권장)
+
+1. `.env.example` 을 복사해 이름을 **`.env`** 로 바꿉니다. (`example`만 지우면 됨)
+2. `.env` 를 열어 **[API 키]** 칸만 채웁니다. (비워 두면 MOCK으로 동작)
+3. **`run.bat`** 을 더블클릭합니다. → 가상환경/패키지 준비 후 서버 실행 + 브라우저 오픈
+
+종료: `run.bat` 으로 열린 검은 창을 닫으면 됩니다.
+
+API 키·엔드포인트 목록은 [`docs/API_KEYS.md`](docs/API_KEYS.md) 참고.
+
+## 빠른 시작 (수동 / macOS·Linux)
 
 ```bash
+cp .env.example .env   # 키 입력 (없어도 MOCK 동작)
 cd backend
 python -m venv .venv
-. .venv/bin/activate       # Windows PowerShell: .venv\Scripts\Activate.ps1
+source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-cp ../.env.example ../.env  # 실제 키가 있으면 채워 넣기 (없어도 MOCK 데이터로 동작)
 uvicorn app.main:app --reload --port 8000
 ```
 
-API 키(`TMAP_APP_KEY`, `DATA_GO_KR_SERVICE_KEY`, `UPSTAGE_API_KEY`)가 `.env`에 없으면 서비스는 자동으로 **MOCK 모드**로 동작하며, `backend/app/data/`의 샘플 데이터로 전체 파이프라인(경로 생성 → 안전점수 → AI 리포트)을 오프라인으로 시연할 수 있습니다.
-
-## 빠른 시작 (프론트엔드)
-
-백엔드가 8000번 포트에서 실행 중이면 `frontend/index.html`을 브라우저로 바로 열면 됩니다(별도 빌드 불필요). 지도는 Leaflet + OpenStreetMap 타일로 렌더링되며(API 키/도메인 등록 불필요), 오프라인 등으로 타일 로드가 실패하면 좌표를 정규화한 SVG 스키매틱 지도로 자동 대체됩니다. `TMAP_APP_KEY`는 지도 표시가 아니라 백엔드의 실제 보행자 경로 계산(도로 폴리라인 생성)에만 사용됩니다.
+브라우저에서 `frontend/index.html`을 엽니다. 지도는 Leaflet + OpenStreetMap(키 불필요)입니다.
 
 ## 핵심 API
 

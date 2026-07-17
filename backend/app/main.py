@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -7,6 +9,13 @@ from . import db
 from .config import settings
 from .routers import documents, route
 from .services import public_data
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 app = FastAPI(
     title="AI 어린이 안심 길찾기 서비스",

@@ -15,6 +15,7 @@ from ..config import settings
 from ..models import DocMatch, SafetyFeatures
 from . import public_data
 from .geo import buffer_match, min_distance_to_route, resample_route, route_length_m
+from ..console_safe import safe_print
 from .routing import RouteCandidateRaw
 from .safety_facilities import get_safety_facilities
 from .time_context import apply_time_weights, is_nighttime, scoring_context_label
@@ -247,17 +248,17 @@ def score_candidates(raw_candidates: List[RouteCandidateRaw], is_night: bool | N
 
     # 경로별 시설 개수·안전점수를 콘솔에 출력 (데모·디버깅용)
     buf = settings.safety_facility_buffer_m
-    mode_tag = "🌙 밤" if is_night else "☀️ 낮"
-    print(f"\n=== {period} ({mode_tag}) · 안심귀갓길 시설물 기반 안전점수 (경로 주변 {buf:.0f}m) ===")
+    mode_tag = "밤" if is_night else "낮"
+    safe_print(f"\n=== {period} ({mode_tag}) - 안심귀갓길 시설물 기반 안전점수 (경로 주변 {buf:.0f}m) ===")
     for s in scored:
         f = s.features
         tag = "★추천" if s.is_recommended else "  "
-        print(
+        safe_print(
             f"{tag} [{s.raw.id}] 안전점수 {s.safety_score}점 | "
             f"CCTV {f.safety_facility_cctv_count} · 보안등 {f.safety_facility_streetlight_count} · "
             f"안심벨 {f.safety_bell_count} · 112 {f.emergency112_count} | "
             f"거리 {f.distance_km:.2f}km"
         )
-    print("=" * 60 + "\n")
+    safe_print("=" * 60 + "\n")
 
     return scored

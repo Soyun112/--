@@ -25,6 +25,7 @@ from ..models import (
     Waypoint,
 )
 from ..services import gamification, geocoding, public_data, solar, weather
+from ..console_safe import safe_print
 from ..services.routing import ensure_navigation_steps_for_coords, get_route_candidates
 from ..services.safety_facilities import get_safety_facilities
 from ..services.scoring import score_candidates
@@ -133,8 +134,8 @@ def compute_route(req: RouteRequest) -> RouteResponse:
     dest_xy = (destination.lat, destination.lng)
 
     routing_mock = settings.routing_mock if req.mock is None else req.mock
-    print(
-        f"\n[API /route] 요청 — {origin.name or origin.lat} → {destination.name or destination.lat} "
+    safe_print(
+        f"\n[API /route] 요청 - {origin.name or origin.lat} -> {destination.name or destination.lat} "
         f"(mock={routing_mock})"
     )
 
@@ -144,11 +145,11 @@ def compute_route(req: RouteRequest) -> RouteResponse:
 
     for s in scored:
         n = len(s.raw.navigation_steps)
-        print(f"[API /route] 후보 {s.raw.id}: navigation_steps {n}개 (source={s.raw.source})")
+        safe_print(f"[API /route] 후보 {s.raw.id}: navigation_steps {n}개 (source={s.raw.source})")
         if n == 0 and s.raw.source == "TMAP_PEDESTRIAN_API":
-            print(
+            safe_print(
                 f"[API /route] 경고: {s.raw.id} Tmap 좌표는 {len(s.raw.coordinates)}개인데 "
-                "상세 안내 0개 — 백엔드를 --reload로 재시작했는지 확인하세요"
+                "상세 안내 0개 - 백엔드를 --reload로 재시작했는지 확인하세요"
             )
 
     candidates: list[RouteCandidate] = []
@@ -156,9 +157,9 @@ def compute_route(req: RouteRequest) -> RouteResponse:
         raw_steps = s.raw.navigation_steps
         if not raw_steps and len(s.raw.coordinates) >= 2:
             raw_steps = ensure_navigation_steps_for_coords(s.raw.coordinates)
-            print(
+            safe_print(
                 f"[API /route] {s.raw.id}: navigation_steps 비어 있음 "
-                f"→ 좌표 기반 합성 {len(raw_steps)}단계"
+                f"-> 좌표 기반 합성 {len(raw_steps)}단계"
             )
 
         candidates.append(

@@ -1,4 +1,8 @@
+# 비밀키 — .env.example 만 Git에 올리고, .env 는 로컬에만 둡니다
 .env
+.env.local
+.env.*.local
+
 __pycache__/
 *.pyc
 .venv/

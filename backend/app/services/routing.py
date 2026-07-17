@@ -16,6 +16,7 @@ from typing import Any, List, Tuple
 import requests
 
 from ..config import settings
+from ..console_safe import console_safe as _console_safe, safe_print
 from .geo import route_length_m
 from .landmarks import landmark_for
 
@@ -393,28 +394,20 @@ def _ensure_navigation_steps(candidate: RouteCandidateRaw) -> RouteCandidateRaw:
     return candidate
 
 
-def _console_safe(text: str) -> str:
-    """Windows cp949 콘솔에서도 print가 깨지지 않게 ASCII로 대체."""
-    import sys
-
-    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
-    return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
-
-
 def _log_navigation_steps(candidate: RouteCandidateRaw) -> None:
     """Tmap/MOCK 상세 안내 수신 여부를 콘솔에 출력."""
     steps = candidate.navigation_steps
-    print(f"\n=== Tmap/경로 상세 안내 [{candidate.id}] source={candidate.source} · {len(steps)}단계 ===")
+    safe_print(f"\n=== Tmap/경로 상세 안내 [{candidate.id}] source={candidate.source} · {len(steps)}단계 ===")
     if not steps:
-        print("  (안내 없음)")
+        safe_print("  (안내 없음)")
     else:
         for i, s in enumerate(steps, start=1):
             tt = s.turn_type if s.turn_type is not None else "-"
             dist = f"{s.distance_m:.0f}m" if s.distance_m else "-"
             lm = f" · landmark={s.landmark}" if s.landmark else ""
             line = f"  {i:2d}. turnType={tt} · {dist} · {s.description}{lm}"
-            print(_console_safe(line))
-    print("=" * 56)
+            safe_print(line)
+    safe_print("=" * 56)
 
 
 def _mock_candidates(origin: Tuple[float, float], destination: Tuple[float, float]) -> List[RouteCandidateRaw]:
