@@ -123,17 +123,19 @@ function scoreExplanation(candidate) {
 }
 
 function routeDisplayName(routeId) {
-  if (routeId.includes("direct")) return "기본 경로";
+  if (routeId.includes("pedestrian-main") || routeId.includes("direct")) return "보행자 큰길 경로";
+  if (routeId.includes("pedestrian-alt")) return "보행자 대안 경로";
   if (routeId.endsWith("-a") || routeId.includes("grid-a")) return "우회 경로 A";
   if (routeId.endsWith("-b") || routeId.includes("grid-b")) return "우회 경로 B";
-  return "안전 경로";
+  return "보행자 경로";
 }
 
 function routeDisplaySortKey(routeId) {
-  if (routeId.includes("direct")) return 0;
-  if (routeId.endsWith("-a") || routeId.includes("grid-a")) return 1;
-  if (routeId.endsWith("-b") || routeId.includes("grid-b")) return 2;
-  return 3;
+  if (routeId.includes("pedestrian-main") || routeId.includes("direct")) return 0;
+  if (routeId.includes("pedestrian-alt")) return 1;
+  if (routeId.endsWith("-a") || routeId.includes("grid-a")) return 2;
+  if (routeId.endsWith("-b") || routeId.includes("grid-b")) return 3;
+  return 4;
 }
 
 function isDuplicateRouteCard(first, second) {

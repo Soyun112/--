@@ -1,9 +1,9 @@
 """Tmap 보행자 길찾기 연동.
 
-Tmap 보행자 API(POST https://apis.openapi.sk.com/tmap/routes/pedestrian?version=1)는
-alternatives 파라미터가 없으므로, 경유지(passList)를 살짝 다르게 주어 2~3개의 경로
-후보를 확보한다(PROJECT_PLAN.md 3장 방침). appKey가 없으면 동일한 인터페이스로
-동작하는 MOCK 경로 생성기를 사용해 오프라인 데모가 가능하도록 한다.
+Tmap 보행자 API(POST https://apis.openapi.sk.com/tmap/routes/pedestrian?version=1)로
+보행자 전용 도로망만 따라 경로를 계산한다. searchOption 4(대로 우선)를 기본으로
+사용하며, 대안으로 searchOption 10(최단 보행)을 한 번 더 조회한다.
+appKey가 없으면 MOCK 경로 생성기로 오프라인 데모가 가능하다.
 """
 from __future__ import annotations
 
@@ -109,7 +109,13 @@ _MOCK_CHUNK_PATTERN = [58.0, 84.0, 43.0, 71.0, 96.0, 52.0]
 # Tmap turnType 중 좌/우회전 계열(랜드마크를 붙일 결정 지점).
 _LANDMARK_TURN_TYPES = {12, 13, 14, 16, 17}
 
-# Tmap 보행자 turnType → 짧은 방향 라벨 (description이 비어 있을 때 합성용).
+# Tmap 보행자 searchOption 라벨 (API 문서 기준)
+_PEDESTRIAN_SEARCH_LABELS: dict[str, str] = {
+    "0": "보행자 추천 경로",
+    "4": "보행자 큰길 경로 (대로 우선)",
+    "10": "보행자 최단 경로",
+    "30": "보행자 최단 경로 (계단 제외)",
+}
 _TURN_TYPE_LABELS: dict[int, str] = {
     11: "직진",
     12: "좌회전",
@@ -383,8 +389,14 @@ def _clean_route_polyline(coords: List[Tuple[float, float]]) -> List[Tuple[float
 
 def _coords_from_tmap_features(
     features: list[dict[str, Any]],
+    *,
+    clean_polyline: bool = False,
 ) -> tuple[List[Tuple[float, float]], float, float, float]:
-    """LineString을 index 순으로 이어 붙여 (좌표, 거리, 시간, 대로거리)를 만든다."""
+    """LineString을 index 순으로 이어 붙여 (좌표, 거리, 시간, 대로거리)를 만든다.
+
+    Tmap 보행자 API 좌표는 기본적으로 그대로 사용한다(clean_polyline=False).
+    후처리(_clean_route_polyline)는 MOCK·데모 경로에만 선택적으로 적용한다.
+    """
     coords: List[Tuple[float, float]] = []
     main_road_distance_m = 0.0
     total_distance = 0.0
@@ -409,12 +421,13 @@ def _coords_from_tmap_features(
         for lng, lat in geometry.get("coordinates", []):
             _append_unique_coord(coords, float(lat), float(lng))
 
-    coords = _clean_route_polyline(coords)
-    cleaned_len = route_length_m(coords)
-    if cleaned_len > 0 and total_distance > cleaned_len * 1.05:
-        # 왕복 골목을 접은 뒤에는 거리·시간도 표시용으로 맞춰 준다.
-        total_time = total_time * (cleaned_len / total_distance)
-        total_distance = cleaned_len
+    if clean_polyline:
+        coords = _clean_route_polyline(coords)
+        cleaned_len = route_length_m(coords)
+        if cleaned_len > 0 and total_distance > cleaned_len * 1.05:
+            # 왕복 골목을 접은 뒤에는 거리·시간도 표시용으로 맞춰 준다.
+            total_time = total_time * (cleaned_len / total_distance)
+            total_distance = cleaned_len
     return coords, total_distance, total_time, main_road_distance_m
 
 
@@ -747,8 +760,12 @@ def _call_tmap(
     destination: Tuple[float, float],
     pass_point: Tuple[float, float] | None = None,
     pass_list: str | None = None,
+    *,
+    search_option: str | None = None,
+    route_suffix: str = "direct",
 ) -> RouteCandidateRaw | None:
-    route_label = "direct" if pass_point is None and not pass_list else "via"
+    route_label = route_suffix if pass_point is None and not pass_list else f"{route_suffix}-via"
+    option = search_option or settings.tmap_pedestrian_search_option
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
@@ -763,8 +780,9 @@ def _call_tmap(
         "endName": "목적지",
         "reqCoordType": "WGS84GEO",
         "resCoordType": "WGS84GEO",
-        "searchOption": "0",
+        "searchOption": option,
         "sort": "index",
+        "speed": 4,
     }
     if pass_list:
         body["passList"] = pass_list
@@ -844,8 +862,8 @@ def _call_tmap(
         total_time = total_distance / WALK_SPEED_MPS
 
     return RouteCandidateRaw(
-        id=f"route-tmap-{'direct' if pass_point is None else 'via'}",
-        label="Tmap 추천 경로" if pass_point is None else "Tmap 대안 경로 (경유지 포함)",
+        id=f"route-tmap-pedestrian-{route_suffix}",
+        label=_PEDESTRIAN_SEARCH_LABELS.get(option, "보행자 경로"),
         coordinates=coords,
         distance_m=total_distance,
         duration_s=total_time,
@@ -866,8 +884,8 @@ def _finalize_candidates(candidates: List[RouteCandidateRaw]) -> List[RouteCandi
 
 
 def _candidate_sort_key(candidate: RouteCandidateRaw) -> tuple[int, str]:
-    """기본 경로를 먼저, 우회 경로는 식별자 끝 문자 순으로 정렬한다."""
-    if "direct" in candidate.id:
+    """기본 보행 경로를 먼저, 대안 경로는 식별자 순으로 정렬한다."""
+    if "main" in candidate.id or "direct" in candidate.id:
         return (0, "")
     return (1, candidate.id)
 
@@ -995,19 +1013,29 @@ def get_route_candidates(
 
     candidates: List[RouteCandidateRaw] = []
 
-    direct = _call_tmap(origin, destination)
+    # Tmap 보행자 API만 사용: 대로 우선(4) + 최단 보행(10). 임의 경유지 우회는 제거.
+    primary_option = settings.tmap_pedestrian_search_option
+    direct = _call_tmap(
+        origin,
+        destination,
+        search_option=primary_option,
+        route_suffix="main",
+    )
     if direct:
         candidates.append(direct)
 
-    for offset in (120.0, -120.0):
-        via_point = _perpendicular_offset(origin, destination, offset)
-        via = _call_tmap(origin, destination, pass_point=via_point)
-        if via:
-            via.id = f"{via.id}-{'a' if offset > 0 else 'b'}"
-            candidates.append(via)
+    alt_option = "10" if primary_option != "10" else "0"
+    alt = _call_tmap(
+        origin,
+        destination,
+        search_option=alt_option,
+        route_suffix="alt",
+    )
+    if alt:
+        candidates.append(alt)
 
     if not candidates:
-        print("[경로] Tmap 전부 실패 → MOCK 폴백 (route-direct 직선 등)")
+        print("[경로] Tmap 보행자 API 전부 실패 → MOCK 폴백 (데모용 직선 경로)")
         return _finalize_candidates(_deduplicate_candidates(_mock_candidates(origin, destination)))
-    print(f"[경로] === Tmap 성공: 후보 {len(candidates)}개 ===")
+    print(f"[경로] === Tmap 보행자 API 성공: 후보 {len(candidates)}개 (searchOption {primary_option}/{alt_option}) ===")
     return _finalize_candidates(_deduplicate_candidates(candidates))

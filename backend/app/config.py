@@ -47,6 +47,8 @@ class Settings:
 
     # 보안: 기본값은 디버그 로그·문서 업로드·OpenAPI 문서 비활성
     tmap_debug_logging: bool = _bool_env("TMAP_DEBUG_LOGGING", False)
+    # Tmap 보행자 searchOption: 0=추천, 4=추천+대로우선, 10=최단, 30=최단+계단제외
+    tmap_pedestrian_search_option: str = os.getenv("TMAP_PEDESTRIAN_SEARCH_OPTION", "4").strip() or "4"
     document_ingest_enabled: bool = _bool_env("DOCUMENT_INGEST_ENABLED", False)
     enable_openapi_docs: bool = _bool_env("ENABLE_OPENAPI_DOCS", False)
 
