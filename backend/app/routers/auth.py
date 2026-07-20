@@ -103,8 +103,9 @@ def google_callback(
         return RedirectResponse(f"{fallback}?auth_error={err_code}", status_code=302)
     except requests.HTTPError:
         return RedirectResponse(f"{fallback}?auth_error=google_token_failed", status_code=302)
-    except Exception:
-        return RedirectResponse(f"{fallback}?auth_error=login_failed", status_code=302)
+    except Exception as exc:
+        err_code = quote(f"login_failed:{type(exc).__name__}", safe="")
+        return RedirectResponse(f"{fallback}?auth_error={err_code}", status_code=302)
 
 
 @router.get("/me", response_model=UserProfile)

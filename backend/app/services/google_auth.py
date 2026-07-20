@@ -1,6 +1,8 @@
 """Google OAuth 2.0 (Authorization Code) 연동."""
 from __future__ import annotations
 
+import base64
+import json
 from typing import Any
 from urllib.parse import urlencode
 
@@ -19,6 +21,24 @@ class GoogleTokenExchangeError(Exception):
         self.google_error = google_error
         self.description = description
         super().__init__(google_error)
+
+
+def _decode_id_token_payload(id_token: str) -> dict[str, Any]:
+    parts = id_token.split(".")
+    if len(parts) != 3:
+        return {}
+    padding = "=" * (-len(parts[1]) % 4)
+    payload = base64.urlsafe_b64decode(parts[1] + padding)
+    return json.loads(payload)
+
+
+def _profile_from_claims(claims: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "sub": str(claims.get("sub", "")),
+        "email": str(claims.get("email") or ""),
+        "name": str(claims.get("name") or claims.get("email") or "사용자"),
+        "picture": claims.get("picture"),
+    }
 
 
 def build_authorization_url(*, state: str) -> str:
@@ -57,19 +77,31 @@ def exchange_code_for_user(code: str) -> dict[str, Any]:
         raise GoogleTokenExchangeError(err, desc)
     tokens = token_resp.json()
     access_token = tokens.get("access_token")
-    if not access_token:
-        raise RuntimeError("Google token response missing access_token")
+    id_token = tokens.get("id_token")
 
-    user_resp = requests.get(
-        GOOGLE_USERINFO_URL,
-        headers={"Authorization": f"Bearer {access_token}"},
-        timeout=15,
-    )
-    user_resp.raise_for_status()
-    profile = user_resp.json()
-    return {
-        "sub": str(profile.get("sub", "")),
-        "email": profile.get("email", ""),
-        "name": profile.get("name") or profile.get("email") or "사용자",
-        "picture": profile.get("picture"),
-    }
+    profile: dict[str, Any] = {}
+    if id_token:
+        try:
+            profile = _profile_from_claims(_decode_id_token_payload(id_token))
+        except Exception:
+            profile = {}
+
+    if not profile.get("sub") and access_token:
+        user_resp = requests.get(
+            GOOGLE_USERINFO_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+        if not user_resp.ok:
+            try:
+                body = user_resp.json()
+                err = str(body.get("error") or "userinfo_failed")
+            except Exception:
+                err = "userinfo_failed"
+            raise GoogleTokenExchangeError(err, str(user_resp.status_code))
+        profile = _profile_from_claims(user_resp.json())
+
+    if not profile.get("sub"):
+        raise RuntimeError("google_profile_missing_sub")
+
+    return profile

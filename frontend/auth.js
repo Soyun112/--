@@ -137,6 +137,10 @@ function authErrorMessage(code) {
       `Google 토큰 교환 실패 (${googleErr}). Render·Google Console 설정을 확인하세요.`
     );
   }
+  if (code.startsWith("login_failed:")) {
+    const reason = code.split(":").slice(1).join(":");
+    return `로그인 처리 중 오류 (${reason}). Render 로그·Google Console 설정을 확인하세요.`;
+  }
   const messages = {
     google_token_failed:
       "Google Client Secret 또는 Redirect URI가 맞지 않습니다. Render·Google Console 설정을 확인하세요.",
