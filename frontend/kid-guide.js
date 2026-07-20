@@ -86,7 +86,14 @@ function stepCard(delta) {
 }
 
 async function loadGuide() {
-  const shareId = new URLSearchParams(window.location.search).get("id");
+  const params = new URLSearchParams(window.location.search);
+  const inline = decodeKidGuidePayload(params.get("d"));
+  if (inline?.steps?.length) {
+    showApp(inline);
+    return;
+  }
+
+  const shareId = params.get("id");
   if (!shareId) {
     showError("공유 링크가 올바르지 않아요.");
     return;

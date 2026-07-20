@@ -725,13 +725,28 @@ function buildKidGuideShareText() {
 async function ensureKidGuideShareUrl() {
   if (cachedKidGuideShareUrl) return cachedKidGuideShareUrl;
   const payload = buildKidGuideSharePayload();
-  const data = await fetchJson("/api/share/kid-guide", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const base = typeof resolveFrontendUrl === "function" ? resolveFrontendUrl() : window.location.origin;
-  cachedKidGuideShareUrl = `${base}/kid-guide.html?id=${encodeURIComponent(data.id)}`;
+
+  // 백엔드 공유 API(짧은 id 링크). Render 미배포 시 실패할 수 있음.
+  try {
+    const data = await fetchJson("/api/share/kid-guide", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const base = resolveKidGuideFrontendBase();
+    cachedKidGuideShareUrl = `${base}/kid-guide.html?id=${encodeURIComponent(data.id)}`;
+    return cachedKidGuideShareUrl;
+  } catch (err) {
+    console.warn("공유 API 사용 불가 — 링크에 안내 데이터를 직접 담아 보냅니다.", err);
+  }
+
+  cachedKidGuideShareUrl = buildKidGuideInlineUrl(payload);
+  return cachedKidGuideShareUrl;
+}
+
+function buildKidGuideShareUrlSync() {
+  if (cachedKidGuideShareUrl) return cachedKidGuideShareUrl;
+  cachedKidGuideShareUrl = buildKidGuideInlineUrl(buildKidGuideSharePayload());
   return cachedKidGuideShareUrl;
 }
 
@@ -779,19 +794,24 @@ async function shareKidGuide(mode = "kakao") {
   try {
     if (button) {
       button.disabled = true;
-      button.textContent = "링크 만드는 중…";
+      button.textContent = mode === "copy" ? "복사하는 중…" : "보내는 중…";
     }
 
-    const url = await ensureKidGuideShareUrl();
     const text = buildKidGuideShareText();
+    const url = buildKidGuideShareUrlSync();
 
     if (mode === "kakao" && navigator.share) {
-      await navigator.share({
-        title: "👶 오늘의 안전 길",
-        text,
-        url,
-      });
-      return;
+      try {
+        await navigator.share({
+          title: "👶 오늘의 안전 길",
+          text,
+          url,
+        });
+        return;
+      } catch (shareErr) {
+        if (shareErr?.name === "AbortError") return;
+        // share 실패 시 복사로 폴백
+      }
     }
 
     await copyTextToClipboard(url);
