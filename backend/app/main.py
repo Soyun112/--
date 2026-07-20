@@ -118,6 +118,7 @@ def tmap_bootstrap_js():
     body = (
         "(function(){\n"
         f"  var key = '{key}';\n"
+        "  window.__TMAP_APP_KEY__ = key;\n"
         "  if (!key) { window.__TMAP_BOOT_ERROR__ = 'TMAP_APP_KEY empty'; return; }\n"
         "  if (document.querySelector('script[data-tmap-sdk=\"1\"]')) return;\n"
         "  // 파싱 중(동기)일 때만 document.write 가 동작한다\n"

@@ -1006,33 +1006,34 @@ async function waitUntil(predicate, timeoutMs, label) {
 }
 
 async function loadTmapSdk(appKey) {
-  if (isTmapReady()) return;
-
-  if (document.querySelector('script[data-tmap-sdk="1"]')) {
-    try {
-      await waitUntil(isTmapReady, 8000, "Tmap jsv2 스텁이 core SDK를 불러오지 못했습니다.");
-      return;
-    } catch {
-      /* jsv2 실패 시 core 직접 로드 */
-    }
+  if (!appKey) {
+    throw new Error("Tmap appKey가 없습니다. Render/Vercel Environment에 TMAP_APP_KEY를 설정하세요.");
   }
 
-  const n = Math.floor(Math.random() * 3) + 1;
-  const coreUrl = `https://topopentile${n}.tmap.co.kr/scriptSDKV2/tmapjs2.min.js?version=20231206`;
-  await loadScriptOnce(coreUrl, "core");
-  await waitUntil(isTmapReady, 15000, "Tmapv2.Map/LatLng 생성자가 준비되지 않았습니다.");
-
-  if (typeof window.Tmapv2.setHttpsMode === "function") {
-    window.Tmapv2.setHttpsMode(true);
-  }
-  // appKey는 타일 인증용으로 전역에 남겨 둔다(SDK가 참조하는 경우 대비)
-  if (appKey) {
+  if (isTmapReady()) {
     window.__TMAP_APP_KEY__ = appKey;
     try {
       window.Tmapv2.appKey = appKey;
     } catch (_) {
       /* ignore */
     }
+    return;
+  }
+
+  // document.write jsv2 스텁은 Vercel/로그인 리다이렉트 환경에서 자주 실패 → core SDK 직접 로드
+  const n = Math.floor(Math.random() * 3) + 1;
+  const coreUrl = `https://topopentile${n}.tmap.co.kr/scriptSDKV2/tmapjs2.min.js?version=20231206`;
+  await loadScriptOnce(coreUrl, "tmap-core");
+  await waitUntil(isTmapReady, 20000, "Tmap SDK를 불러오지 못했습니다.");
+
+  window.__TMAP_APP_KEY__ = appKey;
+  if (typeof window.Tmapv2.setHttpsMode === "function") {
+    window.Tmapv2.setHttpsMode(true);
+  }
+  try {
+    window.Tmapv2.appKey = appKey;
+  } catch (_) {
+    /* ignore */
   }
 }
 
@@ -1046,6 +1047,9 @@ async function tryInitTmap() {
       window.__TMAP_APP_KEY__ ||
       "";
     await loadTmapSdk(appKey);
+
+    // 로그인 직후 app-shell 표시 직후 레이아웃 확정 대기
+    await new Promise((resolve) => requestAnimationFrame(resolve));
 
     // 이전에 실패한 지도 DOM이 남아 있으면 비우고 다시 생성
     container.innerHTML = "";
@@ -1386,17 +1390,14 @@ async function init() {
   setTheme(localStorage.getItem("kids-theme") || "light");
   fillDemoCoordinates();
 
-  const configPromise = fetchJson("/api/config")
-    .then((cfg) => {
-      state.config = cfg;
-    })
-    .catch((err) => {
-      console.warn("백엔드 설정을 불러오지 못했습니다. 백엔드가 실행 중인지 확인하세요.", err);
-      state.config = { demo_center: { lat: 37.5013, lng: 127.0396 } };
-    });
+  try {
+    state.config = await fetchJson("/api/config");
+  } catch (err) {
+    console.warn("백엔드 설정을 불러오지 못했습니다. 백엔드가 실행 중인지 확인하세요.", err);
+    state.config = { demo_center: { lat: 37.5013, lng: 127.0396 } };
+  }
 
   await tryInitTmap();
-  await configPromise;
   renderLegend();
 }
 
