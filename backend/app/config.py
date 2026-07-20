@@ -10,8 +10,8 @@ from dotenv import load_dotenv
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = BACKEND_DIR.parent
 
-# override=True: 셸에 빈 TMAP_APP_KEY 등이 남아 있어도 .env 값이 우선한다.
-load_dotenv(REPO_ROOT / ".env", override=True)
+# Render/배포 환경 변수가 .env 빈 값으로 덮이지 않도록 override=False
+load_dotenv(REPO_ROOT / ".env", override=False)
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -50,15 +50,27 @@ class Settings:
     document_ingest_enabled: bool = _bool_env("DOCUMENT_INGEST_ENABLED", False)
     enable_openapi_docs: bool = _bool_env("ENABLE_OPENAPI_DOCS", False)
 
-    # Google OAuth (Render 환경 변수 / 로컬 .env)
-    google_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "").strip()
-    google_client_secret: str = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
-    google_redirect_uri: str = os.getenv("GOOGLE_REDIRECT_URI", "").strip()
-    jwt_secret: str = os.getenv("JWT_SECRET", "").strip()
+    # Google OAuth (Render 환경 변수 / 로컬 .env) — 실행 시점에 읽음
     jwt_expire_hours: int = int(os.getenv("JWT_EXPIRE_HOURS", "168"))
     default_frontend_url: str = os.getenv(
         "FRONTEND_URL", "https://kids-abcd.vercel.app"
     ).strip().rstrip("/")
+
+    @property
+    def google_client_id(self) -> str:
+        return os.getenv("GOOGLE_CLIENT_ID", "").strip()
+
+    @property
+    def google_client_secret(self) -> str:
+        return os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+
+    @property
+    def google_redirect_uri(self) -> str:
+        return os.getenv("GOOGLE_REDIRECT_URI", "").strip()
+
+    @property
+    def jwt_secret(self) -> str:
+        return os.getenv("JWT_SECRET", "").strip()
 
     @property
     def auth_enabled(self) -> bool:
@@ -68,6 +80,15 @@ class Settings:
             and self.google_redirect_uri
             and self.jwt_secret
         )
+
+    @property
+    def auth_config_status(self) -> dict[str, bool]:
+        return {
+            "GOOGLE_CLIENT_ID": bool(self.google_client_id),
+            "GOOGLE_CLIENT_SECRET": bool(self.google_client_secret),
+            "GOOGLE_REDIRECT_URI": bool(self.google_redirect_uri),
+            "JWT_SECRET": bool(self.jwt_secret),
+        }
 
     @property
     def allowed_frontend_origins(self) -> list[str]:

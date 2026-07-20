@@ -117,7 +117,10 @@ def auth_me(authorization: Annotated[str | None, Header()] = None) -> UserProfil
 
 @router.get("/status")
 def auth_status() -> dict:
-    return {"enabled": settings.auth_enabled}
+    return {
+        "enabled": settings.auth_enabled,
+        "configured": settings.auth_config_status,
+    }
 
 
 @router.post("/logout", response_model=LogoutResponse)
