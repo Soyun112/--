@@ -145,6 +145,69 @@ def _append_unique_coord(
     coords.append((lat, lng))
 
 
+def _segment_m(a: Tuple[float, float], b: Tuple[float, float]) -> float:
+    return float(
+        haversine_m(
+            np.array([a[0]]),
+            np.array([a[1]]),
+            np.array([b[0]]),
+            np.array([b[1]]),
+        )[0]
+    )
+
+
+def _bearing_deg(a: Tuple[float, float], b: Tuple[float, float]) -> float:
+    lat1, lng1 = math.radians(a[0]), math.radians(a[1])
+    lat2, lng2 = math.radians(b[0]), math.radians(b[1])
+    dlng = lng2 - lng1
+    x = math.sin(dlng) * math.cos(lat2)
+    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlng)
+    return (math.degrees(math.atan2(x, y)) + 360.0) % 360.0
+
+
+def _heading_change_deg(a: Tuple[float, float], b: Tuple[float, float], c: Tuple[float, float]) -> float:
+    """B에서의 진행방향 변화(0=직진, 180=유턴에 가까움)."""
+    delta = abs(_bearing_deg(a, b) - _bearing_deg(b, c))
+    return min(delta, 360.0 - delta)
+
+
+def _remove_polyline_spikes(
+    coords: List[Tuple[float, float]],
+    *,
+    max_leg_m: float = 40.0,
+    min_turn_deg: float = 95.0,
+    min_detour_m: float = 6.0,
+) -> List[Tuple[float, float]]:
+    """사거리 횡단 등으로 잠깐 삐져나갔다 돌아오는 꼭짓점을 제거한다."""
+    if len(coords) < 3:
+        return list(coords)
+
+    result = list(coords)
+    changed = True
+    while changed:
+        changed = False
+        i = 1
+        while i < len(result) - 1:
+            a, b, c = result[i - 1], result[i], result[i + 1]
+            ab = _segment_m(a, b)
+            bc = _segment_m(b, c)
+            ac = _segment_m(a, c)
+            detour = ab + bc - ac
+            turn = _heading_change_deg(a, b, c)
+            if (
+                turn >= min_turn_deg
+                and ab <= max_leg_m
+                and bc <= max_leg_m
+                and detour >= min_detour_m
+                and (ab + bc) > ac * 1.12
+            ):
+                del result[i]
+                changed = True
+                continue
+            i += 1
+    return result
+
+
 def _coords_from_tmap_features(
     features: list[dict[str, Any]],
 ) -> tuple[List[Tuple[float, float]], float, float, float]:
@@ -173,6 +236,7 @@ def _coords_from_tmap_features(
         for lng, lat in geometry.get("coordinates", []):
             _append_unique_coord(coords, float(lat), float(lng))
 
+    coords = _remove_polyline_spikes(coords)
     return coords, total_distance, total_time, main_road_distance_m
 
 

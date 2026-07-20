@@ -1,4 +1,4 @@
-from app.services.routing import _coords_from_tmap_features
+from app.services.routing import _coords_from_tmap_features, _remove_polyline_spikes
 
 
 def test_coords_sorted_by_index_and_deduped():
@@ -34,3 +34,28 @@ def test_coords_sorted_by_index_and_deduped():
     assert distance == 190
     assert time == 170
     assert main_road == 190
+
+
+def test_remove_polyline_spikes_drops_intersection_spur():
+    # 남하 경로 중 사거리에서 서쪽으로 잠깐 튀었다 돌아오는 꼭짓점
+    coords = [
+        (37.5012, 127.0500),
+        (37.5008, 127.0500),
+        (37.5006, 127.0497),  # spike tip
+        (37.5004, 127.0500),
+        (37.5000, 127.0500),
+    ]
+    cleaned = _remove_polyline_spikes(coords)
+    assert (37.5006, 127.0497) not in cleaned
+    assert cleaned[0] == coords[0]
+    assert cleaned[-1] == coords[-1]
+
+
+def test_remove_polyline_spikes_keeps_real_corner():
+    # 정상적인 직각 회전은 유지
+    coords = [
+        (37.5010, 127.0500),
+        (37.5000, 127.0500),
+        (37.5000, 127.0515),
+    ]
+    assert _remove_polyline_spikes(coords) == coords
