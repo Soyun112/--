@@ -47,22 +47,22 @@ const PUBLIC_DATA_LEGEND = [
 
 const DEMO_SCENARIOS = {
   morning_school: {
-    origin: "대림역삼아파트",
-    destination: "역삼초등학교",
+    origin: "개나리SK뷰5차아파트",
+    destination: "도성초등학교",
     age: 8,
-    note: "직선 경로는 사고다발지역 2곳과 문서상 무단횡단 위험구간을 지나 안전점수가 낮고, 큰길 우회 경로가 CCTV/보호구역 덕분에 추천됩니다.",
+    note: "도성초등학교 주변 통학로를 비교해 CCTV·보호구역이 많은 길을 추천합니다.",
   },
   night_academy: {
-    origin: "세모수학",
-    destination: "대림역삼아파트",
+    origin: "필수학학원",
+    destination: "개나리SK뷰5차아파트",
     age: 11,
-    note: "이 일대는 범죄위험 근사지수가 전반적으로 높은 지역이지만, 그중에서도 CCTV·보안등이 있는 경로를 골라 추천합니다.",
+    note: "학원에서 아파트로 돌아가는 길 중 CCTV·보안등이 있는 경로를 골라 추천합니다.",
   },
   school_to_academy: {
-    origin: "역삼초등학교",
-    destination: "세모수학",
+    origin: "도성초등학교",
+    destination: "필수학학원",
     age: 8,
-    note: "학교 수업 후 학원으로 이동하는 길입니다. CCTV와 보안등이 가까운 경로를 비교해 보여줍니다.",
+    note: "도성초등학교에서 필수학학원으로 이동하는 길의 안전시설을 비교해 보여줍니다.",
   },
 };
 
