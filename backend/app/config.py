@@ -105,7 +105,13 @@ class Settings:
 
     def is_allowed_frontend_url(self, url: str) -> bool:
         normalized = url.rstrip("/")
-        return normalized in self.allowed_frontend_origins
+        if normalized in self.allowed_frontend_origins:
+            return True
+        # Vercel preview/production 배포 URL 허용
+        from urllib.parse import urlparse
+
+        host = urlparse(normalized).netloc.lower()
+        return host.endswith(".vercel.app")
 
     @property
     def cors_origins(self) -> list[str]:

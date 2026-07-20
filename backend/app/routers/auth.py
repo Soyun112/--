@@ -10,7 +10,11 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from ..config import settings
-from ..services.google_auth import build_authorization_url, exchange_code_for_user
+from ..services.google_auth import (
+    GoogleTokenExchangeError,
+    build_authorization_url,
+    exchange_code_for_user,
+)
 from ..services.jwt_tokens import create_access_token, create_oauth_state, decode_oauth_state, decode_token
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -94,6 +98,9 @@ def google_callback(
         return RedirectResponse(f"{frontend_url}/#access_token={safe_token}", status_code=302)
     except jwt.PyJWTError:
         return RedirectResponse(f"{fallback}?auth_error=invalid_state", status_code=302)
+    except GoogleTokenExchangeError as exc:
+        err_code = quote(f"google_token_failed:{exc.google_error}", safe="")
+        return RedirectResponse(f"{fallback}?auth_error={err_code}", status_code=302)
     except requests.HTTPError:
         return RedirectResponse(f"{fallback}?auth_error=google_token_failed", status_code=302)
     except Exception:
@@ -120,6 +127,8 @@ def auth_status() -> dict:
     return {
         "enabled": settings.auth_enabled,
         "configured": settings.auth_config_status,
+        "redirect_uri": settings.google_redirect_uri,
+        "client_id": settings.google_client_id,
     }
 
 

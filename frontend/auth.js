@@ -121,6 +121,34 @@ function renderUserProfile(user) {
   wrap.hidden = false;
 }
 
+function authErrorMessage(code) {
+  if (code.startsWith("google_token_failed:")) {
+    const googleErr = code.split(":").slice(1).join(":");
+    const details = {
+      invalid_client:
+        "Client ID와 Client Secret이 짝이 맞지 않습니다. Google Console에서 같은 OAuth 클라이언트의 값을 Render에 넣으세요.",
+      unauthorized_client: "OAuth 클라이언트 유형이 Web application인지 확인하세요.",
+      redirect_uri_mismatch:
+        "Redirect URI 불일치입니다. Google Console에 https://kids-safe-route-api.onrender.com/api/auth/google/callback 를 등록하세요.",
+      invalid_grant: "인증 코드가 만료됐습니다. 페이지 새로고침 후 다시 로그인하세요.",
+    };
+    return (
+      details[googleErr] ||
+      `Google 토큰 교환 실패 (${googleErr}). Render·Google Console 설정을 확인하세요.`
+    );
+  }
+  const messages = {
+    google_token_failed:
+      "Google Client Secret 또는 Redirect URI가 맞지 않습니다. Render·Google Console 설정을 확인하세요.",
+    invalid_state: "로그인 세션이 만료되었습니다. 다시 시도해 주세요.",
+    missing_code: "Google 인증 정보가 없습니다. 다시 시도해 주세요.",
+    access_denied:
+      "Google 로그인이 거부됐습니다. OAuth consent screen이 Testing이면 Test users에 본인 Gmail을 추가하세요.",
+    login_failed: "로그인 처리 중 오류가 발생했습니다. 다시 시도해 주세요.",
+  };
+  return messages[code] || `Google 로그인 실패 (${code}). 다시 시도해 주세요.`;
+}
+
 function showLoginScreen(message) {
   const login = document.getElementById("login-screen");
   const app = document.getElementById("app-shell");
@@ -157,7 +185,7 @@ function logout() {
 async function requireAuth() {
   const consumed = consumeTokenFromUrl();
   if (consumed && consumed.error) {
-    showLoginScreen("Google 로그인에 실패했습니다. 다시 시도해 주세요.");
+    showLoginScreen(authErrorMessage(consumed.error));
     return null;
   }
 

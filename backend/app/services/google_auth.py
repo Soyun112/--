@@ -14,6 +14,13 @@ GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 SCOPES = "openid email profile"
 
 
+class GoogleTokenExchangeError(Exception):
+    def __init__(self, google_error: str, description: str = "") -> None:
+        self.google_error = google_error
+        self.description = description
+        super().__init__(google_error)
+
+
 def build_authorization_url(*, state: str) -> str:
     params = {
         "client_id": settings.google_client_id,
@@ -39,7 +46,15 @@ def exchange_code_for_user(code: str) -> dict[str, Any]:
         },
         timeout=15,
     )
-    token_resp.raise_for_status()
+    if not token_resp.ok:
+        try:
+            body = token_resp.json()
+            err = str(body.get("error") or "unknown")
+            desc = str(body.get("error_description") or "")
+        except Exception:
+            err = "http_error"
+            desc = str(token_resp.status_code)
+        raise GoogleTokenExchangeError(err, desc)
     tokens = token_resp.json()
     access_token = tokens.get("access_token")
     if not access_token:
