@@ -15,8 +15,7 @@
   <script src="kid-guide-share.js"></script>
   <script>
     (function preloadGuide() {
-      var params = new URLSearchParams(window.location.search);
-      var inline = decodeKidGuidePayload(params.get("d"));
+      var inline = typeof readInlineGuidePayload === "function" ? readInlineGuidePayload() : null;
       if (inline && inline.steps && inline.steps.length) {
         window.__KID_GUIDE_PRELOAD__ = inline;
         document.documentElement.classList.add("has-preload");

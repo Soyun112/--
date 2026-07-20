@@ -7,9 +7,9 @@
 (function () {
   var q = new URLSearchParams(location.search);
   var path = location.pathname.replace(/\/+$/, "") || "/";
-  var onGuidePage = /kid-guide\.html$/i.test(path) || path === "/g" || /\/g\.html$/i.test(path);
+  var onGuidePage = /kid-guide\.html$/i.test(path) || path === "/g" || /\/g\.html$/i.test(path) || path === "/guide";
   if (!onGuidePage && (q.has("d") || q.has("id"))) {
-    location.replace("kid-guide.html" + location.search + location.hash);
+    location.replace("guide" + location.search + location.hash);
   }
 })();
 </script>

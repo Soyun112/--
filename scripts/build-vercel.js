@@ -1,6 +1,7 @@
 /**
  * Vercel 배포 시 BACKEND_URL 환경 변수로 /api → Render(또는 공개 백엔드) 프록시 설정.
  * TMAP_APP_KEY는 빌드 시 frontend/tmap-key.js 에만 주입 (Git에는 넣지 않음).
+ * /api/share/kid-guide 는 Vercel Serverless(짧은 링크) — Render로 보내지 않음.
  */
 const fs = require("fs");
 const path = require("path");
@@ -10,32 +11,38 @@ const backend = (process.env.BACKEND_URL || DEFAULT_BACKEND).replace(/\/$/, "");
 const root = path.join(__dirname, "..");
 const frontendDir = path.join(root, "frontend");
 
+const renderApiRewrites = [
+  "auth",
+  "route",
+  "config",
+  "health",
+  "documents",
+  "tmap-bootstrap.js",
+].flatMap((segment) => {
+  if (segment.includes(".")) {
+    return [{ source: `/api/${segment}`, destination: `${backend}/api/${segment}` }];
+  }
+  return [{ source: `/api/${segment}/:path*`, destination: `${backend}/api/${segment}/:path*` }];
+});
+
 const config = {
   version: 2,
   outputDirectory: "frontend",
   rewrites: [
-    {
-      source: "/api/:path*",
-      destination: `${backend}/api/:path*`,
-    },
-    {
-      source: "/g",
-      destination: "/kid-guide.html",
-    },
-    {
-      source: "/guide",
-      destination: "/kid-guide.html",
-    },
+    ...renderApiRewrites,
+    { source: "/g/:payload", destination: "/kid-guide.html?d=:payload" },
+    { source: "/g", destination: "/kid-guide.html" },
+    { source: "/guide", destination: "/kid-guide.html" },
   ],
 };
 
 if (process.env.BACKEND_URL) {
-  console.log("[build-vercel] API 프록시 →", backend, "(BACKEND_URL)");
+  console.log("[build-vercel] API 프록시 →", backend, "(BACKEND_URL, share 제외)");
 } else {
   console.log(
     "[build-vercel] API 프록시 →",
     backend,
-    "(기본값 — Vercel에 BACKEND_URL을 넣으면 그 주소로 바뀝니다)"
+    "(기본값 — share/kid-guide 는 Vercel Serverless)"
   );
 }
 

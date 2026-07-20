@@ -724,27 +724,14 @@ async function ensureKidGuideShareUrl() {
   if (cachedKidGuideShareUrl) return cachedKidGuideShareUrl;
   const payload = buildKidGuideSharePayload();
 
-  // 백엔드 공유 API(짧은 id 링크). Render 미배포 시 실패할 수 있음.
   try {
-    const data = await fetchJson("/api/share/kid-guide", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const base = resolveKidGuideFrontendBase();
-    cachedKidGuideShareUrl = `${base}/kid-guide.html?id=${encodeURIComponent(data.id)}`;
+    cachedKidGuideShareUrl = await createKidGuideShareLink(payload);
     return cachedKidGuideShareUrl;
   } catch (err) {
-    console.warn("공유 API 사용 불가 — 링크에 안내 데이터를 직접 담아 보냅니다.", err);
+    console.warn("짧은 공유 링크 생성 실패 — 경로형 링크로 대체합니다.", err);
   }
 
   cachedKidGuideShareUrl = buildKidGuideInlineUrl(payload);
-  return cachedKidGuideShareUrl;
-}
-
-function buildKidGuideShareUrlSync() {
-  if (cachedKidGuideShareUrl) return cachedKidGuideShareUrl;
-  cachedKidGuideShareUrl = buildKidGuideInlineUrl(buildKidGuideSharePayload());
   return cachedKidGuideShareUrl;
 }
 
@@ -796,7 +783,7 @@ async function shareKidGuide(mode = "kakao") {
     }
 
     const text = buildKidGuideShareText();
-    const url = buildKidGuideShareUrlSync();
+    const url = await ensureKidGuideShareUrl();
 
     if (mode === "kakao" && navigator.share) {
       try {

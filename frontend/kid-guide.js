@@ -45,8 +45,7 @@ function renderStoryBar() {
   if (!bar) return;
   bar.innerHTML = state.steps
     .map((_, idx) => {
-      const cls =
-        idx < state.index ? "done" : idx === state.index ? "active" : "";
+      const cls = idx < state.index ? "done" : idx === state.index ? "active" : "";
       return `<div class="kid-guide-story-seg ${cls}"><span></span></div>`;
     })
     .join("");
@@ -135,16 +134,22 @@ async function loadGuide() {
     return;
   }
 
-  const params = new URLSearchParams(window.location.search);
-  const inline = decodeKidGuidePayload(params.get("d"));
+  const inline = readInlineGuidePayload();
   if (inline?.steps?.length) {
     showApp(inline);
     return;
   }
 
+  const params = new URLSearchParams(window.location.search);
   const shareId = params.get("id");
   if (!shareId) {
-    showError("공유 링크가 올바르지 않아요.");
+    const hadDataHint =
+      params.has("d") || /\/g\//i.test(window.location.pathname) || window.location.hash.length > 1;
+    showError(
+      hadDataHint
+        ? "링크가 잘렸을 수 있어요. 다시 링크 복사해서 보내달라고 하세요."
+        : "공유 링크가 올바르지 않아요."
+    );
     return;
   }
 

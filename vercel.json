@@ -3,8 +3,32 @@
   "outputDirectory": "frontend",
   "rewrites": [
     {
-      "source": "/api/:path*",
-      "destination": "https://kids-safe-route-api.onrender.com/api/:path*"
+      "source": "/api/auth/:path*",
+      "destination": "https://kids-safe-route-api.onrender.com/api/auth/:path*"
+    },
+    {
+      "source": "/api/route/:path*",
+      "destination": "https://kids-safe-route-api.onrender.com/api/route/:path*"
+    },
+    {
+      "source": "/api/config",
+      "destination": "https://kids-safe-route-api.onrender.com/api/config"
+    },
+    {
+      "source": "/api/health",
+      "destination": "https://kids-safe-route-api.onrender.com/api/health"
+    },
+    {
+      "source": "/api/documents/:path*",
+      "destination": "https://kids-safe-route-api.onrender.com/api/documents/:path*"
+    },
+    {
+      "source": "/api/tmap-bootstrap.js",
+      "destination": "https://kids-safe-route-api.onrender.com/api/tmap-bootstrap.js"
+    },
+    {
+      "source": "/g/:payload",
+      "destination": "/kid-guide.html?d=:payload"
     },
     {
       "source": "/g",
