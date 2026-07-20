@@ -952,10 +952,9 @@ function loadScriptOnce(src, datasetKey) {
       ? document.querySelector(`script[data-tmap-sdk="${datasetKey}"]`)
       : document.querySelector(`script[src="${src}"]`);
     if (existing) {
-      if (existing.dataset.loaded === "1" || window.__TMAP_SCRIPT_LOADED__) return resolve();
+      if (existing.dataset.loaded === "1") return resolve();
       if (existing.readyState === "complete" || existing.readyState === "loaded") {
         existing.dataset.loaded = "1";
-        window.__TMAP_SCRIPT_LOADED__ = true;
         return resolve();
       }
       const timer = setTimeout(
@@ -965,18 +964,18 @@ function loadScriptOnce(src, datasetKey) {
       existing.addEventListener("load", () => {
         clearTimeout(timer);
         existing.dataset.loaded = "1";
-        window.__TMAP_SCRIPT_LOADED__ = true;
         resolve();
       });
       existing.addEventListener("error", () => {
         clearTimeout(timer);
+        existing.remove();
         reject(new Error(`스크립트 로드 실패: ${src}`));
       });
       return;
     }
     const script = document.createElement("script");
     script.src = src;
-    script.async = true;
+    script.async = false;
     if (datasetKey) script.dataset.tmapSdk = datasetKey;
     const timer = setTimeout(
       () => reject(new Error(`스크립트 로드 시간 초과: ${src}`)),
@@ -985,11 +984,11 @@ function loadScriptOnce(src, datasetKey) {
     script.onload = () => {
       clearTimeout(timer);
       script.dataset.loaded = "1";
-      window.__TMAP_SCRIPT_LOADED__ = true;
       resolve();
     };
     script.onerror = () => {
       clearTimeout(timer);
+      script.remove();
       reject(new Error(`스크립트 로드 실패: ${src}`));
     };
     document.head.appendChild(script);
@@ -1007,7 +1006,7 @@ async function waitUntil(predicate, timeoutMs, label) {
 
 async function loadTmapSdk(appKey) {
   if (!appKey) {
-    throw new Error("Tmap appKey가 없습니다. Render/Vercel Environment에 TMAP_APP_KEY를 설정하세요.");
+    throw new Error("Tmap appKey가 없습니다. Render Environment에 TMAP_APP_KEY를 설정하세요.");
   }
 
   if (isTmapReady()) {
@@ -1020,21 +1019,30 @@ async function loadTmapSdk(appKey) {
     return;
   }
 
-  // document.write jsv2 스텁은 Vercel/로그인 리다이렉트 환경에서 자주 실패 → core SDK 직접 로드
-  const n = Math.floor(Math.random() * 3) + 1;
-  const coreUrl = `https://topopentile${n}.tmap.co.kr/scriptSDKV2/tmapjs2.min.js?version=20231206`;
-  await loadScriptOnce(coreUrl, "tmap-core");
-  await waitUntil(isTmapReady, 20000, "Tmap SDK를 불러오지 못했습니다.");
-
-  window.__TMAP_APP_KEY__ = appKey;
-  if (typeof window.Tmapv2.setHttpsMode === "function") {
-    window.Tmapv2.setHttpsMode(true);
+  const coreUrls = [1, 2, 3].map(
+    (n) => `https://topopentile${n}.tmap.co.kr/scriptSDKV2/tmapjs2.min.js?version=20231206`
+  );
+  let lastError = null;
+  for (let i = 0; i < coreUrls.length; i += 1) {
+    try {
+      await loadScriptOnce(coreUrls[i], `tmap-core-${i + 1}`);
+      await waitUntil(isTmapReady, 15000, "Tmap SDK를 불러오지 못했습니다.");
+      window.__TMAP_APP_KEY__ = appKey;
+      if (typeof window.Tmapv2.setHttpsMode === "function") {
+        window.Tmapv2.setHttpsMode(true);
+      }
+      try {
+        window.Tmapv2.appKey = appKey;
+      } catch (_) {
+        /* ignore */
+      }
+      return;
+    } catch (err) {
+      lastError = err;
+      document.querySelector(`script[data-tmap-sdk="tmap-core-${i + 1}"]`)?.remove();
+    }
   }
-  try {
-    window.Tmapv2.appKey = appKey;
-  } catch (_) {
-    /* ignore */
-  }
+  throw lastError || new Error("Tmap SDK를 불러오지 못했습니다.");
 }
 
 async function tryInitTmap() {
@@ -1075,9 +1083,19 @@ async function tryInitTmap() {
     console.warn("Tmap 지도 로드 실패, SVG 스키매틱 지도로 대체합니다.", err);
     state.tmapReady = false;
     if (container) container.style.display = "none";
-    if (svgEl) svgEl.style.display = "block";
+    if (svgEl) {
+      svgEl.style.display = "block";
+      renderSvgMap(
+        state.lastResult || {
+          origin: { lat: 37.5013, lng: 127.0396, name: "출발" },
+          destination: { lat: 37.5013, lng: 127.0396, name: "목적지" },
+          candidates: [],
+        },
+        state.publicData || { cctvs: [], child_zones: [], accident_hotspots: [] }
+      );
+    }
     setMapStatus(
-      `티맵 지도를 불러오지 못했습니다. (${err.message || err}) 경로 결과는 SVG로 표시됩니다.`,
+      `티맵 지도를 불러오지 못했습니다. (${err.message || err}) SVG 지도로 표시합니다.`,
       true
     );
   }
