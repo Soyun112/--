@@ -49,6 +49,9 @@ class Settings:
     tmap_debug_logging: bool = _bool_env("TMAP_DEBUG_LOGGING", False)
     # Tmap 보행자 searchOption: 0=추천, 4=추천+대로우선, 10=최단, 30=최단+계단제외
     tmap_pedestrian_search_option: str = os.getenv("TMAP_PEDESTRIAN_SEARCH_OPTION", "4").strip() or "4"
+    # 긴 직선 구간(보행 API가 좌표를 성기게 줄 때)을 구간별 재탐색으로 촘촘히 만든다.
+    tmap_route_densify_enabled: bool = _bool_env("TMAP_ROUTE_DENSIFY_ENABLED", True)
+    tmap_route_densify_min_leg_m: float = float(os.getenv("TMAP_ROUTE_DENSIFY_MIN_LEG_M", "25"))
     document_ingest_enabled: bool = _bool_env("DOCUMENT_INGEST_ENABLED", False)
     enable_openapi_docs: bool = _bool_env("ENABLE_OPENAPI_DOCS", False)
 

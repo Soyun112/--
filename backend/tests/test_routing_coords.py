@@ -1,6 +1,7 @@
 from app.services.routing import (
     _clean_route_polyline,
     _coords_from_tmap_features,
+    _densify_route_coordinates,
     _remove_polyline_spikes,
 )
 
@@ -84,6 +85,40 @@ def test_clean_route_collapses_alley_and_keeps_main_corridor():
     assert cleaned[-1] == coords[-1]
     # 골목이 접히면 남북 본선 위주로 짧아진다
     assert len(cleaned) <= 5
+
+
+def test_densify_expands_sparse_two_point_route(monkeypatch):
+    from app.services import routing
+
+    sparse = [(37.5012, 127.0499), (37.4989686, 127.0525688)]
+    dense = [
+        (37.5012, 127.0499),
+        (37.5009, 127.0503),
+        (37.5004, 127.0510),
+        (37.4995, 127.0520),
+        (37.4989686, 127.0525688),
+    ]
+
+    monkeypatch.setattr(routing.settings, "tmap_route_densify_enabled", True)
+    monkeypatch.setattr(routing.settings, "tmap_route_densify_min_leg_m", 25.0)
+    monkeypatch.setattr(
+        routing,
+        "_fetch_tmap_pedestrian_data",
+        lambda *args, **kwargs: {
+            "features": [
+                {
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": [[lng, lat] for lat, lng in dense],
+                    },
+                    "properties": {"index": 1, "distance": 400, "time": 360},
+                }
+            ]
+        },
+    )
+
+    result = _densify_route_coordinates(sparse, "4")
+    assert len(result) > len(sparse)
 
 
 def test_night_academy_commute_uses_tmap_pedestrian_not_fixed_demo():

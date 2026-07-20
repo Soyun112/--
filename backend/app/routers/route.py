@@ -146,6 +146,11 @@ def compute_route(req: RouteRequest) -> RouteResponse:
         origin_name=origin.name or origin.query,
         destination_name=destination.name or destination.query,
     )
+    if not raw_candidates:
+        raise HTTPException(
+            status_code=503,
+            detail="Tmap 보행자 경로를 불러오지 못했습니다. Render에 TMAP_APP_KEY가 설정되어 있는지, Manual Deploy로 최신 코드가 배포됐는지 확인해주세요.",
+        )
     night = is_nighttime()
     scored = score_candidates(raw_candidates, is_night=night)
 

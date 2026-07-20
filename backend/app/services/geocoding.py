@@ -6,7 +6,7 @@
   1) 내장 사전(DEMO_PLACES + STATION_DICT) — 데모 좌표/서울 주요 역은 키 없이 즉시 응답
   2) 카카오 로컬 키워드 검색 (KAKAO_REST_API_KEY) — 건물·상호·역 이름에 가장 강함
   3) 네이버 지역 검색 (NAVER_SEARCH_CLIENT_ID/SECRET)
-  4) Tmap POI 통합검색 (TMAP_APP_KEY) — kids가 이미 보유한 키 재사용
+  4) Tmap POI·주소 지오코딩 (TMAP_APP_KEY) — 동일 appKey, 도로 입구 좌표(noor) 우선
 
 키가 하나도 없거나 모두 실패하면 사전에 없는 이름은 None을 반환한다. 백엔드에서
 호출하므로 브라우저 CORS 문제 없이 안전하게 시크릿 키를 쓸 수 있다.
@@ -20,6 +20,7 @@ from typing import Optional
 import requests
 
 from ..config import settings
+from .tmap_geo import geocode_full_address, search_poi
 
 
 @dataclass
@@ -153,27 +154,14 @@ def _naver_local(query: str) -> Optional[GeocodeResult]:
 
 
 def _tmap_poi(query: str) -> Optional[GeocodeResult]:
-    if not settings.tmap_app_key:
-        return None
-    try:
-        resp = requests.get(
-            "https://apis.openapi.sk.com/tmap/pois",
-            params={"version": "1", "searchKeyword": query, "resCoordType": "WGS84GEO", "count": 1},
-            headers={"appKey": settings.tmap_app_key},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        pois = resp.json().get("searchPoiInfo", {}).get("pois", {}).get("poi", [])
-        if not pois:
-            return None
-        poi = pois[0]
-        lat, lng = float(poi["noorLat"]), float(poi["noorLon"])
-        if not _in_korea(lat, lng):
-            return None
-        name = poi.get("name") or query
-        return GeocodeResult(lat=lat, lng=lng, label=name, source="TMAP_POI")
-    except Exception:
-        return None
+    near = (settings.demo_center_lat, settings.demo_center_lng)
+    hit = search_poi(query, near=near)
+    return GeocodeResult(hit.lat, hit.lng, hit.label, hit.source) if hit else None
+
+
+def _tmap_fulladdr(query: str) -> Optional[GeocodeResult]:
+    hit = geocode_full_address(query)
+    return GeocodeResult(hit.lat, hit.lng, hit.label, hit.source) if hit else None
 
 
 def geocode(query: str) -> Optional[GeocodeResult]:
@@ -182,11 +170,18 @@ def geocode(query: str) -> Optional[GeocodeResult]:
     if not q:
         return None
 
+    # Tmap appKey가 있으면 POI·주소 API로 도로 쪽 좌표를 먼저 맞춘다.
+    if settings.tmap_app_key:
+        for provider in (_tmap_poi, _tmap_fulladdr):
+            result = provider(q)
+            if result:
+                return result
+
     hit = _lookup_dict(q)
     if hit:
         return hit
 
-    for provider in (_kakao_keyword, _naver_local, _tmap_poi):
+    for provider in (_kakao_keyword, _naver_local, _tmap_poi, _tmap_fulladdr):
         result = provider(q)
         if result:
             return result

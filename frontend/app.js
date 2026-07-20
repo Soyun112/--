@@ -1388,6 +1388,15 @@ async function handleSubmit(event) {
     renderCandidates(routeData);
     renderReports(routeData);
     renderMap(routeData, publicData);
+
+    if (routeData.used_mock && routeData.used_mock.routing) {
+      console.warn("[경로] MOCK 모드 — Tmap 보행자 API 미사용");
+    } else {
+      const main = routeData.candidates.find((c) => c.source === "TMAP_PEDESTRIAN_API");
+      if (main) {
+        console.log(`[경로] Tmap 보행자 경로 좌표 ${main.coordinates.length}개`);
+      }
+    }
   } catch (err) {
     alert(`경로 계산 중 오류가 발생했습니다: ${err.message}`);
     console.error(err);

@@ -347,11 +347,13 @@ def _coords_from_tmap_features(
     features: list[dict[str, Any]],
     *,
     clean_polyline: bool = False,
+    search_option: str | None = None,
+    allow_densify: bool = True,
 ) -> tuple[List[Tuple[float, float]], float, float, float]:
     """LineString을 index 순으로 이어 붙여 (좌표, 거리, 시간, 대로거리)를 만든다.
 
     Tmap 보행자 API 좌표는 기본적으로 그대로 사용한다(clean_polyline=False).
-    후처리(_clean_route_polyline)는 MOCK·데모 경로에만 선택적으로 적용한다.
+    긴 구간인데 좌표가 3개 이하이면 같은 API로 구간 재탐색해 도로를 따라가게 한다.
     """
     coords: List[Tuple[float, float]] = []
     main_road_distance_m = 0.0
@@ -374,8 +376,31 @@ def _coords_from_tmap_features(
             main_road_distance_m += distance_m * 2
         elif road_name.endswith("로"):
             main_road_distance_m += distance_m
+
+        segment: List[Tuple[float, float]] = []
         for lng, lat in geometry.get("coordinates", []):
-            _append_unique_coord(coords, float(lat), float(lng))
+            _append_unique_coord(segment, float(lat), float(lng))
+
+        if (
+            allow_densify
+            and settings.tmap_route_densify_enabled
+            and search_option
+            and distance_m >= settings.tmap_route_densify_min_leg_m
+            and len(segment) <= 3
+            and len(segment) >= 2
+        ):
+            sub = _fetch_tmap_pedestrian_data(segment[0], segment[-1], search_option=search_option)
+            if sub:
+                sub_coords, _, _, _ = _coords_from_tmap_features(
+                    sub.get("features", []),
+                    search_option=search_option,
+                    allow_densify=False,
+                )
+                if len(sub_coords) > len(segment):
+                    segment = sub_coords
+
+        for lat, lng in segment:
+            _append_unique_coord(coords, lat, lng)
 
     if clean_polyline:
         coords = _clean_route_polyline(coords)
@@ -681,47 +706,30 @@ def _log_navigation_steps(candidate: RouteCandidateRaw) -> None:
 
 
 def _mock_candidates(origin: Tuple[float, float], destination: Tuple[float, float]) -> List[RouteCandidateRaw]:
-    o_lat, o_lng = origin
-    d_lat, d_lng = destination
-
-    diagonal = [origin, destination]
-    grid_lat_first = [origin, (o_lat, d_lng), destination]
-    grid_lng_first = [origin, (d_lat, o_lng), destination]
-
-    candidates_raw = [
-        ("route-direct", "직선 경로 (최단거리 우선)", diagonal),
-        ("route-grid-a", "큰길 경로 A (위도 우선 이동)", grid_lat_first),
-        ("route-grid-b", "큰길 경로 B (경도 우선 이동)", grid_lng_first),
+    """오프라인 데모용. LIVE에서는 Tmap 실패 시 MOCK으로 떨어지지 않는다."""
+    coords = [origin, destination]
+    dist = route_length_m(coords)
+    return [
+        RouteCandidateRaw(
+            id="route-mock-demo",
+            label="데모 직선 (Tmap 키 없음)",
+            coordinates=coords,
+            distance_m=dist,
+            duration_s=dist / WALK_SPEED_MPS,
+            source="MOCK_ROUTING",
+            navigation_steps=_mock_navigation_steps(coords),
+        )
     ]
 
-    results: List[RouteCandidateRaw] = []
-    for cid, label, coords in candidates_raw:
-        dist = route_length_m(coords)
-        results.append(
-            RouteCandidateRaw(
-                id=cid,
-                label=label,
-                coordinates=coords,
-                distance_m=dist,
-                duration_s=dist / WALK_SPEED_MPS,
-                source="MOCK_ROUTING",
-                navigation_steps=_mock_navigation_steps(coords),
-            )
-        )
-    return results
 
-
-def _call_tmap(
+def _fetch_tmap_pedestrian_data(
     origin: Tuple[float, float],
     destination: Tuple[float, float],
-    pass_point: Tuple[float, float] | None = None,
-    pass_list: str | None = None,
     *,
-    search_option: str | None = None,
-    route_suffix: str = "direct",
-) -> RouteCandidateRaw | None:
-    route_label = route_suffix if pass_point is None and not pass_list else f"{route_suffix}-via"
-    option = search_option or settings.tmap_pedestrian_search_option
+    search_option: str,
+    pass_list: str | None = None,
+) -> dict[str, Any] | None:
+    """Tmap 보행자 API 원본 JSON. 경로 보강·파싱 공용."""
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
@@ -736,20 +744,13 @@ def _call_tmap(
         "endName": "목적지",
         "reqCoordType": "WGS84GEO",
         "resCoordType": "WGS84GEO",
-        "searchOption": option,
+        "searchOption": search_option,
         "sort": "index",
         "speed": 4,
     }
     if pass_list:
         body["passList"] = pass_list
-    elif pass_point is not None:
-        body["passList"] = f"{pass_point[1]},{pass_point[0]}"
 
-    if settings.tmap_debug_logging:
-        print(f"[Tmap] 보행자 API 요청 ({route_label}): POST {TMAP_PEDESTRIAN_URL}")
-        print(f"[Tmap] 요청 body: {json.dumps(body, ensure_ascii=False)}")
-
-    resp: requests.Response | None = None
     try:
         resp = requests.post(
             TMAP_PEDESTRIAN_URL,
@@ -758,38 +759,81 @@ def _call_tmap(
             json=body,
             timeout=10,
         )
-        print(f"[Tmap] HTTP 상태: {resp.status_code}")
         resp.raise_for_status()
         data = resp.json()
-    except requests.HTTPError as exc:
-        body_text = resp.text[:2000] if resp is not None else "(응답 없음)"
-        print(f"[Tmap] HTTP 오류 ({route_label}): {exc}")
-        print(f"[Tmap] 응답 본문: {body_text}")
-        if resp is not None and resp.status_code == 401:
-            print("[Tmap] 원인 추정: appKey(TMAP_APP_KEY)가 잘못되었거나 만료됨")
-        elif resp is not None and resp.status_code == 400:
-            print("[Tmap] 원인 추정: 좌표/파라미터 오류 (출발·도착이 같거나 범위 밖)")
+    except requests.RequestException:
         return None
-    except requests.RequestException as exc:
-        print(f"[Tmap] 네트워크 오류 ({route_label}): {exc}")
-        print("[Tmap] 원인 추정: 서버에서 Tmap API 접근 불가 (방화벽·DNS·타임아웃). CORS는 서버→Tmap 호출이라 해당 없음")
-        return None
-    except ValueError as exc:
-        print(f"[Tmap] JSON 파싱 실패 ({route_label}): {exc}")
+    except ValueError:
         return None
 
     if isinstance(data, dict) and data.get("error"):
-        print(f"[Tmap] API error 필드 ({route_label}): {json.dumps(data['error'], ensure_ascii=False)}")
+        return None
+    if not isinstance(data.get("features"), list):
+        return None
+    return data
+
+
+def _densify_route_coordinates(
+    coords: List[Tuple[float, float]],
+    search_option: str,
+) -> List[Tuple[float, float]]:
+    """보행 API가 긴 구간을 2~3점 직선으로 줄 때, 구간별 재탐색으로 좌표를 촘촘히 만든다."""
+    if not settings.tmap_route_densify_enabled or len(coords) < 2:
+        return coords
+
+    min_leg = settings.tmap_route_densify_min_leg_m
+    refined: List[Tuple[float, float]] = [coords[0]]
+    for i in range(len(coords) - 1):
+        start, end = coords[i], coords[i + 1]
+        leg = _segment_m(start, end)
+        if leg >= min_leg:
+            sub = _fetch_tmap_pedestrian_data(start, end, search_option=search_option)
+            if sub:
+                sub_coords, _, _, _ = _coords_from_tmap_features(sub.get("features", []))
+                if len(sub_coords) >= 2:
+                    for pt in sub_coords[1:]:
+                        _append_unique_coord(refined, pt[0], pt[1])
+                    continue
+        _append_unique_coord(refined, end[0], end[1])
+
+    return refined if len(refined) >= 2 else coords
+
+
+def _call_tmap(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+    pass_point: Tuple[float, float] | None = None,
+    pass_list: str | None = None,
+    *,
+    search_option: str | None = None,
+    route_suffix: str = "direct",
+) -> RouteCandidateRaw | None:
+    route_label = route_suffix if pass_point is None and not pass_list else f"{route_suffix}-via"
+    option = search_option or settings.tmap_pedestrian_search_option
+    resolved_pass = pass_list
+    if pass_point is not None:
+        resolved_pass = f"{pass_point[1]},{pass_point[0]}"
+
+    if settings.tmap_debug_logging:
+        print(f"[Tmap] 보행자 API 요청 ({route_label}): POST {TMAP_PEDESTRIAN_URL}")
+
+    data = _fetch_tmap_pedestrian_data(
+        origin,
+        destination,
+        search_option=option,
+        pass_list=resolved_pass,
+    )
+    if not data:
+        print(f"[Tmap] 경로 생성 실패 ({route_label})")
         return None
 
     _log_tmap_response(data, label=route_label)
 
     features = data.get("features", [])
-    if not isinstance(features, list):
-        print(f"[Tmap] features 필드가 없거나 배열이 아님: {type(features)}")
-        return None
-
-    coords, total_distance, total_time, main_road_distance_m = _coords_from_tmap_features(features)
+    coords, total_distance, total_time, main_road_distance_m = _coords_from_tmap_features(
+        features,
+        search_option=option,
+    )
 
     navigation_steps = _parse_tmap_navigation_steps(features)
     if not navigation_steps:
@@ -916,7 +960,7 @@ def get_route_candidates(
         candidates.append(alt)
 
     if not candidates:
-        print("[경로] Tmap 보행자 API 전부 실패 → MOCK 폴백 (데모용 직선 경로)")
-        return _finalize_candidates(_deduplicate_candidates(_mock_candidates(origin, destination)))
+        print("[경로] Tmap 보행자 API 전부 실패 - MOCK 폴백 없이 빈 결과 반환")
+        return []
     print(f"[경로] === Tmap 보행자 API 성공: 후보 {len(candidates)}개 (searchOption {primary_option}/{alt_option}) ===")
     return _finalize_candidates(_deduplicate_candidates(candidates))
