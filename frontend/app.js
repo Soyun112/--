@@ -1398,7 +1398,13 @@ async function handleSubmit(event) {
       }
     }
   } catch (err) {
-    alert(`경로 계산 중 오류가 발생했습니다: ${err.message}`);
+    const msg = err.message || String(err);
+    const friendly = msg.includes("429") || msg.includes("한도")
+      ? "Tmap API 호출 한도에 걸렸습니다. 1~2분 후 다시 시도해 주세요."
+      : msg.includes("503")
+        ? "Tmap 보행 경로를 불러오지 못했습니다. 잠시 후 다시 시도하거나 Render 배포·TMAP_APP_KEY를 확인해 주세요."
+        : msg;
+    alert(`경로 계산 중 오류가 발생했습니다: ${friendly}`);
     console.error(err);
   } finally {
     submitBtn.disabled = false;

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, List, Tuple
 
@@ -767,26 +768,48 @@ def _fetch_tmap_pedestrian_data(
     if pass_list:
         body["passList"] = pass_list
 
-    try:
-        resp = requests.post(
-            TMAP_PEDESTRIAN_URL,
-            params={"version": "1", "format": "json"},
-            headers=headers,
-            json=body,
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except requests.RequestException:
-        return None
-    except ValueError:
-        return None
+    last_status: int | None = None
+    for attempt in range(3):
+        try:
+            resp = requests.post(
+                TMAP_PEDESTRIAN_URL,
+                params={"version": "1", "format": "json"},
+                headers=headers,
+                json=body,
+                timeout=15,
+            )
+            last_status = resp.status_code
+            if resp.status_code == 429:
+                print(f"[Tmap] API 한도 초과 (429), 재시도 {attempt + 1}/3")
+                if attempt < 2:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                return None
+            resp.raise_for_status()
+            data = resp.json()
+        except requests.RequestException as exc:
+            print(f"[Tmap] 요청 실패 (status={last_status}): {exc}")
+            if attempt < 2 and last_status in (429, 503, None):
+                time.sleep(1.0)
+                continue
+            return None
+        except ValueError as exc:
+            print(f"[Tmap] JSON 파싱 실패: {exc}")
+            return None
 
-    if isinstance(data, dict) and data.get("error"):
-        return None
-    if not isinstance(data.get("features"), list):
-        return None
-    return data
+        if isinstance(data, dict) and data.get("error"):
+            err = data["error"]
+            print(f"[Tmap] API error: {json.dumps(err, ensure_ascii=False)}")
+            code = str(err.get("code", "")) if isinstance(err, dict) else ""
+            if code == "QUOTA_EXCEEDED" and attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            return None
+        if not isinstance(data.get("features"), list):
+            return None
+        return data
+
+    return None
 
 
 def _densify_route_coordinates(
@@ -970,18 +993,20 @@ def get_route_candidates(
     if direct:
         candidates.append(direct)
 
-    alt_option = "10" if primary_option != "10" else "0"
-    alt = _call_tmap(
-        origin,
-        destination,
-        search_option=alt_option,
-        route_suffix="alt",
-    )
-    if alt:
-        candidates.append(alt)
+    if settings.tmap_pedestrian_alt_enabled:
+        alt_option = "10" if primary_option != "10" else "0"
+        alt = _call_tmap(
+            origin,
+            destination,
+            search_option=alt_option,
+            route_suffix="alt",
+        )
+        if alt:
+            candidates.append(alt)
 
     if not candidates:
         print("[경로] Tmap 보행자 API 전부 실패 - MOCK 폴백 없이 빈 결과 반환")
         return []
-    print(f"[경로] === Tmap 보행자 API 성공: 후보 {len(candidates)}개 (searchOption {primary_option}/{alt_option}) ===")
+    alt_label = "alt 포함" if settings.tmap_pedestrian_alt_enabled else "alt 생략"
+    print(f"[경로] === Tmap 보행자 API 성공: 후보 {len(candidates)}개 ({alt_label}) ===")
     return _finalize_candidates(_deduplicate_candidates(candidates))

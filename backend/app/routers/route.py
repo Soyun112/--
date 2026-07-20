@@ -158,7 +158,11 @@ def compute_route(req: RouteRequest) -> RouteResponse:
     if not raw_candidates:
         raise HTTPException(
             status_code=503,
-            detail="Tmap 보행자 경로를 불러오지 못했습니다. Render에 TMAP_APP_KEY가 설정되어 있는지, Manual Deploy로 최신 코드가 배포됐는지 확인해주세요.",
+            detail=(
+                "Tmap 보행자 경로를 불러오지 못했습니다. "
+                "API 호출 한도(429)에 걸렸을 수 있으니 1~2분 후 다시 시도해 주세요. "
+                "Render에 TMAP_APP_KEY가 설정되어 있는지도 확인해 주세요."
+            ),
         )
     night = is_nighttime()
     scored = score_candidates(raw_candidates, is_night=night)
