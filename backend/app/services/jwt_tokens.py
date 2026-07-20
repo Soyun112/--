@@ -56,7 +56,7 @@ def create_oauth_state(*, frontend_url: str) -> str:
 
 
 def decode_oauth_state(state: str) -> dict[str, Any]:
-    payload = jwt.decode(token=state, key=settings.jwt_secret, algorithms=[ALGORITHM])
+    payload = jwt.decode(state, settings.jwt_secret, algorithms=[ALGORITHM])
     if payload.get("typ") != "oauth_state":
         raise jwt.InvalidTokenError("invalid oauth state")
     return payload

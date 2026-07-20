@@ -129,6 +129,7 @@ def auth_status() -> dict:
         "enabled": settings.auth_enabled,
         "configured": settings.auth_config_status,
         "redirect_uri": settings.google_redirect_uri,
+        "frontend_url": settings.default_frontend_url,
         "client_id": settings.google_client_id,
     }
 
