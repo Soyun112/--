@@ -13,3 +13,16 @@ services:
         value: "3.12.0"
       - key: PUBLIC_DATA_MOCK
         value: "true"
+      # 아래는 Render 대시보드에서 값을 직접 입력 (sync: false)
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: JWT_EXPIRE_HOURS
+        sync: false

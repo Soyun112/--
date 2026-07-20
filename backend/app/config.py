@@ -49,6 +49,42 @@ class Settings:
     document_ingest_enabled: bool = _bool_env("DOCUMENT_INGEST_ENABLED", False)
     enable_openapi_docs: bool = _bool_env("ENABLE_OPENAPI_DOCS", False)
 
+    # Google OAuth (Render 환경 변수 / 로컬 .env)
+    google_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+    google_client_secret: str = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+    google_redirect_uri: str = os.getenv("GOOGLE_REDIRECT_URI", "").strip()
+    jwt_secret: str = os.getenv("JWT_SECRET", "").strip()
+    jwt_expire_hours: int = int(os.getenv("JWT_EXPIRE_HOURS", "168"))
+    default_frontend_url: str = os.getenv(
+        "FRONTEND_URL", "https://kids-abcd.vercel.app"
+    ).strip().rstrip("/")
+
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(
+            self.google_client_id
+            and self.google_client_secret
+            and self.google_redirect_uri
+            and self.jwt_secret
+        )
+
+    @property
+    def allowed_frontend_origins(self) -> list[str]:
+        raw = os.getenv("ALLOWED_FRONTEND_ORIGINS", "").strip()
+        defaults = [
+            self.default_frontend_url,
+            "http://localhost:5500",
+            "http://127.0.0.1:5500",
+        ]
+        if not raw:
+            return list(dict.fromkeys(defaults))
+        extra = [part.strip().rstrip("/") for part in raw.split(",") if part.strip()]
+        return list(dict.fromkeys(defaults + extra))
+
+    def is_allowed_frontend_url(self, url: str) -> bool:
+        normalized = url.rstrip("/")
+        return normalized in self.allowed_frontend_origins
+
     @property
     def cors_origins(self) -> list[str]:
         raw = os.getenv("CORS_ORIGINS", "").strip()
@@ -57,10 +93,12 @@ class Settings:
             "http://localhost:5500",
             "http://127.0.0.1:8000",
             "http://localhost:8000",
+            "https://kids-abcd.vercel.app",
             "null",
         ]
+        defaults.extend(self.allowed_frontend_origins)
         if not raw:
-            return defaults
+            return list(dict.fromkeys(defaults))
         extra = [part.strip() for part in raw.split(",") if part.strip()]
         return list(dict.fromkeys(defaults + extra))
 

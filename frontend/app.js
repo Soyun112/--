@@ -1,21 +1,4 @@
-// 로컬/file://: http://127.0.0.1:8000 / 배포(Vercel 등): 같은 도메인 /api → 백엔드 프록시
-function resolveApiBase() {
-  if (window.API_BASE !== undefined && window.API_BASE !== null && window.API_BASE !== "") {
-    return window.API_BASE;
-  }
-  const host = window.location.hostname;
-  const isLocal =
-    !host ||
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    window.location.protocol === "file:";
-  // Vercel·커스텀 도메인 모두 상대경로(/api) 사용 → vercel.json rewrite로 Render 연결
-  if (!isLocal) {
-    return "";
-  }
-  return "http://127.0.0.1:8000";
-}
-const API_BASE = resolveApiBase();
+// API_BASE는 auth.js에서 정의 (로컬 8000 / 배포 시 /api 프록시)
 
 const CATEGORY_COLORS = {
   cctv: "#2f7dd1",
@@ -66,11 +49,15 @@ const state = {
   clockTimer: null,
 };
 
-async function fetchJson(path, options) {
+async function fetchJson(path, options = {}) {
   const url = `${API_BASE}${path}`;
+  const headers = {
+    ...(options.headers || {}),
+    ...authHeaders(),
+  };
   let res;
   try {
-    res = await fetch(url, options);
+    res = await fetch(url, { ...options, headers });
   } catch (err) {
     const onVercel = /\.vercel\.app$/i.test(window.location.hostname);
     if (onVercel) {
@@ -1142,6 +1129,12 @@ function setTheme(theme) {
 }
 
 async function init() {
+  document.getElementById("google-login-btn").addEventListener("click", startGoogleLogin);
+  document.getElementById("logout-btn").addEventListener("click", logout);
+
+  const user = await requireAuth();
+  if (!user) return;
+
   document.getElementById("fill-demo-btn").addEventListener("click", fillDemoCoordinates);
   document.getElementById("demo-scenario-select").addEventListener("change", fillDemoCoordinates);
   document.getElementById("swap-locations").addEventListener("click", swapLocations);

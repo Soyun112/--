@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import db
 from .config import settings
-from .routers import documents, route
+from .routers import auth, documents, route
 from .services import public_data
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -34,6 +34,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(route.router)
 app.include_router(documents.router)
 
