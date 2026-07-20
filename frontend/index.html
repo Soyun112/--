@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>AI 어린이 안심 길찾기</title>
 <link rel="stylesheet" href="styles.css" />
+<!-- Render 동기 부트스트랩: document.write 로 jsv2(실 SDK) 로드. Vercel은 /api → Render 프록시 -->
+<script src="/api/tmap-bootstrap.js"></script>
+<!-- Vercel 빌드 시 TMAP_APP_KEY 가 있으면 여기서도 sync jsv2 주입 (Render 미배포 대비) -->
+<script src="tmap-key.js"></script>
 </head>
 <body>
   <!-- 로그인 화면 (미로그인 시) -->
@@ -45,7 +49,6 @@
         <button type="button" class="mode-button" data-mode="kid" aria-pressed="false">아이 모드</button>
       </div>
       <button type="button" id="theme-toggle" class="theme-toggle" aria-pressed="false">다크 모드</button>
-      <div id="mock-badges" class="badges"></div>
     </div>
   </header>
 
@@ -63,12 +66,12 @@
       <form id="route-form">
         <fieldset>
           <legend>출발지 (건물명 · 역 이름 · 주소)</legend>
-          <input type="text" id="origin-query" aria-label="출발지" value="대림역삼아파트" placeholder="예: 강남역, 코엑스, OO초등학교" required />
+          <input type="text" id="origin-query" aria-label="출발지" value="개나리SK뷰5차아파트" placeholder="예: 강남역, 코엑스, OO초등학교" required />
         </fieldset>
         <button type="button" id="swap-locations" class="swap-locations" aria-label="출발지와 목적지 바꾸기" title="출발지와 목적지 바꾸기">↕</button>
         <fieldset>
           <legend>목적지 (건물명 · 역 이름 · 주소)</legend>
-          <input type="text" id="dest-query" aria-label="목적지" value="역삼초등학교" placeholder="예: 학교, 서울역, 봉은사" required />
+          <input type="text" id="dest-query" aria-label="목적지" value="도성초등학교" placeholder="예: 학교, 서울역, 봉은사" required />
         </fieldset>
         <!-- 아이용 AI 설명 난이도 조절 기능을 다시 사용할 때 활성화합니다.
         <label class="age-label">아이 나이
@@ -90,23 +93,24 @@
           </select>
         </label>
         <p id="scenario-hint" class="hint"></p>
-        <button type="button" id="fill-demo-btn" class="secondary">선택한 시나리오 적용</button>
       </details>
+      <section class="results-panel">
+        <h2 id="results-label">안전한 길 비교</h2>
+        <div id="candidates-list" class="candidates-list">
+          <p class="placeholder">안전 경로를 찾으면 여기에 결과가 표시됩니다.</p>
+        </div>
+      </section>
     </section>
 
     <section class="panel map-panel">
       <h2><span id="route-label">부모님이 추천한 길</span> <span id="weather-badge" class="weather-badge" style="display:none;"></span></h2>
       <p id="mode-message" class="mode-message">안전 점수와 주변 시설을 비교해 가장 안전한 길을 골랐어요.</p>
-      <div id="leaflet-map" class="map-surface" style="display:none;"></div>
-      <svg id="svg-map" class="map-surface" viewBox="0 0 600 600" preserveAspectRatio="xMidYMid meet"></svg>
-      <div id="legend" class="legend"></div>
-    </section>
-
-    <section class="panel results-panel">
-      <h2 id="results-label">안전한 길 비교</h2>
-      <div id="candidates-list" class="candidates-list">
-        <p class="placeholder">안전 경로를 찾으면 여기에 결과가 표시됩니다.</p>
+      <div class="map-wrap">
+        <div id="tmap" class="map-surface"></div>
+        <div id="map-status" class="visible">티맵 지도를 불러오는 중…</div>
+        <svg id="svg-map" class="map-surface" style="display:none;" viewBox="0 0 600 600" preserveAspectRatio="xMidYMid meet"></svg>
       </div>
+      <div id="legend" class="legend"></div>
     </section>
 
     <section class="panel ai-panel">

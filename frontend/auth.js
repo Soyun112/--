@@ -11,7 +11,8 @@ function resolveApiBase() {
     host === "localhost" ||
     host === "127.0.0.1" ||
     window.location.protocol === "file:";
-  if (!isLocal) {
+  // 백엔드(8000)에서 정적 파일을 같이 제공할 때는 상대경로 /api 사용
+  if (!isLocal || window.location.port === "8000") {
     return "";
   }
   return "http://127.0.0.1:8000";

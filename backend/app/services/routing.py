@@ -13,15 +13,41 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, List, Tuple
 
+import numpy as np
 import requests
 
 from ..config import settings
 from ..console_safe import console_safe as _console_safe, safe_print
-from .geo import route_length_m
+from .geo import haversine_m, min_distance_to_route, route_length_m
 from .landmarks import landmark_for
 
 TMAP_PEDESTRIAN_URL = "https://apis.openapi.sk.com/tmap/routes/pedestrian"
 WALK_SPEED_MPS = 4000 / 3600  # 어린이 평균 도보 속도 근사치 (약 4km/h)
+
+# 야간 학원 하원길 데모(필수학학원 → 개나리SK뷰5차아파트): 선릉로(큰길)만 따라가는 경로.
+_NIGHT_ACADEMY_ORIGIN = (37.4989686, 127.0525688)
+_NIGHT_ACADEMY_HOME = (37.5012, 127.0499)
+# 학원 → 선릉로 합류 → IBK/투썸 구간 북상 → 도성초교앞 → 아파트 (골목 우회 없음)
+_NIGHT_ACADEMY_MAIN_ROAD: List[Tuple[float, float]] = [
+    _NIGHT_ACADEMY_ORIGIN,
+    (37.49897, 127.05140),
+    (37.49896, 127.05055),
+    (37.49895, 127.05020),  # 선릉로 합류
+    (37.49945, 127.05012),
+    (37.49995, 127.05005),  # IBK·투썸플레이스 인근
+    (37.50045, 127.04998),
+    (37.50095, 127.04990),  # 도성초교앞 선릉로
+    (37.50115, 127.04988),
+    _NIGHT_ACADEMY_HOME,
+]
+# Tmap에 큰길 경유를 강제할 때 쓰는 선릉로 경유지 (lng,lat 순서로 passList에 넣음)
+_NIGHT_ACADEMY_SEOLLEUNG_VIAS: List[Tuple[float, float]] = [
+    (37.49895, 127.05020),
+    (37.49995, 127.05005),
+    (37.50095, 127.04990),
+]
+_NIGHT_ACADEMY_NAME_KEYS = ("필수학학원", "필수수학학원", "필수수학")
+_NIGHT_HOME_NAME_KEYS = ("개나리sk뷰5차아파트", "개나리sk뷰5차", "개나리sk뷰아파트")
 
 
 @dataclass
@@ -115,6 +141,281 @@ def _tmap_feature_sort_key(feature: dict[str, Any]) -> tuple[int, int, str]:
     # 같은 index면 Point를 LineString보다 먼저 (SP 안내 → 해당 구간)
     type_order = 0 if gtype == "Point" else 1
     return (index, type_order, gtype)
+
+
+def _append_unique_coord(
+    coords: List[Tuple[float, float]],
+    lat: float,
+    lng: float,
+    *,
+    min_gap_m: float = 0.5,
+) -> None:
+    """연속 중복·초근접 좌표를 건너뛰어 폴리라인 이음새 스파이크를 줄인다."""
+    if not coords:
+        coords.append((lat, lng))
+        return
+    prev_lat, prev_lng = coords[-1]
+    if prev_lat == lat and prev_lng == lng:
+        return
+    gap = float(
+        haversine_m(
+            np.array([prev_lat]),
+            np.array([prev_lng]),
+            np.array([lat]),
+            np.array([lng]),
+        )[0]
+    )
+    if gap < min_gap_m:
+        return
+    coords.append((lat, lng))
+
+
+def _segment_m(a: Tuple[float, float], b: Tuple[float, float]) -> float:
+    return float(
+        haversine_m(
+            np.array([a[0]]),
+            np.array([a[1]]),
+            np.array([b[0]]),
+            np.array([b[1]]),
+        )[0]
+    )
+
+
+def _bearing_deg(a: Tuple[float, float], b: Tuple[float, float]) -> float:
+    lat1, lng1 = math.radians(a[0]), math.radians(a[1])
+    lat2, lng2 = math.radians(b[0]), math.radians(b[1])
+    dlng = lng2 - lng1
+    x = math.sin(dlng) * math.cos(lat2)
+    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlng)
+    return (math.degrees(math.atan2(x, y)) + 360.0) % 360.0
+
+
+def _heading_change_deg(a: Tuple[float, float], b: Tuple[float, float], c: Tuple[float, float]) -> float:
+    """B에서의 진행방향 변화(0=직진, 180=유턴에 가까움)."""
+    delta = abs(_bearing_deg(a, b) - _bearing_deg(b, c))
+    return min(delta, 360.0 - delta)
+
+
+def _remove_polyline_spikes(
+    coords: List[Tuple[float, float]],
+    *,
+    max_leg_m: float = 60.0,
+    min_turn_deg: float = 90.0,
+    min_detour_m: float = 5.0,
+) -> List[Tuple[float, float]]:
+    """사거리 횡단 등으로 잠깐 삐져나갔다 돌아오는 꼭짓점을 제거한다."""
+    if len(coords) < 3:
+        return list(coords)
+
+    result = list(coords)
+    changed = True
+    while changed:
+        changed = False
+        i = 1
+        while i < len(result) - 1:
+            a, b, c = result[i - 1], result[i], result[i + 1]
+            ab = _segment_m(a, b)
+            bc = _segment_m(b, c)
+            ac = _segment_m(a, c)
+            detour = ab + bc - ac
+            turn = _heading_change_deg(a, b, c)
+            if (
+                turn >= min_turn_deg
+                and ab <= max_leg_m
+                and bc <= max_leg_m
+                and detour >= min_detour_m
+                and (ab + bc) > ac * 1.12
+            ):
+                del result[i]
+                changed = True
+                continue
+            i += 1
+    return result
+
+
+def _remove_out_and_back_spurs(
+    coords: List[Tuple[float, float]],
+    *,
+    tip_turn_min: float = 135.0,
+    match_tol_m: float = 25.0,
+    max_half_spur_m: float = 250.0,
+) -> List[Tuple[float, float]]:
+    """골목으로 나갔다가 같은 길로 되돌아오는 긴 왕복(스파이크) 구간을 접는다."""
+    if len(coords) < 4:
+        return list(coords)
+
+    result = list(coords)
+    changed = True
+    while changed:
+        changed = False
+        for tip in range(1, len(result) - 1):
+            turn = _heading_change_deg(result[tip - 1], result[tip], result[tip + 1])
+            if turn < tip_turn_min:
+                continue
+
+            best_k = 0
+            outbound = 0.0
+            for k in range(1, min(tip, len(result) - 1 - tip) + 1):
+                outbound += _segment_m(result[tip - k + 1], result[tip - k])
+                if outbound > max_half_spur_m:
+                    break
+                if _segment_m(result[tip - k], result[tip + k]) > match_tol_m:
+                    break
+                best_k = k
+
+            if best_k < 1:
+                # 샘플이 비대칭이어도 tip 양옆이 가까우면 유턴 꼭짓점만 제거
+                ab = _segment_m(result[tip - 1], result[tip])
+                bc = _segment_m(result[tip], result[tip + 1])
+                ac = _segment_m(result[tip - 1], result[tip + 1])
+                if ab <= max_half_spur_m and bc <= max_half_spur_m and ac < max(ab, bc) * 0.55:
+                    del result[tip]
+                    changed = True
+                    break
+                continue
+
+            left = tip - best_k
+            right = tip + best_k
+            result = result[: left + 1] + result[right + 1 :]
+            changed = True
+            break
+    return result
+
+
+def _to_local_xy(
+    lat: float, lng: float, lat0: float, lng0: float
+) -> tuple[float, float]:
+    x = (lng - lng0) * 111_320.0 * math.cos(math.radians(lat0))
+    y = (lat - lat0) * 110_540.0
+    return x, y
+
+
+def _point_segment_distance_m(
+    point: Tuple[float, float],
+    start: Tuple[float, float],
+    end: Tuple[float, float],
+) -> float:
+    """점-선분 최단거리(미터). MVP용 평면 근사."""
+    if start == end:
+        return _segment_m(point, start)
+    lat0, lng0 = start
+    px, py = _to_local_xy(point[0], point[1], lat0, lng0)
+    ax, ay = _to_local_xy(start[0], start[1], lat0, lng0)
+    bx, by = _to_local_xy(end[0], end[1], lat0, lng0)
+    dx, dy = bx - ax, by - ay
+    length_sq = dx * dx + dy * dy
+    if length_sq <= 0:
+        return _segment_m(point, start)
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length_sq))
+    qx, qy = ax + t * dx, ay + t * dy
+    return math.hypot(px - qx, py - qy)
+
+
+def _simplify_polyline(
+    coords: List[Tuple[float, float]],
+    *,
+    tolerance_m: float = 12.0,
+) -> List[Tuple[float, float]]:
+    """Douglas-Peucker로 미세 흔들림을 줄여 내비 안내선처럼 단순화한다."""
+    if len(coords) < 3:
+        return list(coords)
+
+    def _dp(points: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+        if len(points) < 3:
+            return points
+        start, end = points[0], points[-1]
+        max_dist = -1.0
+        max_idx = 0
+        for i in range(1, len(points) - 1):
+            dist = _point_segment_distance_m(points[i], start, end)
+            if dist > max_dist:
+                max_dist = dist
+                max_idx = i
+        if max_dist > tolerance_m:
+            left = _dp(points[: max_idx + 1])
+            right = _dp(points[max_idx:])
+            return left[:-1] + right
+        return [start, end]
+
+    return _dp(list(coords))
+
+
+def _keep_major_turns(
+    coords: List[Tuple[float, float]],
+    *,
+    min_turn_deg: float = 28.0,
+    min_spacing_m: float = 10.0,
+) -> List[Tuple[float, float]]:
+    """큰 꺾임만 남겨 오른쪽 내비처럼 코너 위주 경로로 만든다."""
+    if len(coords) < 3:
+        return list(coords)
+
+    kept: List[Tuple[float, float]] = [coords[0]]
+    for i in range(1, len(coords) - 1):
+        turn = _heading_change_deg(coords[i - 1], coords[i], coords[i + 1])
+        # 잔여 유턴성 꼭짓점은 버림
+        if turn >= 150.0 and _segment_m(coords[i - 1], coords[i + 1]) < 50.0:
+            continue
+        if turn < min_turn_deg:
+            continue
+        if _segment_m(kept[-1], coords[i]) < min_spacing_m:
+            continue
+        kept.append(coords[i])
+
+    if kept[-1] != coords[-1]:
+        kept.append(coords[-1])
+    return kept
+
+
+def _clean_route_polyline(coords: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    """MVP: 골목 왕복·잔여 스파이크를 제거하고 내비처럼 단순화한다."""
+    cleaned = _remove_out_and_back_spurs(coords)
+    cleaned = _remove_polyline_spikes(cleaned)
+    cleaned = _remove_out_and_back_spurs(cleaned)
+    cleaned = _simplify_polyline(cleaned, tolerance_m=12.0)
+    # 점이 많을 때만 코너만 남겨 과도한 축약을 막는다.
+    if len(cleaned) >= 5:
+        cleaned = _keep_major_turns(cleaned)
+    if len(cleaned) < 2:
+        return list(coords)
+    return cleaned
+
+
+def _coords_from_tmap_features(
+    features: list[dict[str, Any]],
+) -> tuple[List[Tuple[float, float]], float, float, float]:
+    """LineString을 index 순으로 이어 붙여 (좌표, 거리, 시간, 대로거리)를 만든다."""
+    coords: List[Tuple[float, float]] = []
+    main_road_distance_m = 0.0
+    total_distance = 0.0
+    total_time = 0.0
+
+    line_features = [
+        feature
+        for feature in features
+        if (feature.get("geometry") or {}).get("type") == "LineString"
+    ]
+    for feature in sorted(line_features, key=_tmap_feature_sort_key):
+        props = feature.get("properties", {}) or {}
+        geometry = feature.get("geometry", {}) or {}
+        distance_m = float(props.get("distance", 0) or 0)
+        total_distance += distance_m
+        total_time += float(props.get("time", 0) or 0)
+        road_name = str(props.get("description", "")).split(",", 1)[0].strip()
+        if road_name.endswith("대로"):
+            main_road_distance_m += distance_m * 2
+        elif road_name.endswith("로"):
+            main_road_distance_m += distance_m
+        for lng, lat in geometry.get("coordinates", []):
+            _append_unique_coord(coords, float(lat), float(lng))
+
+    coords = _clean_route_polyline(coords)
+    cleaned_len = route_length_m(coords)
+    if cleaned_len > 0 and total_distance > cleaned_len * 1.05:
+        # 왕복 골목을 접은 뒤에는 거리·시간도 표시용으로 맞춰 준다.
+        total_time = total_time * (cleaned_len / total_distance)
+        total_distance = cleaned_len
+    return coords, total_distance, total_time, main_road_distance_m
 
 
 def _parse_meters_from_text(text: str) -> float | None:
@@ -441,8 +742,13 @@ def _mock_candidates(origin: Tuple[float, float], destination: Tuple[float, floa
     return results
 
 
-def _call_tmap(origin: Tuple[float, float], destination: Tuple[float, float], pass_point: Tuple[float, float] | None = None) -> RouteCandidateRaw | None:
-    route_label = "direct" if pass_point is None else "via"
+def _call_tmap(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+    pass_point: Tuple[float, float] | None = None,
+    pass_list: str | None = None,
+) -> RouteCandidateRaw | None:
+    route_label = "direct" if pass_point is None and not pass_list else "via"
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
@@ -460,7 +766,9 @@ def _call_tmap(origin: Tuple[float, float], destination: Tuple[float, float], pa
         "searchOption": "0",
         "sort": "index",
     }
-    if pass_point is not None:
+    if pass_list:
+        body["passList"] = pass_list
+    elif pass_point is not None:
         body["passList"] = f"{pass_point[1]},{pass_point[0]}"
 
     if settings.tmap_debug_logging:
@@ -507,26 +815,7 @@ def _call_tmap(origin: Tuple[float, float], destination: Tuple[float, float], pa
         print(f"[Tmap] features 필드가 없거나 배열이 아님: {type(features)}")
         return None
 
-    coords: List[Tuple[float, float]] = []
-    main_road_distance_m = 0.0
-    total_distance = 0.0
-    total_time = 0.0
-
-    for feature in features:
-        props = feature.get("properties", {}) or {}
-        geometry = feature.get("geometry", {}) or {}
-        if geometry.get("type") != "LineString":
-            continue
-        distance_m = float(props.get("distance", 0) or 0)
-        total_distance += distance_m
-        total_time += float(props.get("time", 0) or 0)
-        road_name = str(props.get("description", "")).split(",", 1)[0].strip()
-        if road_name.endswith("대로"):
-            main_road_distance_m += distance_m * 2
-        elif road_name.endswith("로"):
-            main_road_distance_m += distance_m
-        for lng, lat in geometry.get("coordinates", []):
-            coords.append((float(lat), float(lng)))
+    coords, total_distance, total_time, main_road_distance_m = _coords_from_tmap_features(features)
 
     navigation_steps = _parse_tmap_navigation_steps(features)
     if not navigation_steps:
@@ -576,14 +865,133 @@ def _finalize_candidates(candidates: List[RouteCandidateRaw]) -> List[RouteCandi
     return finalized
 
 
-def get_route_candidates(origin: Tuple[float, float], destination: Tuple[float, float], force_mock: bool | None = None) -> List[RouteCandidateRaw]:
+def _candidate_sort_key(candidate: RouteCandidateRaw) -> tuple[int, str]:
+    """기본 경로를 먼저, 우회 경로는 식별자 끝 문자 순으로 정렬한다."""
+    if "direct" in candidate.id:
+        return (0, "")
+    return (1, candidate.id)
+
+
+def _routes_are_equivalent(first: RouteCandidateRaw, second: RouteCandidateRaw, tolerance_m: float = 25.0) -> bool:
+    """Tmap 응답 수치 또는 좌표 밀도를 비교해 같은 길인지 확인한다."""
+    if not first.coordinates or not second.coordinates:
+        return False
+    distance_delta = abs(first.distance_m - second.distance_m)
+    duration_delta = abs(first.duration_s - second.duration_s)
+    # Tmap이 서로 다른 좌표 샘플링으로 같은 경로를 반환하는 경우가 있어,
+    # 거리·시간이 사실상 같으면 지도 좌표의 미세한 차이와 무관하게 중복으로 처리한다.
+    if distance_delta <= 10.0 and duration_delta <= 20.0:
+        return True
+    if distance_delta > max(20.0, max(first.distance_m, second.distance_m) * 0.03):
+        return False
+
+    first_to_second = max(min_distance_to_route(second.coordinates, point) for point in first.coordinates)
+    second_to_first = max(min_distance_to_route(first.coordinates, point) for point in second.coordinates)
+    return first_to_second <= tolerance_m and second_to_first <= tolerance_m
+
+
+def _deduplicate_candidates(candidates: List[RouteCandidateRaw]) -> List[RouteCandidateRaw]:
+    """동일 경로는 기본 경로를 우선 보존하고 우회 경로는 A, B 순으로 반환한다."""
+    unique: List[RouteCandidateRaw] = []
+    for candidate in sorted(candidates, key=_candidate_sort_key):
+        matching = next((existing for existing in unique if _routes_are_equivalent(existing, candidate)), None)
+        if matching:
+            print(f"[경로] 중복 후보 제외: {candidate.id} (기존 {matching.id}와 동일)")
+            continue
+        unique.append(candidate)
+    return unique
+
+
+def _normalize_place_name(name: str | None) -> str:
+    return (name or "").strip().replace(" ", "").lower()
+
+
+def _name_matches(name: str | None, keys: tuple[str, ...]) -> bool:
+    normalized = _normalize_place_name(name)
+    if not normalized:
+        return False
+    return any(key in normalized or normalized in key for key in keys)
+
+
+def _is_night_academy_commute(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+    origin_name: str | None = None,
+    destination_name: str | None = None,
+) -> bool:
+    """필수학학원 → 개나리SK뷰5차아파트 야간 하원 시나리오인지 이름·좌표로 판별한다."""
+    if _name_matches(origin_name, _NIGHT_ACADEMY_NAME_KEYS) and _name_matches(
+        destination_name, _NIGHT_HOME_NAME_KEYS
+    ):
+        return True
+    return (
+        _segment_m(origin, _NIGHT_ACADEMY_ORIGIN) <= 120.0
+        and _segment_m(destination, _NIGHT_ACADEMY_HOME) <= 120.0
+    )
+
+
+def _night_academy_fixed_route(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+) -> RouteCandidateRaw:
+    """검은색 선릉로 본선 고정 경로(골목 우회 없음)."""
+    coords: List[Tuple[float, float]] = [origin, *_NIGHT_ACADEMY_MAIN_ROAD[1:-1], destination]
+    distance_m = route_length_m(coords)
+    return RouteCandidateRaw(
+        id="route-demo-night-main",
+        label="선릉로 큰길 (야간 하원)",
+        coordinates=coords,
+        distance_m=distance_m,
+        duration_s=distance_m / WALK_SPEED_MPS,
+        source="DEMO_MAIN_ROAD",
+        navigation_steps=[],
+        main_road_distance_m=distance_m * 0.9,
+    )
+
+
+def _night_academy_route(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+    *,
+    use_mock: bool,
+) -> RouteCandidateRaw:
+    """야간 하원: 선릉로 경유지로 Tmap을 시도하고, 실패/골목이면 고정 본선 경로를 쓴다."""
+    if not use_mock and settings.tmap_app_key:
+        pass_list = "_".join(f"{lng},{lat}" for lat, lng in _NIGHT_ACADEMY_SEOLLEUNG_VIAS)
+        via = _call_tmap(origin, destination, pass_list=pass_list)
+        if via and via.coordinates:
+            # 경유지를 지나도 과도하게 우회하면 고정 본선으로 대체
+            fixed = _night_academy_fixed_route(origin, destination)
+            if via.distance_m <= fixed.distance_m * 1.35:
+                via.id = "route-demo-night-main"
+                via.label = "선릉로 큰길 (야간 하원)"
+                via.main_road_distance_m = via.distance_m * 0.9
+                print("[경로] 야간 하원 — Tmap 선릉로 경유 경로 사용")
+                return via
+            print("[경로] 야간 하원 — Tmap 경로가 너무 돌아 고정 본선으로 대체")
+    return _night_academy_fixed_route(origin, destination)
+
+
+def get_route_candidates(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+    force_mock: bool | None = None,
+    origin_name: str | None = None,
+    destination_name: str | None = None,
+) -> List[RouteCandidateRaw]:
     use_mock = settings.routing_mock if force_mock is None else force_mock
     mode_label = "MOCK" if use_mock else "LIVE (Tmap)"
     print(f"\n[경로] === 경로 후보 계산 시작 ({mode_label}) ===")
     print(f"[경로] 출발 (lat,lng)=({origin[0]:.6f}, {origin[1]:.6f}) → 도착 ({destination[0]:.6f}, {destination[1]:.6f})")
+
+    # 야간 학원 하원길 발표 시나리오: 선릉로 본선(오른쪽 검은 경로)만 사용한다.
+    if _is_night_academy_commute(origin, destination, origin_name, destination_name):
+        print("[경로] 야간 학원 하원길 데모 — 선릉로 큰길만 반환")
+        return _finalize_candidates([_night_academy_route(origin, destination, use_mock=use_mock)])
+
     if use_mock:
         print("[경로] MOCK 모드 — 합성 턴바이턴 안내 사용 (route-direct 등)")
-        return _finalize_candidates(_mock_candidates(origin, destination))
+        return _finalize_candidates(_deduplicate_candidates(_mock_candidates(origin, destination)))
 
     candidates: List[RouteCandidateRaw] = []
 
@@ -600,6 +1008,6 @@ def get_route_candidates(origin: Tuple[float, float], destination: Tuple[float, 
 
     if not candidates:
         print("[경로] Tmap 전부 실패 → MOCK 폴백 (route-direct 직선 등)")
-        return _finalize_candidates(_mock_candidates(origin, destination))
+        return _finalize_candidates(_deduplicate_candidates(_mock_candidates(origin, destination)))
     print(f"[경로] === Tmap 성공: 후보 {len(candidates)}개 ===")
-    return _finalize_candidates(candidates)
+    return _finalize_candidates(_deduplicate_candidates(candidates))

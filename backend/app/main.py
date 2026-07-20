@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import sys
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from . import db
 from .config import settings
 from .routers import auth, documents, route
 from .services import public_data
+
+FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -85,6 +90,7 @@ def on_startup() -> None:
 def get_public_config() -> dict:
     return {
         "demo_center": {"lat": settings.demo_center_lat, "lng": settings.demo_center_lng},
+        "tmap_web_key": settings.tmap_app_key,
         "mock": {
             "routing": settings.routing_mock,
             "public_data": settings.public_data_mock,
@@ -95,4 +101,32 @@ def get_public_config() -> dict:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "api_version": "2026-07-20-tmap"}
+
+
+@app.get("/api/tmap-bootstrap.js")
+def tmap_bootstrap_js():
+    """head에서 동기 로드되어 document.write 로 Tmap jsv2 로더를 주입한다.
+
+    주의: jsv2 응답은 실제 SDK가 아니라 document.write 로 tmapjs2.min.js 를
+    불러오는 스텁이다. async createElement 로 넣으면 write 가 실패해
+    LatLng/Map 생성자가 영원히 안 생긴다.
+    """
+    from fastapi.responses import Response
+
+    key = settings.tmap_app_key.replace("\\", "\\\\").replace("'", "\\'")
+    body = (
+        "(function(){\n"
+        f"  var key = '{key}';\n"
+        "  if (!key) { window.__TMAP_BOOT_ERROR__ = 'TMAP_APP_KEY empty'; return; }\n"
+        "  if (document.querySelector('script[data-tmap-sdk=\"1\"]')) return;\n"
+        "  // 파싱 중(동기)일 때만 document.write 가 동작한다\n"
+        "  document.write(\"<script data-tmap-sdk='1' src='https://apis.openapi.sk.com/tmap/jsv2?version=1&appKey=\" + encodeURIComponent(key) + \"'><\\/script>\");\n"
+        "})();\n"
+    )
+    return Response(content=body, media_type="application/javascript; charset=utf-8")
+
+
+# API 라우트 등록 이후에 정적 프론트를 마운트해야 /api 가 가려지지 않는다.
+if FRONTEND_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

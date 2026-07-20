@@ -4,7 +4,7 @@ from app import db
 from app.config import settings
 from app.services import public_data
 from app.services.document_pipeline import ingest_document
-from app.services.routing import get_route_candidates
+from app.services.routing import RouteCandidateRaw, _deduplicate_candidates, get_route_candidates
 from app.services.scoring import score_candidates
 
 ORIGIN = (37.4995, 127.0370)
@@ -26,6 +26,38 @@ def test_force_mock_override_always_uses_mock_routing():
     # (데모 중 네트워크 문제와 무관하게 오프라인 시연이 가능함을 보장).
     raw_candidates = get_route_candidates(ORIGIN, DESTINATION, force_mock=True)
     assert all(c.source == "MOCK_ROUTING" for c in raw_candidates)
+
+
+def test_duplicate_detour_keeps_only_base_route_and_orders_alternatives():
+    shared_coordinates = [ORIGIN, DESTINATION]
+    direct = RouteCandidateRaw(
+        id="route-direct",
+        label="기본 경로",
+        coordinates=shared_coordinates,
+        distance_m=600,
+        duration_s=540,
+        source="TEST",
+    )
+    duplicate_detour = RouteCandidateRaw(
+        id="route-via-a",
+        label="우회 경로 A",
+        coordinates=[ORIGIN, (37.5010, 127.0370), DESTINATION],
+        distance_m=600,
+        duration_s=540,
+        source="TEST",
+    )
+    detour_b = RouteCandidateRaw(
+        id="route-via-b",
+        label="우회 경로 B",
+        coordinates=[ORIGIN, (ORIGIN[0], DESTINATION[1]), DESTINATION],
+        distance_m=900,
+        duration_s=810,
+        source="TEST",
+    )
+
+    candidates = _deduplicate_candidates([detour_b, duplicate_detour, direct])
+
+    assert [candidate.id for candidate in candidates] == ["route-direct", "route-via-b"]
 
 
 def test_grid_route_scores_higher_than_diagonal_route():

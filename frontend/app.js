@@ -14,24 +14,38 @@ const CATEGORY_COLORS = {
   safetyStreetlight: "#f5b800",
 };
 
+const PUBLIC_DATA_LEGEND = [
+  ["safety-cctv", "safetyCctv", "안심귀갓길 CCTV"],
+  ["safety-streetlight", "safetyStreetlight", "안심귀갓길 보안등"],
+  ["safety-bell", "safetyBell", "안심벨"],
+  ["emergency-112", "emergency112", "112신고"],
+  ["cctv", "cctv", "어린이보호구역/CCTV"],
+  ["hotspot", "hotspot", "교통사고다발지역"],
+  ["guardian", "guardian", "아동안전지킴이집"],
+  ["streetlight", "streetlight", "보안등/가로등"],
+  ["speed-camera", "speedCamera", "무인단속카메라"],
+  ["doc-risk", "docRisk", "문서 기반 위험지적"],
+  ["doc-safety", "docSafety", "문서 기반 안전조치완료"],
+];
+
 const DEMO_SCENARIOS = {
   morning_school: {
-    origin: "대림역삼아파트",
-    destination: "역삼초등학교",
+    origin: "개나리SK뷰5차아파트",
+    destination: "도성초등학교",
     age: 8,
-    note: "직선 경로는 사고다발지역 2곳과 문서상 무단횡단 위험구간을 지나 안전점수가 낮고, 큰길 우회 경로가 CCTV/보호구역 덕분에 추천됩니다.",
+    note: "도성초등학교 주변 통학로를 비교해 CCTV·보호구역이 많은 길을 추천합니다.",
   },
   night_academy: {
-    origin: "세모수학",
-    destination: "대림역삼아파트",
+    origin: "필수학학원",
+    destination: "개나리SK뷰5차아파트",
     age: 11,
-    note: "이 일대는 범죄위험 근사지수가 전반적으로 높은 지역이지만, 그중에서도 CCTV·보안등이 있는 경로를 골라 추천합니다.",
+    note: "야간 하원은 선릉로 큰길만 따라가도록 안내합니다(골목 우회 없음).",
   },
   school_to_academy: {
-    origin: "역삼초등학교",
-    destination: "세모수학",
+    origin: "도성초등학교",
+    destination: "필수학학원",
     age: 8,
-    note: "학교 수업 후 학원으로 이동하는 길입니다. CCTV와 보안등이 가까운 경로를 비교해 보여줍니다.",
+    note: "도성초등학교에서 필수학학원으로 이동하는 길의 안전시설을 비교해 보여줍니다.",
   },
 };
 
@@ -39,11 +53,13 @@ const state = {
   config: null,
   lastResult: null,
   publicData: null,
-  leafletReady: false,
-  leafletMap: null,
-  leafletLayers: null,
+  tmapReady: false,
+  tmap: null,
+  tmapOverlays: [],
+  infoWindow: null,
   mode: "parent",
   selectedRouteId: null,
+  activePublicLayer: null,
   kidCardSteps: [],
   kidCardIndex: 0,
   clockTimer: null,
@@ -74,22 +90,6 @@ async function fetchJson(path, options = {}) {
   return res.json();
 }
 
-function renderBadges(config) {
-  const el = document.getElementById("mock-badges");
-  const entries = [
-    ["길찾기(Tmap)", config.mock.routing],
-    ["공공데이터", config.mock.public_data],
-    ["Upstage", config.mock.upstage],
-  ];
-  el.innerHTML = entries
-    .map(([label, isMock]) => {
-      const cls = isMock ? "badge" : "badge live";
-      const tag = isMock ? "MOCK" : "LIVE";
-      return `<span class="${cls}">${label}: ${tag}</span>`;
-    })
-    .join("");
-}
-
 function fillDemoCoordinates() {
   const select = document.getElementById("demo-scenario-select");
   const scenario = DEMO_SCENARIOS[select.value] || DEMO_SCENARIOS.morning_school;
@@ -116,6 +116,22 @@ function scoreColor(score) {
   return "#d64545";
 }
 
+function scoreExplanation(candidate) {
+  const features = candidate.features;
+  const safetyFacilities =
+    (features.safety_facility_cctv_count || 0) +
+    (features.safety_facility_streetlight_count || 0) +
+    (features.safety_bell_count || 0) +
+    (features.emergency112_count || 0);
+  if (candidate.safety_score >= 70) {
+    return `안전시설 ${safetyFacilities}곳과 보호구역 정보를 반영해 안전한 길로 평가했어요.`;
+  }
+  if (features.accident_hotspot_count > 0 || features.doc_risk_count > 0) {
+    return `사고다발지역 또는 주의 구간이 있어, 다른 경로와 함께 비교해 보세요.`;
+  }
+  return `주변 안전시설과 도로 정보를 종합해 계산한 안전 점수예요.`;
+}
+
 function routeDisplayName(routeId) {
   if (routeId.includes("direct")) return "기본 경로";
   if (routeId.endsWith("-a") || routeId.includes("grid-a")) return "우회 경로 A";
@@ -123,8 +139,53 @@ function routeDisplayName(routeId) {
   return "안전 경로";
 }
 
+function routeDisplaySortKey(routeId) {
+  if (routeId.includes("direct")) return 0;
+  if (routeId.endsWith("-a") || routeId.includes("grid-a")) return 1;
+  if (routeId.endsWith("-b") || routeId.includes("grid-b")) return 2;
+  return 3;
+}
+
+function isDuplicateRouteCard(first, second) {
+  return (
+    Math.abs(first.distance_m - second.distance_m) <= 10 &&
+    Math.abs(first.duration_s - second.duration_s) <= 20
+  );
+}
+
+function candidatesForDisplay(routeData) {
+  const uniqueCandidates = [...routeData.candidates]
+    .sort((first, second) => routeDisplaySortKey(first.id) - routeDisplaySortKey(second.id))
+    .filter(
+      (candidate, index, candidates) =>
+        !candidates.slice(0, index).some((existing) => isDuplicateRouteCard(existing, candidate))
+    );
+  const recommended =
+    uniqueCandidates.find((candidate) => candidate.id === routeData.recommended_id) ||
+    uniqueCandidates[0];
+  if (!recommended) return [];
+
+  const alternatives = uniqueCandidates
+    .filter(
+      (candidate) =>
+        candidate.id !== recommended.id && candidate.safety_score < recommended.safety_score
+    )
+    .sort(
+      (first, second) =>
+        second.safety_score - first.safety_score ||
+        routeDisplaySortKey(first.id) - routeDisplaySortKey(second.id)
+    );
+  return [recommended, ...alternatives];
+}
+
 function activeRouteId(routeData) {
-  return state.selectedRouteId || routeData.recommended_id;
+  const visibleCandidates = candidatesForDisplay(routeData);
+  if (state.selectedRouteId && visibleCandidates.some((candidate) => candidate.id === state.selectedRouteId)) {
+    return state.selectedRouteId;
+  }
+  return visibleCandidates.some((candidate) => candidate.id === routeData.recommended_id)
+    ? routeData.recommended_id
+    : visibleCandidates[0]?.id;
 }
 
 function activeRoute(routeData) {
@@ -427,6 +488,13 @@ function etaMessageForDuration(durationS) {
   return `지금 출발하면 약 ${formatKoreanTime(arrival)} 도착`;
 }
 
+function routeTimeRange(durationS) {
+  if (!durationS || durationS <= 0) return "";
+  const departure = new Date();
+  const arrival = new Date(departure.getTime() + durationS * 1000);
+  return `${formatKoreanTime(departure)} 출발 → ${formatKoreanTime(arrival)} 도착`;
+}
+
 function updateEtaForSelectedRoute(routeData) {
   const selected = activeRoute(routeData);
   const eta = document.getElementById("time-eta");
@@ -479,10 +547,12 @@ function startLiveClock() {
 
 function renderCandidates(data) {
   const el = document.getElementById("candidates-list");
-  el.innerHTML = data.candidates
+  const displayCandidates = candidatesForDisplay(data);
+  el.innerHTML = displayCandidates
     .map((c) => {
-      const recommended = c.id === activeRouteId(data);
-      const routeName = routeDisplayName(c.id);
+      const isRecommended = c.id === displayCandidates[0]?.id;
+      const isActive = c.id === activeRouteId(data);
+      const routeName = isRecommended ? "추천 경로" : routeDisplayName(c.id);
       const docsHtml = c.features.matched_documents
         .map(
           (d) =>
@@ -490,7 +560,6 @@ function renderCandidates(data) {
         )
         .join("");
       const stars = "⭐".repeat(c.star_rating) + "☆".repeat(3 - c.star_rating);
-      const fc = facilityCounts(c.features);
       const stampsHtml = (c.stamps || [])
         .map(
           (s) =>
@@ -498,25 +567,21 @@ function renderCandidates(data) {
         )
         .join("");
       return `
-        <div class="candidate-card ${recommended ? "recommended selected" : ""}" data-route-id="${c.id}" role="button" tabindex="0" aria-pressed="${recommended}">
+        <div class="candidate-card ${isRecommended ? "recommended" : ""} ${isActive ? "selected" : ""}" data-route-id="${c.id}" role="button" tabindex="0" aria-pressed="${isActive}">
           <h4>
-            <span>${routeName}${recommended ? '<span class="recommended-tag">★ 선택한 길</span>' : ""}</span>
+            <span>${routeName}${isRecommended ? '<span class="recommended-tag">★ 가장 안전한 길</span>' : ""}</span>
             <span class="score-pill" style="background:${scoreColor(c.safety_score)}">${c.safety_score}점</span>
           </h4>
           <div class="star-rating" title="안전 등급 ${c.star_rating}/3">${stars}</div>
-          <div class="candidate-meta">
+          ${isRecommended ? `<div class="candidate-time">${routeTimeRange(c.duration_s)}</div>` : ""}
+          <div class="candidate-meta candidate-summary">
             <span>거리: ${(c.distance_m / 1000).toFixed(2)}km</span>
             <span>예상 소요: ${Math.round(c.duration_s / 60)}분</span>
-            ${(() => {
-              const msg = c.id === activeRouteId(data) ? etaMessageForDuration(c.duration_s) : "";
-              return msg ? `<span class="eta-chip">${msg}</span>` : "";
-            })()}
-            <span>CCTV·보안등: ${fc.cctv}개 · ${fc.streetlight}개</span>
-            <span>안심벨·112: ${fc.safetyBell} · ${fc.emergency112}</span>
           </div>
           ${stampsHtml ? `<div class="stamps-row">${stampsHtml}</div>` : ""}
           <details class="candidate-details">
             <summary>안전 점수 자세히 보기</summary>
+            <p class="score-explanation">💬 ${scoreExplanation(c)}</p>
             <div class="candidate-meta detail-meta">
               <span>안심귀갓길 CCTV: ${c.features.safety_facility_cctv_count || 0}대</span>
               <span>안심귀갓길 보안등: ${c.features.safety_facility_streetlight_count || 0}개</span>
@@ -657,19 +722,30 @@ function stepKidCard(delta) {
 function renderLegend() {
   const el = document.getElementById("legend");
   el.innerHTML = `
-    <span><span class="dot" style="background:${CATEGORY_COLORS.safetyCctv}"></span>안심귀갓길 CCTV</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.safetyStreetlight}"></span>안심귀갓길 보안등</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.safetyBell}"></span>안심벨</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.emergency112}"></span>112신고</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.cctv}"></span>어린이보호구역/CCTV</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.hotspot}"></span>교통사고다발지역</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.guardian}"></span>아동안전지킴이집</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.streetlight}"></span>보안등/가로등</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.speedCamera}"></span>무인단속카메라</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.docRisk}"></span>문서 기반 위험지적</span>
-    <span><span class="dot" style="background:${CATEGORY_COLORS.docSafety}"></span>문서 기반 안전조치완료</span>
-    <span>실선(굵음) = 추천 경로, 점선 = 다른 후보</span>
+    <span class="legend-instruction">공공데이터 항목에 커서를 올리면 지도에 표시됩니다.</span>
+    ${PUBLIC_DATA_LEGEND.map(
+      ([layer, color, label]) =>
+        `<button type="button" class="legend-item" data-public-layer="${layer}"><span class="dot" style="background:${CATEGORY_COLORS[color]}"></span>${label}</button>`
+    ).join("")}
+    <span class="legend-route-help">굵은 실선 = 선택한 경로</span>
   `;
+  el.querySelectorAll("[data-public-layer]").forEach((item) => {
+    const showLayer = () => setActivePublicLayer(item.dataset.publicLayer);
+    item.addEventListener("pointerenter", showLayer);
+    item.addEventListener("focus", showLayer);
+    item.addEventListener("pointerleave", () => setActivePublicLayer(null));
+    item.addEventListener("blur", () => setActivePublicLayer(null));
+  });
+}
+
+function setActivePublicLayer(layer) {
+  if (state.activePublicLayer === layer) return;
+  state.activePublicLayer = layer;
+  if (state.lastResult && state.publicData) renderMap(state.lastResult, state.publicData, false);
+}
+
+function shouldShowPublicLayer(layer) {
+  return state.activePublicLayer === layer;
 }
 
 // ---------- SVG 스키매틱 지도 (Leaflet/OSM 로드 실패 시 오프라인 폴백) ----------
@@ -729,7 +805,11 @@ function renderSvgMap(routeData, publicData) {
   const sf = safetyFacilitiesNearRoute(publicData, routeData);
   const documentPoints = pointsNearRecommendedRoute(publicData.doc_risk_points || [], routeData);
   const allPoints = [];
-  routeData.candidates.forEach((c) => c.coordinates.forEach((pt) => allPoints.push(pt)));
+  const active = activeRoute(routeData);
+  routeData.candidates.forEach((c) => {
+    if (!active || c.id !== active.id) return;
+    c.coordinates.forEach((pt) => allPoints.push(pt));
+  });
   [childZones, accidentHotspots, guardianHouses, streetlights, speedCameras, cctvs, sf.all, documentPoints]
     .forEach((points) => points.forEach((point) => allPoints.push(point)));
   if (allPoints.length === 0) return;
@@ -745,20 +825,18 @@ function renderSvgMap(routeData, publicData) {
   bg.setAttribute("fill", "#eef3f8");
   svg.appendChild(bg);
 
-  // 경로 폴리라인
-  routeData.candidates.forEach((c) => {
-    const recommended = c.id === activeRouteId(routeData);
-    const pts = c.coordinates.map((pt) => project(pt, bounds, size, padding));
+  // 선택한 경로만 폴리라인으로 표시
+  if (active && active.coordinates.length >= 2) {
+    const pts = active.coordinates.map((pt) => project(pt, bounds, size, padding));
     const path = document.createElementNS(ns, "polyline");
     path.setAttribute("points", pts.map((p) => `${p.x},${p.y}`).join(" "));
     path.setAttribute("fill", "none");
-    path.setAttribute("stroke", scoreColor(c.safety_score));
-    path.setAttribute("stroke-width", recommended ? 5 : 3);
-    path.setAttribute("stroke-opacity", recommended ? 0.95 : 0.55);
+    path.setAttribute("stroke", scoreColor(active.safety_score));
+    path.setAttribute("stroke-width", 5);
+    path.setAttribute("stroke-opacity", 0.95);
     path.setAttribute("stroke-linecap", "round");
-    path.setAttribute("stroke-dasharray", recommended ? "" : "6,5");
     svg.appendChild(path);
-  });
+  }
 
   function drawMarker(pt, color, shape, title) {
     const p = project(pt, bounds, size, padding);
@@ -792,43 +870,43 @@ function renderSvgMap(routeData, publicData) {
     svg.appendChild(node);
   }
 
-  childZones.forEach((z) =>
-    drawMarker(z, CATEGORY_COLORS.cctv, "circle", `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`)
-  );
-  cctvs.forEach((cctv) =>
-    drawMarker(cctv, CATEGORY_COLORS.cctv, "circle", `CCTV ${cctv.camera_count}대 · ${cctv.purpose || "안전"}`)
-  );
-  sf.cctv.forEach((f) =>
+  if (shouldShowPublicLayer("cctv")) {
+    childZones.forEach((z) =>
+      drawMarker(z, CATEGORY_COLORS.cctv, "circle", `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`)
+    );
+    cctvs.forEach((cctv) =>
+      drawMarker(cctv, CATEGORY_COLORS.cctv, "circle", `CCTV ${cctv.camera_count}대 · ${cctv.purpose || "안전"}`)
+    );
+  }
+  if (shouldShowPublicLayer("safety-cctv")) sf.cctv.forEach((f) =>
     drawMarker(f, CATEGORY_COLORS.safetyCctv, "circle", `📹 ${f.label} ${f.install_count > 1 ? `x${f.install_count}` : ""} · ${f.dong || f.district || ""}`)
   );
-  sf.streetlight.forEach((f) =>
+  if (shouldShowPublicLayer("safety-streetlight")) sf.streetlight.forEach((f) =>
     drawMarker(f, CATEGORY_COLORS.safetyStreetlight, "circle", `💡 ${f.label} · ${f.dong || f.district || ""}`)
   );
-  sf.safetyBell.forEach((f) =>
+  if (shouldShowPublicLayer("safety-bell")) sf.safetyBell.forEach((f) =>
     drawMarker(f, CATEGORY_COLORS.safetyBell, "diamond", `🔔 ${f.label} · ${f.dong || f.district || ""}`)
   );
-  sf.emergency112.forEach((f) =>
+  if (shouldShowPublicLayer("emergency-112")) sf.emergency112.forEach((f) =>
     drawMarker(f, CATEGORY_COLORS.emergency112, "triangle", `🚨 ${f.label} · ${f.dong || f.district || ""}`)
   );
-  accidentHotspots.forEach((h) =>
+  if (shouldShowPublicLayer("hotspot")) accidentHotspots.forEach((h) =>
     drawMarker(h, CATEGORY_COLORS.hotspot, "triangle", `${h.name || "사고다발지역"} (${h.occurrence_count}건)`)
   );
-  guardianHouses.forEach((g) =>
+  if (shouldShowPublicLayer("guardian")) guardianHouses.forEach((g) =>
     drawMarker(g, CATEGORY_COLORS.guardian, "diamond", `🏪 ${g.name || "아동안전지킴이집"}`)
   );
-  streetlights.forEach((s) =>
+  if (shouldShowPublicLayer("streetlight")) streetlights.forEach((s) =>
     drawMarker(s, CATEGORY_COLORS.streetlight, "circle", `💡 ${s.light_type || "보안등"}`)
   );
-  speedCameras.forEach((c) =>
+  if (shouldShowPublicLayer("speed-camera")) speedCameras.forEach((c) =>
     drawMarker(c, CATEGORY_COLORS.speedCamera, "square", `📷 ${c.name || "무인단속카메라"} (제한 ${c.speed_limit_kmh || "?"}km/h)`)
   );
-  documentPoints.forEach((d) =>
-    drawMarker(
-      d,
-      d.is_risk ? CATEGORY_COLORS.docRisk : CATEGORY_COLORS.docSafety,
-      "square",
-      `[문서근거] ${d.risk_type} (${d.source_doc})`
-    )
+  if (shouldShowPublicLayer("doc-risk")) documentPoints.filter((d) => d.is_risk).forEach((d) =>
+    drawMarker(d, CATEGORY_COLORS.docRisk, "square", `[문서근거] ${d.risk_type} (${d.source_doc})`)
+  );
+  if (shouldShowPublicLayer("doc-safety")) documentPoints.filter((d) => !d.is_risk).forEach((d) =>
+    drawMarker(d, CATEGORY_COLORS.docSafety, "square", `[문서근거] ${d.risk_type} (${d.source_doc})`)
   );
 
   // 출발/목적지 라벨
@@ -846,50 +924,157 @@ function renderSvgMap(routeData, publicData) {
   });
 }
 
-// ---------- Leaflet + OpenStreetMap (실제 지도, API 키 불필요) ----------
+// ---------- Tmap 지도 (Tmap JS SDK v2) ----------
 
-function loadLeaflet() {
+function setMapStatus(message, visible = true) {
+  const el = document.getElementById("map-status");
+  if (!el) return;
+  el.textContent = message || "";
+  el.classList.toggle("visible", Boolean(visible && message));
+}
+
+function isTmapReady() {
+  const T = window.Tmapv2;
+  // Tmapv2 객체만 있고 LatLng/Map 생성자가 아직 없는 순간이 있음 → 둘 다 function 일 때만 준비 완료
+  return Boolean(
+    T &&
+      typeof T.Map === "function" &&
+      typeof T.LatLng === "function" &&
+      typeof T.LatLngBounds === "function" &&
+      typeof T.Polyline === "function" &&
+      typeof T.Marker === "function"
+  );
+}
+
+function loadScriptOnce(src, datasetKey) {
   return new Promise((resolve, reject) => {
-    if (window.L) return resolve();
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-    document.head.appendChild(link);
+    const existing = datasetKey
+      ? document.querySelector(`script[data-tmap-sdk="${datasetKey}"]`)
+      : document.querySelector(`script[src="${src}"]`);
+    if (existing) {
+      if (existing.dataset.loaded === "1" || window.__TMAP_SCRIPT_LOADED__) return resolve();
+      existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => reject(new Error(`스크립트 로드 실패: ${src}`)));
+      return;
+    }
     const script = document.createElement("script");
-    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Leaflet 로드 실패 (오프라인 상태일 수 있음)"));
+    script.src = src;
+    script.async = true;
+    if (datasetKey) script.dataset.tmapSdk = datasetKey;
+    script.onload = () => {
+      script.dataset.loaded = "1";
+      window.__TMAP_SCRIPT_LOADED__ = true;
+      resolve();
+    };
+    script.onerror = () => reject(new Error(`스크립트 로드 실패: ${src}`));
     document.head.appendChild(script);
   });
 }
 
-async function tryInitLeaflet() {
-  try {
-    await loadLeaflet();
-    const container = document.getElementById("leaflet-map");
-    container.style.display = "block";
-    document.getElementById("svg-map").style.display = "none";
-    state.leafletMap = window.L.map(container, { scrollWheelZoom: true }).setView(
-      [state.config.demo_center.lat, state.config.demo_center.lng],
-      16
-    );
-    window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    }).addTo(state.leafletMap);
-    state.leafletLayers = window.L.layerGroup().addTo(state.leafletMap);
-    state.leafletReady = true;
-  } catch (err) {
-    console.warn("Leaflet 지도 로드 실패, SVG 스키매틱 지도로 대체합니다.", err);
-    state.leafletReady = false;
+async function waitUntil(predicate, timeoutMs, label) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(label || "대기 시간 초과");
+}
+
+async function loadTmapSdk(appKey) {
+  if (isTmapReady()) return;
+
+  // jsv2 로더는 document.write 스텁이라 동적 로드 시 LatLng/Map 이 안 생기고,
+  // 이미 로드된 SDK를 stub 로 덮어쓰기도 한다 → 실제 SDK만 직접 로드한다.
+  const n = Math.floor(Math.random() * 3) + 1;
+  const coreUrl = `https://topopentile${n}.tmap.co.kr/scriptSDKV2/tmapjs2.min.js?version=20231206`;
+  await loadScriptOnce(coreUrl, "core");
+  await waitUntil(isTmapReady, 15000, "Tmapv2.Map/LatLng 생성자가 준비되지 않았습니다.");
+
+  if (typeof window.Tmapv2.setHttpsMode === "function") {
+    window.Tmapv2.setHttpsMode(true);
+  }
+  // appKey는 타일 인증용으로 전역에 남겨 둔다(SDK가 참조하는 경우 대비)
+  if (appKey) {
+    window.__TMAP_APP_KEY__ = appKey;
+    try {
+      window.Tmapv2.appKey = appKey;
+    } catch (_) {
+      /* ignore */
+    }
   }
 }
 
-function renderLeafletRoutes(routeData, publicData) {
-  if (!state.leafletMap || !state.leafletLayers) return;
-  const L = window.L;
-  state.leafletLayers.clearLayers();
-  const bounds = [];
+async function tryInitTmap() {
+  const container = document.getElementById("tmap");
+  const svgEl = document.getElementById("svg-map");
+  try {
+    setMapStatus("티맵 지도를 불러오는 중…", true);
+    const appKey =
+      (state.config && state.config.tmap_web_key) ||
+      window.__TMAP_APP_KEY__ ||
+      "";
+    await loadTmapSdk(appKey);
+
+    // 이전에 실패한 지도 DOM이 남아 있으면 비우고 다시 생성
+    container.innerHTML = "";
+    container.style.display = "block";
+    container.style.width = "100%";
+    container.style.height = "420px";
+    if (svgEl) svgEl.style.display = "none";
+
+    const center = (state.config && state.config.demo_center) || { lat: 37.5013, lng: 127.0396 };
+    const T = window.Tmapv2;
+    state.tmap = new T.Map("tmap", {
+      center: new T.LatLng(center.lat, center.lng),
+      width: "100%",
+      height: "420px",
+      zoom: 16,
+      zoomControl: true,
+      scrollwheel: true,
+    });
+    state.tmapOverlays = [];
+    state.tmapReady = true;
+    setMapStatus("", false);
+  } catch (err) {
+    console.warn("Tmap 지도 로드 실패, SVG 스키매틱 지도로 대체합니다.", err);
+    state.tmapReady = false;
+    if (container) container.style.display = "none";
+    if (svgEl) svgEl.style.display = "block";
+    setMapStatus(
+      `티맵 지도를 불러오지 못했습니다. (${err.message || err}) 경로 결과는 SVG로 표시됩니다.`,
+      true
+    );
+  }
+}
+
+// Leaflet circleMarker 대체: 카테고리 색상 원을 data-URI SVG 아이콘으로 만든다.
+function tmapDotIcon(color) {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18">` +
+    `<circle cx="9" cy="9" r="6" fill="${color}" stroke="white" stroke-width="2"/></svg>`;
+  return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+}
+
+// Tmap은 layerGroup.clearLayers()가 없으므로, 다시 그리기 전 오버레이를 직접 지운다.
+function clearTmapOverlays() {
+  (state.tmapOverlays || []).forEach((overlay) => overlay.setMap(null));
+  state.tmapOverlays = [];
+  if (state.infoWindow) {
+    state.infoWindow.setMap(null);
+    state.infoWindow = null;
+  }
+}
+
+function renderTmapRoutes(routeData, publicData) {
+  if (!state.tmap) return;
+  clearTmapOverlays();
+  const bounds = new Tmapv2.LatLngBounds();
+  let hasPoint = false;
+  const track = (overlay) => {
+    state.tmapOverlays.push(overlay);
+    return overlay;
+  };
+
   const childZones = pointsNearRecommendedRoute(publicData.child_zones || [], routeData);
   const accidentHotspots = pointsNearRecommendedRoute(publicData.accident_hotspots || [], routeData);
   const guardianHouses = pointsNearRecommendedRoute(publicData.guardian_houses || [], routeData);
@@ -899,110 +1084,115 @@ function renderLeafletRoutes(routeData, publicData) {
   const sf = safetyFacilitiesNearRoute(publicData, routeData);
   const documentPoints = pointsNearRecommendedRoute(publicData.doc_risk_points || [], routeData);
 
-  routeData.candidates.forEach((c) => {
-    const recommended = c.id === activeRouteId(routeData);
-    const latlngs = c.coordinates.map((pt) => [pt.lat, pt.lng]);
-    latlngs.forEach((p) => bounds.push(p));
-    L.polyline(latlngs, {
-      color: scoreColor(c.safety_score),
-      weight: recommended ? 6 : 3,
-      opacity: recommended ? 0.95 : 0.55,
-      dashArray: recommended ? null : "6,6",
-    }).addTo(state.leafletLayers);
-  });
-
-  function circleMarker(pt, color, title) {
-    bounds.push([pt.lat, pt.lng]);
-    L.circleMarker([pt.lat, pt.lng], {
-      radius: 7,
-      color: "white",
-      weight: 1.5,
-      fillColor: color,
-      fillOpacity: 0.9,
-    })
-      .bindTooltip(title)
-      .addTo(state.leafletLayers);
+  const active = activeRoute(routeData);
+  if (active && active.coordinates.length >= 2) {
+    const path = active.coordinates.map((pt) => {
+      const latlng = new Tmapv2.LatLng(pt.lat, pt.lng);
+      bounds.extend(latlng);
+      hasPoint = true;
+      return latlng;
+    });
+    track(
+      new Tmapv2.Polyline({
+        path,
+        strokeColor: scoreColor(active.safety_score),
+        strokeWeight: 6,
+        strokeStyle: "solid",
+        strokeOpacity: 0.95,
+        map: state.tmap,
+      })
+    );
   }
 
-  function emojiMarker(pt, emoji, title) {
-    bounds.push([pt.lat, pt.lng]);
-    L.marker([pt.lat, pt.lng], {
-      icon: L.divIcon({
-        className: "safety-facility-icon",
-        html: `<span aria-hidden="true">${emoji}</span>`,
-        iconSize: [26, 26],
-        iconAnchor: [13, 13],
-      }),
-    })
-      .bindTooltip(title)
-      .addTo(state.leafletLayers);
+  function marker(pt, color, title, label) {
+    const latlng = new Tmapv2.LatLng(pt.lat, pt.lng);
+    bounds.extend(latlng);
+    hasPoint = true;
+    const options = {
+      position: latlng,
+      icon: tmapDotIcon(color),
+      iconSize: new Tmapv2.Size(18, 18),
+      map: state.tmap,
+    };
+    if (label) options.label = label;
+    const m = track(new Tmapv2.Marker(options));
+    if (title) {
+      m.addListener("click", () => {
+        if (state.infoWindow) state.infoWindow.setMap(null);
+        state.infoWindow = new Tmapv2.InfoWindow({
+          position: latlng,
+          content: `<div style="padding:6px 8px;font-size:12px;max-width:220px">${title}</div>`,
+          type: 2,
+          border: "1px solid #888",
+          map: state.tmap,
+        });
+      });
+    }
+    return m;
   }
 
-  childZones.forEach((z) =>
-    circleMarker(z, CATEGORY_COLORS.cctv, `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`)
-  );
-  cctvs.forEach((cctv) =>
-    circleMarker(cctv, CATEGORY_COLORS.cctv, `CCTV ${cctv.camera_count}대 · ${cctv.purpose || "안전"} · ${cctv.address || ""}`)
-  );
-  sf.cctv.forEach((f) =>
-    circleMarker(f, CATEGORY_COLORS.safetyCctv, `📹 ${f.label} ${f.install_count > 1 ? `x${f.install_count}` : ""} · ${f.dong || f.district || ""}`)
-  );
-  sf.streetlight.forEach((f) =>
-    circleMarker(f, CATEGORY_COLORS.safetyStreetlight, `💡 ${f.label} · ${f.dong || f.district || ""}`)
-  );
-  sf.safetyBell.forEach((f) =>
-    emojiMarker(f, "🔔", `안심벨 · ${f.dong || f.district || ""}`)
-  );
-  sf.emergency112.forEach((f) =>
-    emojiMarker(f, "🚨", `112신고 · ${f.dong || f.district || ""}`)
-  );
-  accidentHotspots.forEach((h) =>
-    circleMarker(h, CATEGORY_COLORS.hotspot, `${h.name || "사고다발지역"} (${h.occurrence_count}건)`)
-  );
-  guardianHouses.forEach((g) =>
-    circleMarker(g, CATEGORY_COLORS.guardian, `🏪 ${g.name || "아동안전지킴이집"}`)
-  );
-  streetlights.forEach((s) =>
-    circleMarker(s, CATEGORY_COLORS.streetlight, `💡 ${s.light_type || "보안등"}`)
-  );
-  speedCameras.forEach((c) =>
-    circleMarker(c, CATEGORY_COLORS.speedCamera, `📷 ${c.name || "무인단속카메라"} (제한 ${c.speed_limit_kmh || "?"}km/h)`)
-  );
-  documentPoints.forEach((d) =>
-    circleMarker(
-      d,
-      d.is_risk ? CATEGORY_COLORS.docRisk : CATEGORY_COLORS.docSafety,
-      `[문서근거] ${d.risk_type} (${d.source_doc})`
-    )
-  );
-
-  function labelMarker(wp, emoji, label) {
-    bounds.push([wp.lat, wp.lng]);
-    L.marker([wp.lat, wp.lng], {
-      icon: L.divIcon({
-        className: "map-label-icon",
-        html: `<span>${emoji} ${label}</span>`,
-        iconSize: [0, 0],
-      }),
-    }).addTo(state.leafletLayers);
+  if (shouldShowPublicLayer("cctv")) {
+    childZones.forEach((z) =>
+      marker(z, CATEGORY_COLORS.cctv, `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`)
+    );
+    cctvs.forEach((cctv) =>
+      marker(cctv, CATEGORY_COLORS.cctv, `CCTV ${cctv.camera_count}대 · ${cctv.purpose || "안전"} · ${cctv.address || ""}`)
+    );
   }
-  labelMarker(routeData.origin, "🏠", routeData.origin.name || "출발");
-  labelMarker(routeData.destination, "🏫", routeData.destination.name || "목적지");
+  if (shouldShowPublicLayer("safety-cctv")) sf.cctv.forEach((f) =>
+    marker(f, CATEGORY_COLORS.safetyCctv, `📹 ${f.label} ${f.install_count > 1 ? `x${f.install_count}` : ""} · ${f.dong || f.district || ""}`)
+  );
+  if (shouldShowPublicLayer("safety-streetlight")) sf.streetlight.forEach((f) =>
+    marker(f, CATEGORY_COLORS.safetyStreetlight, `💡 ${f.label} · ${f.dong || f.district || ""}`)
+  );
+  if (shouldShowPublicLayer("safety-bell")) sf.safetyBell.forEach((f) =>
+    marker(f, CATEGORY_COLORS.safetyBell, `🔔 안심벨 · ${f.dong || f.district || ""}`)
+  );
+  if (shouldShowPublicLayer("emergency-112")) sf.emergency112.forEach((f) =>
+    marker(f, CATEGORY_COLORS.emergency112, `🚨 112신고 · ${f.dong || f.district || ""}`)
+  );
+  if (shouldShowPublicLayer("hotspot")) accidentHotspots.forEach((h) =>
+    marker(h, CATEGORY_COLORS.hotspot, `${h.name || "사고다발지역"} (${h.occurrence_count}건)`)
+  );
+  if (shouldShowPublicLayer("guardian")) guardianHouses.forEach((g) =>
+    marker(g, CATEGORY_COLORS.guardian, `🏪 ${g.name || "아동안전지킴이집"}`)
+  );
+  if (shouldShowPublicLayer("streetlight")) streetlights.forEach((s) =>
+    marker(s, CATEGORY_COLORS.streetlight, `💡 ${s.light_type || "보안등"}`)
+  );
+  if (shouldShowPublicLayer("speed-camera")) speedCameras.forEach((c) =>
+    marker(c, CATEGORY_COLORS.speedCamera, `📷 ${c.name || "무인단속카메라"} (제한 ${c.speed_limit_kmh || "?"}km/h)`)
+  );
+  if (shouldShowPublicLayer("doc-risk")) documentPoints.filter((d) => d.is_risk).forEach((d) =>
+    marker(d, CATEGORY_COLORS.docRisk, `[문서근거] ${d.risk_type} (${d.source_doc})`)
+  );
+  if (shouldShowPublicLayer("doc-safety")) documentPoints.filter((d) => !d.is_risk).forEach((d) =>
+    marker(d, CATEGORY_COLORS.docSafety, `[문서근거] ${d.risk_type} (${d.source_doc})`)
+  );
 
-  if (bounds.length > 0) {
-    state.leafletMap.fitBounds(bounds, { padding: [24, 24] });
+  const originName = routeData.origin.name || "출발";
+  const destName = routeData.destination.name || "목적지";
+  marker(routeData.origin, "#1c7c3b", `🏠 ${originName}`, `<span class="tmap-wp-label">🏠 ${originName}</span>`);
+  marker(routeData.destination, "#b3261e", `🏫 ${destName}`, `<span class="tmap-wp-label">🏫 ${destName}</span>`);
+
+  if (hasPoint) {
+    state.tmap.fitBounds(bounds);
   }
 }
 
-function renderMap(routeData, publicData) {
-  if (state.leafletReady) {
-    renderLeafletRoutes(routeData, publicData);
+function renderMap(routeData, publicData, refreshLegend = true) {
+  if (state.tmapReady) {
+    setMapStatus("", false);
+    document.getElementById("tmap").style.display = "block";
+    document.getElementById("svg-map").style.display = "none";
+    renderTmapRoutes(routeData, publicData);
   } else {
     document.getElementById("svg-map").style.display = "block";
-    document.getElementById("leaflet-map").style.display = "none";
+    document.getElementById("tmap").style.display = "none";
     renderSvgMap(routeData, publicData);
+    setMapStatus("", false);
   }
-  renderLegend();
+  if (refreshLegend) renderLegend();
 }
 
 function selectRoute(routeId) {
@@ -1166,14 +1356,12 @@ async function init() {
 
   try {
     state.config = await fetchJson("/api/config");
-    renderBadges(state.config);
   } catch (err) {
     console.warn("백엔드 설정을 불러오지 못했습니다. 백엔드가 실행 중인지 확인하세요.", err);
-    document.getElementById("mock-badges").innerHTML = '<span class="badge">백엔드 연결 안됨</span>';
     state.config = { demo_center: { lat: 37.5013, lng: 127.0396 } };
   }
 
-  await tryInitLeaflet();
+  await tryInitTmap();
   renderLegend();
 }
 
