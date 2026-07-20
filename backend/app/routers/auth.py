@@ -94,7 +94,7 @@ def google_callback(
             name=profile["name"],
             picture=profile.get("picture"),
         )
-        safe_token = quote(token, safe="")
+        safe_token = quote(str(token), safe="")
         return RedirectResponse(f"{frontend_url}/#access_token={safe_token}", status_code=302)
     except jwt.PyJWTError:
         return RedirectResponse(f"{fallback}?auth_error=invalid_state", status_code=302)
