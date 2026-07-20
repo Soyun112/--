@@ -3,10 +3,10 @@
 사용자가 위/경도 숫자 대신 "강남역", "코엑스", "OO초등학교" 같은 이름을 입력할 수 있게
 한다. 여러 제공자를 순서대로 시도하며, 하나라도 성공하면 그 결과를 사용한다:
 
-  1) 내장 사전(DEMO_PLACES + STATION_DICT) — 데모 좌표/서울 주요 역은 키 없이 즉시 응답
+  1) 내장 사전(DEMO_PLACES + STATION_DICT) — 데모 좌표/서울 주요 역은 API 없이 즉시 응답
   2) 카카오 로컬 키워드 검색 (KAKAO_REST_API_KEY) — 건물·상호·역 이름에 가장 강함
   3) 네이버 지역 검색 (NAVER_SEARCH_CLIENT_ID/SECRET)
-  4) Tmap POI·주소 지오코딩 (TMAP_APP_KEY) — 동일 appKey, 도로 입구 좌표(noor) 우선
+  4) Tmap POI·주소 지오코딩 (TMAP_APP_KEY) — 캐시·일일 한도 적용
 
 키가 하나도 없거나 모두 실패하면 사전에 없는 이름은 None을 반환한다. 백엔드에서
 호출하므로 브라우저 CORS 문제 없이 안전하게 시크릿 키를 쓸 수 있다.
@@ -170,9 +170,18 @@ def geocode(query: str, near: tuple[float, float] | None = None) -> Optional[Geo
     if not q:
         return None
 
+    # 데모·역 사전은 API 호출 없이 즉시 응답 (Free 티어 절약)
+    hit = _lookup_dict(q)
+    if hit:
+        return hit
+
     poi_near = near or (settings.demo_center_lat, settings.demo_center_lng)
 
-    # Tmap appKey가 있으면 POI·주소 API로 도로 쪽 좌표를 먼저 맞춘다.
+    for provider in (_kakao_keyword, _naver_local):
+        result = provider(q)
+        if result:
+            return result
+
     if settings.tmap_app_key:
         hit = search_poi(q, near=poi_near)
         if hit:
@@ -181,16 +190,4 @@ def geocode(query: str, near: tuple[float, float] | None = None) -> Optional[Geo
         if hit:
             return GeocodeResult(hit.lat, hit.lng, hit.label, hit.source)
 
-    hit = _lookup_dict(q)
-    if hit:
-        return hit
-
-    for provider in (_kakao_keyword, _naver_local):
-        result = provider(q)
-        if result:
-            return result
-
-    result = _tmap_poi(q, near=poi_near)
-    if result:
-        return result
-    return _tmap_fulladdr(q)
+    return None

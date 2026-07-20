@@ -1,7 +1,4 @@
-"""Tmap Open API 지오코딩 (동일 appKey로 POI·주소 검색).
-
-SK Open API appKey 하나로 보행자 길찾기·POI·주소 지오코딩을 함께 쓸 수 있다.
-"""
+"""Tmap Open API 지오코딩 (동일 appKey, Free 티어 한도·캐시 적용)."""
 from __future__ import annotations
 
 import re
@@ -11,6 +8,7 @@ from typing import Optional
 import requests
 
 from ..config import settings
+from .tmap_quota import cached_api_call, make_key
 
 TMAP_POI_URL = "https://apis.openapi.sk.com/tmap/pois"
 TMAP_FULLADDR_URL = "https://apis.openapi.sk.com/tmap/geo/fullAddrGeo"
@@ -42,113 +40,152 @@ def _headers() -> dict[str, str]:
     return {"appKey": settings.tmap_app_key}
 
 
+def _round_near(near: tuple[float, float] | None) -> tuple[float, float] | None:
+    if near is None:
+        return None
+    return (round(near[0], 4), round(near[1], 4))
+
+
+def _pick_best_poi(
+    pois: list[dict],
+    query: str,
+    near: tuple[float, float] | None,
+    max_distance_m: float,
+) -> Optional[TmapGeoHit]:
+    from math import asin, cos, radians, sin, sqrt
+
+    def _dist_m(a: tuple[float, float], b: tuple[float, float]) -> float:
+        lat1, lng1 = radians(a[0]), radians(a[1])
+        lat2, lng2 = radians(b[0]), radians(b[1])
+        dlat, dlng = lat2 - lat1, lng2 - lng1
+        h = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlng / 2) ** 2
+        return 6_371_000 * 2 * asin(sqrt(h))
+
+    best: Optional[TmapGeoHit] = None
+    best_score = float("inf")
+    query_norm = query.strip().replace(" ", "").lower()
+    for poi in pois:
+        lat, lng = float(poi["noorLat"]), float(poi["noorLon"])
+        if not _in_korea(lat, lng):
+            continue
+        if near is not None and _dist_m(near, (lat, lng)) > max_distance_m:
+            continue
+        name = _strip_tags(poi.get("name") or query)
+        name_norm = name.replace(" ", "").lower()
+        name_penalty = 0 if query_norm in name_norm or name_norm in query_norm else 500
+        dist_penalty = _dist_m(near, (lat, lng)) if near else 0
+        score = name_penalty + dist_penalty
+        if score < best_score:
+            best_score = score
+            best = TmapGeoHit(lat=lat, lng=lng, label=name, source="TMAP_POI")
+    return best
+
+
+def _fetch_poi_raw(query: str, near: tuple[float, float] | None) -> Optional[TmapGeoHit]:
+    params: dict[str, str | int | float] = {
+        "version": "1",
+        "searchKeyword": query,
+        "resCoordType": "WGS84GEO",
+        "count": 3,
+    }
+    if near is not None:
+        params.update(
+            {
+                "searchtypCd": "R",
+                "centerLat": near[0],
+                "centerLon": near[1],
+                "radius": 2,
+            }
+        )
+    resp = requests.get(TMAP_POI_URL, params=params, headers=_headers(), timeout=10)
+    if resp.status_code == 429:
+        print("[Tmap] POI API 한도 초과 (429)")
+        return None
+    resp.raise_for_status()
+    pois = resp.json().get("searchPoiInfo", {}).get("pois", {}).get("poi", [])
+    if not pois:
+        return None
+    if not isinstance(pois, list):
+        pois = [pois]
+    return _pick_best_poi(pois, query, near, max_distance_m=2500.0)
+
+
 def search_poi(
     query: str,
     *,
-    count: int = 10,
     near: tuple[float, float] | None = None,
-    max_distance_m: float = 2500.0,
-    radius_km: int = 2,
 ) -> Optional[TmapGeoHit]:
-    """Tmap POI 통합검색 — 건물명·학원·역 이름 (반경 검색 우선)."""
+    """Tmap POI 1회 (캐시·일일 한도 적용)."""
     if not settings.tmap_app_key:
         return None
-    try:
-        params: dict[str, str | int | float] = {
-            "version": "1",
-            "searchKeyword": query,
-            "resCoordType": "WGS84GEO",
-            "count": count,
-        }
-        if near is not None:
-            params.update(
-                {
-                    "searchtypCd": "R",
-                    "centerLat": near[0],
-                    "centerLon": near[1],
-                    "radius": radius_km,
-                }
-            )
+    rounded_near = _round_near(near)
+    cache_key = make_key("poi", {"q": query.strip(), "near": rounded_near})
 
-        resp = requests.get(
-            TMAP_POI_URL,
-            params=params,
-            headers=_headers(),
-            timeout=10,
-        )
-        resp.raise_for_status()
-        pois = resp.json().get("searchPoiInfo", {}).get("pois", {}).get("poi", [])
-        if not pois:
+    def _fetch() -> Optional[TmapGeoHit]:
+        try:
+            return _fetch_poi_raw(query, rounded_near)
+        except Exception:
             return None
-        if not isinstance(pois, list):
-            pois = [pois]
 
-        def _dist_m(a: tuple[float, float], b: tuple[float, float]) -> float:
-            from math import asin, cos, radians, sin, sqrt
+    return cached_api_call(
+        cache_key=cache_key,
+        category="poi",
+        ttl_seconds=settings.tmap_cache_ttl_geocode_s,
+        fetch=_fetch,
+    )
 
-            lat1, lng1 = radians(a[0]), radians(a[1])
-            lat2, lng2 = radians(b[0]), radians(b[1])
-            dlat, dlng = lat2 - lat1, lng2 - lng1
-            h = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlng / 2) ** 2
-            return 6_371_000 * 2 * asin(sqrt(h))
 
-        best: Optional[TmapGeoHit] = None
-        best_score = float("inf")
-        query_norm = query.strip().replace(" ", "").lower()
-        for poi in pois:
-            lat, lng = float(poi["noorLat"]), float(poi["noorLon"])
-            if not _in_korea(lat, lng):
-                continue
-            if near is not None and _dist_m(near, (lat, lng)) > max_distance_m:
-                continue
-            name = _strip_tags(poi.get("name") or query)
-            name_norm = name.replace(" ", "").lower()
-            name_penalty = 0 if query_norm in name_norm or name_norm in query_norm else 500
-            dist_penalty = _dist_m(near, (lat, lng)) if near else 0
-            score = name_penalty + dist_penalty
-            if score < best_score:
-                best_score = score
-                best = TmapGeoHit(lat=lat, lng=lng, label=name, source="TMAP_POI")
-        return best
-    except Exception:
+def _fetch_fulladdr_raw(query: str) -> Optional[TmapGeoHit]:
+    resp = requests.get(
+        TMAP_FULLADDR_URL,
+        params={
+            "version": "1",
+            "fullAddr": query,
+            "addressFlag": "F00",
+            "coordType": "WGS84GEO",
+            "page": "1",
+            "count": "1",
+        },
+        headers=_headers(),
+        timeout=10,
+    )
+    if resp.status_code == 429:
+        print("[Tmap] Geocode API 한도 초과 (429)")
         return None
+    resp.raise_for_status()
+    payload = resp.json()
+    coord_info = payload.get("coordinateInfo")
+    items = coord_info.get("coordinate", []) if isinstance(coord_info, dict) else coord_info
+    if isinstance(items, dict):
+        items = [items]
+    if not items:
+        return None
+    item = items[0]
+    lat = float(item.get("lat") or item.get("newLat") or 0)
+    lng = float(item.get("lon") or item.get("newLon") or 0)
+    if not _in_korea(lat, lng):
+        return None
+    label = item.get("newAddress") or item.get("address") or query
+    return TmapGeoHit(lat=lat, lng=lng, label=str(label), source="TMAP_FULLADDR")
 
 
 def geocode_full_address(query: str) -> Optional[TmapGeoHit]:
-    """Tmap Full Text Geocoding — 도로명·지번 주소."""
     if not settings.tmap_app_key:
         return None
-    try:
-        resp = requests.get(
-            TMAP_FULLADDR_URL,
-            params={
-                "version": "1",
-                "fullAddr": query,
-                "addressFlag": "F00",
-                "coordType": "WGS84GEO",
-                "page": "1",
-                "count": "1",
-            },
-            headers=_headers(),
-            timeout=10,
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-        coord_info = payload.get("coordinateInfo")
-        items = coord_info.get("coordinate", []) if isinstance(coord_info, dict) else coord_info
-        if isinstance(items, dict):
-            items = [items]
-        if not items:
+    cache_key = make_key("geocode", {"q": query.strip()})
+
+    def _fetch() -> Optional[TmapGeoHit]:
+        try:
+            return _fetch_fulladdr_raw(query)
+        except Exception:
             return None
-        item = items[0]
-        lat = float(item.get("lat") or item.get("newLat") or 0)
-        lng = float(item.get("lon") or item.get("newLon") or 0)
-        if not _in_korea(lat, lng):
-            return None
-        label = item.get("newAddress") or item.get("address") or query
-        return TmapGeoHit(lat=lat, lng=lng, label=str(label), source="TMAP_FULLADDR")
-    except Exception:
-        return None
+
+    return cached_api_call(
+        cache_key=cache_key,
+        category="geocode",
+        ttl_seconds=settings.tmap_cache_ttl_geocode_s,
+        fetch=_fetch,
+    )
 
 
 def _append_unique_coord(
@@ -176,52 +213,54 @@ def _append_unique_coord(
     coords.append((lat, lng))
 
 
+def _fetch_road_match_raw(coords: list[tuple[float, float]]) -> list[tuple[float, float]] | None:
+    coords_str = "|".join(f"{lng},{lat}" for lat, lng in coords[:100])
+    resp = requests.post(
+        TMAP_ROAD_MATCH_URL,
+        params={"version": "1"},
+        headers={**_headers(), "Content-Type": "application/x-www-form-urlencoded"},
+        data={"responseType": "1", "coords": coords_str},
+        timeout=15,
+    )
+    if resp.status_code == 429:
+        print("[Tmap] Road API 한도 초과 (429)")
+        return None
+    resp.raise_for_status()
+    points = resp.json().get("resultData", {}).get("matchedPoints", [])
+    matched: list[tuple[float, float]] = []
+    for point in points:
+        loc = point.get("matchedLocation") or point.get("mathedLocation")
+        if not loc:
+            continue
+        try:
+            _append_unique_coord(matched, float(loc["latitude"]), float(loc["longitude"]))
+        except (TypeError, ValueError, KeyError):
+            continue
+    return matched if len(matched) >= 2 else None
+
+
 def match_coords_to_roads(coords: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    """Tmap Road API(이동한도로찾기)로 좌표를 도로망에 맞춰 보간점을 추가한다."""
+    """Road API 1회/검색. 좌표가 충분하면 생략."""
     if not settings.tmap_app_key or len(coords) < 2:
         return coords
     if not settings.tmap_road_match_enabled:
         return coords
+    if len(coords) >= settings.tmap_road_match_min_coords:
+        return coords
 
-    # API 최대 100점 — 긴 경로는 구간별로 나눠 호출
-    chunk_size = 90
-    matched_all: list[tuple[float, float]] = []
-    for start in range(0, len(coords), chunk_size):
-        chunk = coords[start : start + chunk_size]
-        if len(chunk) < 2:
-            if chunk:
-                _append_unique_coord(matched_all, chunk[0][0], chunk[0][1])
-            continue
-        coords_str = "|".join(f"{lng},{lat}" for lat, lng in chunk)
+    rounded = [(round(lat, 5), round(lng, 5)) for lat, lng in coords]
+    cache_key = make_key("road", rounded)
+
+    def _fetch() -> list[tuple[float, float]] | None:
         try:
-            resp = requests.post(
-                TMAP_ROAD_MATCH_URL,
-                params={"version": "1"},
-                headers={
-                    **_headers(),
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-                data={"responseType": "1", "coords": coords_str},
-                timeout=15,
-            )
-            resp.raise_for_status()
-            points = resp.json().get("resultData", {}).get("matchedPoints", [])
+            return _fetch_road_match_raw(coords)
         except Exception:
-            for lat, lng in chunk:
-                _append_unique_coord(matched_all, lat, lng)
-            continue
+            return None
 
-        for point in points:
-            loc = point.get("matchedLocation") or point.get("mathedLocation")
-            if not loc:
-                continue
-            try:
-                _append_unique_coord(
-                    matched_all,
-                    float(loc["latitude"]),
-                    float(loc["longitude"]),
-                )
-            except (TypeError, ValueError, KeyError):
-                continue
-
-    return matched_all if len(matched_all) >= 2 else coords
+    matched = cached_api_call(
+        cache_key=cache_key,
+        category="road",
+        ttl_seconds=settings.tmap_cache_ttl_route_s,
+        fetch=_fetch,
+    )
+    return matched if matched else coords

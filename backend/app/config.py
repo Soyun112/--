@@ -52,7 +52,17 @@ class Settings:
     # 긴 직선 구간 재탐색은 API 호출이 많아 기본 off (Road API로 보강)
     tmap_route_densify_enabled: bool = _bool_env("TMAP_ROUTE_DENSIFY_ENABLED", False)
     tmap_route_densify_min_leg_m: float = float(os.getenv("TMAP_ROUTE_DENSIFY_MIN_LEG_M", "25"))
-    # Tmap Road API(matchToRoads)로 경로 좌표를 도로망에 스냅
+    # Tmap Free 티어 일일 한도 (SK Open API 기준)
+    tmap_daily_limit_route: int = int(os.getenv("TMAP_DAILY_LIMIT_ROUTE", "1000"))
+    tmap_daily_limit_road: int = int(os.getenv("TMAP_DAILY_LIMIT_ROAD", "1000"))
+    tmap_daily_limit_poi: int = int(os.getenv("TMAP_DAILY_LIMIT_POI", "20000"))
+    tmap_daily_limit_geocode: int = int(os.getenv("TMAP_DAILY_LIMIT_GEOCODE", "20000"))
+    tmap_daily_reserve_route: int = int(os.getenv("TMAP_DAILY_RESERVE_ROUTE", "20"))
+    tmap_daily_reserve_road: int = int(os.getenv("TMAP_DAILY_RESERVE_ROAD", "20"))
+    tmap_cache_ttl_route_s: int = int(os.getenv("TMAP_CACHE_TTL_ROUTE_S", "21600"))  # 6h
+    tmap_cache_ttl_geocode_s: int = int(os.getenv("TMAP_CACHE_TTL_GEOCODE_S", "86400"))  # 24h
+    # Road API는 좌표가 적을 때만 (1회/검색). 기본 30개 미만일 때만 호출
+    tmap_road_match_min_coords: int = int(os.getenv("TMAP_ROAD_MATCH_MIN_COORDS", "30"))
     tmap_road_match_enabled: bool = _bool_env("TMAP_ROAD_MATCH_ENABLED", True)
     # 대안 보행 경로(추가 API 1회) — 한도 절약을 위해 기본 off
     tmap_pedestrian_alt_enabled: bool = _bool_env("TMAP_PEDESTRIAN_ALT_ENABLED", False)

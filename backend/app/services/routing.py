@@ -1,16 +1,13 @@
 """Tmap 보행자 길찾기 연동.
 
-Tmap 보행자 API(POST https://apis.openapi.sk.com/tmap/routes/pedestrian?version=1)로
-보행자 전용 도로망만 따라 경로를 계산한다. searchOption 4(대로 우선)를 기본으로
-사용하며, 대안으로 searchOption 10(최단 보행)을 한 번 더 조회한다.
-appKey가 없으면 MOCK 경로 생성기로 오프라인 데모가 가능하다.
+Free 티어 기준 검색 1회: 보행 1 + Road 0~1 + POI 0 (데모 사전命中 시 지오코딩 0).
+캐시·일일 한도는 tmap_quota 모듈에서 관리한다.
 """
 from __future__ import annotations
 
 import json
 import math
 import re
-import time
 from dataclasses import dataclass, field
 from typing import Any, List, Tuple
 
@@ -19,6 +16,7 @@ import requests
 
 from ..config import settings
 from .tmap_geo import match_coords_to_roads
+from .tmap_quota import cached_api_call, make_key
 from ..console_safe import console_safe as _console_safe, safe_print
 from .geo import haversine_m, min_distance_to_route, route_length_m
 from .landmarks import landmark_for
@@ -739,14 +737,14 @@ def _mock_candidates(origin: Tuple[float, float], destination: Tuple[float, floa
     return results
 
 
-def _fetch_tmap_pedestrian_data(
+def _fetch_tmap_pedestrian_raw(
     origin: Tuple[float, float],
     destination: Tuple[float, float],
     *,
     search_option: str,
     pass_list: str | None = None,
 ) -> dict[str, Any] | None:
-    """Tmap 보행자 API 원본 JSON. 경로 보강·파싱 공용."""
+    """Tmap 보행자 API 1회 (재시도 없음 — 한도 절약)."""
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
@@ -768,48 +766,69 @@ def _fetch_tmap_pedestrian_data(
     if pass_list:
         body["passList"] = pass_list
 
-    last_status: int | None = None
-    for attempt in range(3):
-        try:
-            resp = requests.post(
-                TMAP_PEDESTRIAN_URL,
-                params={"version": "1", "format": "json"},
-                headers=headers,
-                json=body,
-                timeout=15,
-            )
-            last_status = resp.status_code
-            if resp.status_code == 429:
-                print(f"[Tmap] API 한도 초과 (429), 재시도 {attempt + 1}/3")
-                if attempt < 2:
-                    time.sleep(1.5 * (attempt + 1))
-                    continue
-                return None
-            resp.raise_for_status()
-            data = resp.json()
-        except requests.RequestException as exc:
-            print(f"[Tmap] 요청 실패 (status={last_status}): {exc}")
-            if attempt < 2 and last_status in (429, 503, None):
-                time.sleep(1.0)
-                continue
+    try:
+        resp = requests.post(
+            TMAP_PEDESTRIAN_URL,
+            params={"version": "1", "format": "json"},
+            headers=headers,
+            json=body,
+            timeout=15,
+        )
+        if resp.status_code == 429:
+            print("[Tmap] 보행자 API 한도 초과 (429)")
             return None
-        except ValueError as exc:
-            print(f"[Tmap] JSON 파싱 실패: {exc}")
-            return None
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.RequestException as exc:
+        print(f"[Tmap] 요청 실패: {exc}")
+        return None
+    except ValueError as exc:
+        print(f"[Tmap] JSON 파싱 실패: {exc}")
+        return None
 
-        if isinstance(data, dict) and data.get("error"):
-            err = data["error"]
-            print(f"[Tmap] API error: {json.dumps(err, ensure_ascii=False)}")
-            code = str(err.get("code", "")) if isinstance(err, dict) else ""
-            if code == "QUOTA_EXCEEDED" and attempt < 2:
-                time.sleep(1.5 * (attempt + 1))
-                continue
-            return None
-        if not isinstance(data.get("features"), list):
-            return None
-        return data
+    if isinstance(data, dict) and data.get("error"):
+        err = data["error"]
+        print(f"[Tmap] API error: {json.dumps(err, ensure_ascii=False)}")
+        return None
+    if not isinstance(data.get("features"), list):
+        return None
+    return data
 
-    return None
+
+def _fetch_tmap_pedestrian_data(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+    *,
+    search_option: str,
+    pass_list: str | None = None,
+) -> dict[str, Any] | None:
+    """Tmap 보행자 API 원본 JSON (캐시·일일 한도 적용)."""
+    if not settings.tmap_app_key:
+        return None
+    cache_key = make_key(
+        "route",
+        {
+            "o": (round(origin[0], 5), round(origin[1], 5)),
+            "d": (round(destination[0], 5), round(destination[1], 5)),
+            "opt": search_option,
+            "pass": pass_list or "",
+        },
+    )
+
+    def _fetch() -> dict[str, Any] | None:
+        return _fetch_tmap_pedestrian_raw(
+            origin,
+            destination,
+            search_option=search_option,
+            pass_list=pass_list,
+        )
+
+    return cached_api_call(
+        cache_key=cache_key,
+        category="route",
+        ttl_seconds=settings.tmap_cache_ttl_route_s,
+        fetch=_fetch,
+    )
 
 
 def _densify_route_coordinates(

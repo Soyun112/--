@@ -102,7 +102,20 @@ def get_public_config() -> dict:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "api_version": "2026-07-20-tmap"}
+    from .services.tmap_quota import usage_snapshot
+
+    limits = {
+        "route": settings.tmap_daily_limit_route,
+        "road": settings.tmap_daily_limit_road,
+        "poi": settings.tmap_daily_limit_poi,
+        "geocode": settings.tmap_daily_limit_geocode,
+    }
+    used = usage_snapshot()
+    return {
+        "status": "ok",
+        "api_version": "2026-07-21-quota",
+        "tmap_usage": {k: {"used": used.get(k, 0), "limit": limits[k]} for k in limits},
+    }
 
 
 @app.get("/api/tmap-bootstrap.js")

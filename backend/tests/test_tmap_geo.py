@@ -14,6 +14,8 @@ def test_match_coords_to_roads_returns_more_points(monkeypatch):
     ]
 
     monkeypatch.setattr(tmap_geo.settings, "tmap_road_match_enabled", True)
+    monkeypatch.setattr(tmap_geo.settings, "tmap_app_key", "test-key")
+    monkeypatch.setattr(tmap_geo.settings, "tmap_road_match_min_coords", 30)
 
     class FakeResp:
         status_code = 200
