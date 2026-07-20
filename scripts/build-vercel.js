@@ -18,6 +18,10 @@ const config = {
       source: "/api/:path*",
       destination: `${backend}/api/:path*`,
     },
+    {
+      source: "/g",
+      destination: "/kid-guide.html",
+    },
   ],
 };
 

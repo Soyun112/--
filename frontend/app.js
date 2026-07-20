@@ -716,10 +716,8 @@ function buildKidGuideSharePayload() {
 
 function buildKidGuideShareText() {
   const payload = buildKidGuideSharePayload();
-  const parts = [payload.title];
-  if (payload.safety_score != null) parts.push(`안전 ${payload.safety_score}점`);
-  parts.push("아이가 보기 쉬운 길 안내예요.");
-  return parts.join(" · ");
+  const title = payload.title || "오늘의 안전 길";
+  return `👶 ${title}\n링크를 누르면 아이용 길 안내 카드가 바로 열려요!`;
 }
 
 async function ensureKidGuideShareUrl() {
@@ -734,7 +732,7 @@ async function ensureKidGuideShareUrl() {
       body: JSON.stringify(payload),
     });
     const base = resolveKidGuideFrontendBase();
-    cachedKidGuideShareUrl = `${base}/kid-guide.html?id=${encodeURIComponent(data.id)}`;
+    cachedKidGuideShareUrl = `${base}/g?id=${encodeURIComponent(data.id)}`;
     return cachedKidGuideShareUrl;
   } catch (err) {
     console.warn("공유 API 사용 불가 — 링크에 안내 데이터를 직접 담아 보냅니다.", err);
@@ -817,8 +815,8 @@ async function shareKidGuide(mode = "kakao") {
     await copyTextToClipboard(url);
     showKidShareToast(
       mode === "kakao"
-        ? "링크가 복사됐어요. 카톡 채팅에 붙여넣기 하세요!"
-        : "링크가 복사됐어요!"
+        ? "카톡에 붙여넣으면, 누르는 순간 길 안내 카드가 열려요!"
+        : "링크 복사됐어요! 보내면 누르는 순간 카드가 열려요."
     );
   } catch (err) {
     if (err?.name !== "AbortError") {

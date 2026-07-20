@@ -1,0 +1,291 @@
+/* 아이용 길 안내 — 모바일 카드뉴스 전용 */
+:root {
+  --kg-text: #1c2733;
+  --kg-muted: #5a6b7d;
+  --kg-primary: #1f5a9c;
+  --kg-orange: #e08a2c;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  -webkit-text-size-adjust: 100%;
+  touch-action: manipulation;
+}
+
+body.kid-guide-page {
+  font-family: "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  color: var(--kg-text);
+  background: linear-gradient(165deg, #fff6d8 0%, #ffe8ef 42%, #d9f2ff 100%);
+}
+
+html.has-preload .kid-guide-loading {
+  display: none;
+}
+
+.kid-guide-loading,
+.kid-guide-error {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--kg-muted);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.kid-guide-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-height: 100dvh;
+  padding:
+    max(10px, env(safe-area-inset-top))
+    max(12px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
+}
+
+.kid-guide-shell[hidden],
+.kid-guide-loading[hidden],
+.kid-guide-error[hidden] {
+  display: none !important;
+}
+
+.kid-guide-top {
+  flex: 0 0 auto;
+  padding: 4px 4px 10px;
+}
+
+.kid-guide-badge {
+  margin: 0 0 8px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--kg-primary);
+  letter-spacing: -0.02em;
+}
+
+.kid-guide-route {
+  margin: 0;
+  text-align: center;
+  font-size: clamp(14px, 3.8vw, 16px);
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--kg-text);
+}
+
+.kid-guide-meta-line {
+  margin: 4px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--kg-muted);
+}
+
+.kid-guide-story-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.kid-guide-story-seg {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(28, 39, 51, 0.14);
+  overflow: hidden;
+}
+
+.kid-guide-story-seg > span {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #1f5a9c, #4f9ae6);
+  transition: width 0.25s ease;
+}
+
+.kid-guide-story-seg.done > span { width: 100%; }
+.kid-guide-story-seg.active > span { width: 100%; }
+
+.kid-guide-card-full {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  border-radius: 28px;
+  background: #fff;
+  box-shadow: 0 20px 50px rgba(30, 50, 80, 0.18);
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  overflow: hidden;
+}
+
+.kid-guide-card-full.arrived {
+  background: linear-gradient(160deg, #fff7e0, #ffeef0);
+  border-color: var(--kg-orange);
+}
+
+.kid-guide-tap-left,
+.kid-guide-tap-right {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 38%;
+  z-index: 2;
+}
+
+.kid-guide-tap-left { left: 0; }
+.kid-guide-tap-right { right: 0; }
+
+.kid-guide-stage {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  padding: 28px 20px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.kid-guide-stage.slide-next { animation: kgSlideNext 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.kid-guide-stage.slide-prev { animation: kgSlidePrev 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
+
+@keyframes kgSlideNext {
+  from { opacity: 0; transform: translateX(28px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes kgSlidePrev {
+  from { opacity: 0; transform: translateX(-28px); }
+  to { opacity: 1; transform: none; }
+}
+
+.kid-guide-icon {
+  width: clamp(108px, 28vw, 140px);
+  height: clamp(108px, 28vw, 140px);
+  display: grid;
+  place-items: center;
+  font-size: clamp(64px, 18vw, 84px);
+  border-radius: 50%;
+  background: linear-gradient(180deg, #f3f8ff, #e7f0fb);
+  border: 3px solid #d7e6f8;
+  box-shadow: 0 8px 0 #c5daf3;
+}
+
+.kid-guide-card-full.arrived .kid-guide-icon {
+  background: linear-gradient(180deg, #fff4cc, #ffe59a);
+  border-color: #ffd36a;
+  box-shadow: 0 8px 0 #f0c55a;
+  animation: kgPop 0.55s ease;
+}
+
+@keyframes kgPop {
+  0%, 100% { transform: scale(1); }
+  40% { transform: scale(1.08); }
+}
+
+.kid-guide-keyword {
+  margin: 0;
+  font-size: clamp(28px, 8vw, 36px);
+  font-weight: 900;
+  line-height: 1.25;
+  letter-spacing: -0.03em;
+}
+
+.kid-guide-card-full.arrived .kid-guide-keyword {
+  color: #a75a12;
+}
+
+.kid-guide-friendly {
+  margin: 0;
+  padding: 12px 18px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fff9ec, #fff2d6);
+  border: 2px solid #f3d99a;
+  box-shadow: 0 5px 0 rgba(243, 217, 154, 0.55);
+  font-size: clamp(18px, 5vw, 22px);
+  font-weight: 800;
+  color: #8a5a10;
+  line-height: 1.35;
+}
+
+.kid-guide-friendly:empty { display: none; }
+
+.kid-guide-landmark {
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: #fff0f5;
+  color: #b44a72;
+  font-size: clamp(14px, 4vw, 16px);
+  font-weight: 700;
+}
+
+.kid-guide-landmark:empty { display: none; }
+
+.kid-guide-bottom {
+  flex: 0 0 auto;
+  padding: 14px 4px 4px;
+  text-align: center;
+}
+
+.kid-guide-next-btn {
+  width: 100%;
+  max-width: 420px;
+  padding: 16px 20px;
+  border: none;
+  border-radius: 18px;
+  background: var(--kg-primary);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 6px 0 #16406f;
+  transition: transform 0.12s ease;
+}
+
+.kid-guide-next-btn:active {
+  transform: translateY(3px);
+  box-shadow: 0 3px 0 #16406f;
+}
+
+.kid-guide-next-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  box-shadow: none;
+}
+
+.kid-guide-next-btn.arrive-btn {
+  background: var(--kg-orange);
+  box-shadow: 0 6px 0 #b86a1a;
+}
+
+.kid-guide-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--kg-muted);
+}
+
+@media (min-width: 768px) {
+  .kid-guide-shell {
+    max-width: 440px;
+    margin: 0 auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kid-guide-stage.slide-next,
+  .kid-guide-stage.slide-prev,
+  .kid-guide-icon { animation: none !important; }
+}

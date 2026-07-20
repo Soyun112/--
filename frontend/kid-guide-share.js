@@ -39,5 +39,5 @@ function resolveKidGuideFrontendBase() {
 function buildKidGuideInlineUrl(payload) {
   const encoded = encodeKidGuidePayload(payload);
   const base = resolveKidGuideFrontendBase();
-  return `${base}/kid-guide.html?d=${encodeURIComponent(encoded)}`;
+  return `${base}/g?d=${encodeURIComponent(encoded)}`;
 }
