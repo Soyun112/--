@@ -740,7 +740,7 @@ function renderLegend() {
       ([layer, color, label]) =>
         `<button type="button" class="legend-item" data-public-layer="${layer}"><span class="dot" style="background:${CATEGORY_COLORS[color]}"></span>${label}</button>`
     ).join("")}
-    <span class="legend-route-help">실선(굵음) = 추천 경로, 점선 = 다른 후보</span>
+    <span class="legend-route-help">굵은 실선 = 선택한 경로</span>
   `;
   el.querySelectorAll("[data-public-layer]").forEach((item) => {
     const showLayer = () => setActivePublicLayer(item.dataset.publicLayer);
@@ -818,7 +818,11 @@ function renderSvgMap(routeData, publicData) {
   const sf = safetyFacilitiesNearRoute(publicData, routeData);
   const documentPoints = pointsNearRecommendedRoute(publicData.doc_risk_points || [], routeData);
   const allPoints = [];
-  routeData.candidates.forEach((c) => c.coordinates.forEach((pt) => allPoints.push(pt)));
+  const active = activeRoute(routeData);
+  routeData.candidates.forEach((c) => {
+    if (!active || c.id !== active.id) return;
+    c.coordinates.forEach((pt) => allPoints.push(pt));
+  });
   [childZones, accidentHotspots, guardianHouses, streetlights, speedCameras, cctvs, sf.all, documentPoints]
     .forEach((points) => points.forEach((point) => allPoints.push(point)));
   if (allPoints.length === 0) return;
@@ -834,20 +838,18 @@ function renderSvgMap(routeData, publicData) {
   bg.setAttribute("fill", "#eef3f8");
   svg.appendChild(bg);
 
-  // 경로 폴리라인
-  routeData.candidates.forEach((c) => {
-    const recommended = c.id === activeRouteId(routeData);
-    const pts = c.coordinates.map((pt) => project(pt, bounds, size, padding));
+  // 선택한 경로만 폴리라인으로 표시
+  if (active && active.coordinates.length >= 2) {
+    const pts = active.coordinates.map((pt) => project(pt, bounds, size, padding));
     const path = document.createElementNS(ns, "polyline");
     path.setAttribute("points", pts.map((p) => `${p.x},${p.y}`).join(" "));
     path.setAttribute("fill", "none");
-    path.setAttribute("stroke", scoreColor(c.safety_score));
-    path.setAttribute("stroke-width", recommended ? 5 : 3);
-    path.setAttribute("stroke-opacity", recommended ? 0.95 : 0.55);
+    path.setAttribute("stroke", scoreColor(active.safety_score));
+    path.setAttribute("stroke-width", 5);
+    path.setAttribute("stroke-opacity", 0.95);
     path.setAttribute("stroke-linecap", "round");
-    path.setAttribute("stroke-dasharray", recommended ? "" : "6,5");
     svg.appendChild(path);
-  });
+  }
 
   function drawMarker(pt, color, shape, title) {
     const p = project(pt, bounds, size, padding);
@@ -1095,26 +1097,25 @@ function renderTmapRoutes(routeData, publicData) {
   const sf = safetyFacilitiesNearRoute(publicData, routeData);
   const documentPoints = pointsNearRecommendedRoute(publicData.doc_risk_points || [], routeData);
 
-  routeData.candidates.forEach((c) => {
-    const recommended = c.id === activeRouteId(routeData);
-    const path = c.coordinates.map((pt) => {
+  const active = activeRoute(routeData);
+  if (active && active.coordinates.length >= 2) {
+    const path = active.coordinates.map((pt) => {
       const latlng = new Tmapv2.LatLng(pt.lat, pt.lng);
       bounds.extend(latlng);
       hasPoint = true;
       return latlng;
     });
-    if (path.length < 2) return;
     track(
       new Tmapv2.Polyline({
         path,
-        strokeColor: scoreColor(c.safety_score),
-        strokeWeight: recommended ? 6 : 3,
-        strokeStyle: recommended ? "solid" : "dash",
-        strokeOpacity: recommended ? 0.95 : 0.55,
+        strokeColor: scoreColor(active.safety_score),
+        strokeWeight: 6,
+        strokeStyle: "solid",
+        strokeOpacity: 0.95,
         map: state.tmap,
       })
     );
-  });
+  }
 
   function marker(pt, color, title, label) {
     const latlng = new Tmapv2.LatLng(pt.lat, pt.lng);

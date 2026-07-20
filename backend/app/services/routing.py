@@ -13,11 +13,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, List, Tuple
 
+import numpy as np
 import requests
 
 from ..config import settings
 from ..console_safe import console_safe as _console_safe, safe_print
-from .geo import min_distance_to_route, route_length_m
+from .geo import haversine_m, min_distance_to_route, route_length_m
 from .landmarks import landmark_for
 
 TMAP_PEDESTRIAN_URL = "https://apis.openapi.sk.com/tmap/routes/pedestrian"
@@ -115,6 +116,64 @@ def _tmap_feature_sort_key(feature: dict[str, Any]) -> tuple[int, int, str]:
     # 같은 index면 Point를 LineString보다 먼저 (SP 안내 → 해당 구간)
     type_order = 0 if gtype == "Point" else 1
     return (index, type_order, gtype)
+
+
+def _append_unique_coord(
+    coords: List[Tuple[float, float]],
+    lat: float,
+    lng: float,
+    *,
+    min_gap_m: float = 0.5,
+) -> None:
+    """연속 중복·초근접 좌표를 건너뛰어 폴리라인 이음새 스파이크를 줄인다."""
+    if not coords:
+        coords.append((lat, lng))
+        return
+    prev_lat, prev_lng = coords[-1]
+    if prev_lat == lat and prev_lng == lng:
+        return
+    gap = float(
+        haversine_m(
+            np.array([prev_lat]),
+            np.array([prev_lng]),
+            np.array([lat]),
+            np.array([lng]),
+        )[0]
+    )
+    if gap < min_gap_m:
+        return
+    coords.append((lat, lng))
+
+
+def _coords_from_tmap_features(
+    features: list[dict[str, Any]],
+) -> tuple[List[Tuple[float, float]], float, float, float]:
+    """LineString을 index 순으로 이어 붙여 (좌표, 거리, 시간, 대로거리)를 만든다."""
+    coords: List[Tuple[float, float]] = []
+    main_road_distance_m = 0.0
+    total_distance = 0.0
+    total_time = 0.0
+
+    line_features = [
+        feature
+        for feature in features
+        if (feature.get("geometry") or {}).get("type") == "LineString"
+    ]
+    for feature in sorted(line_features, key=_tmap_feature_sort_key):
+        props = feature.get("properties", {}) or {}
+        geometry = feature.get("geometry", {}) or {}
+        distance_m = float(props.get("distance", 0) or 0)
+        total_distance += distance_m
+        total_time += float(props.get("time", 0) or 0)
+        road_name = str(props.get("description", "")).split(",", 1)[0].strip()
+        if road_name.endswith("대로"):
+            main_road_distance_m += distance_m * 2
+        elif road_name.endswith("로"):
+            main_road_distance_m += distance_m
+        for lng, lat in geometry.get("coordinates", []):
+            _append_unique_coord(coords, float(lat), float(lng))
+
+    return coords, total_distance, total_time, main_road_distance_m
 
 
 def _parse_meters_from_text(text: str) -> float | None:
@@ -507,26 +566,7 @@ def _call_tmap(origin: Tuple[float, float], destination: Tuple[float, float], pa
         print(f"[Tmap] features 필드가 없거나 배열이 아님: {type(features)}")
         return None
 
-    coords: List[Tuple[float, float]] = []
-    main_road_distance_m = 0.0
-    total_distance = 0.0
-    total_time = 0.0
-
-    for feature in features:
-        props = feature.get("properties", {}) or {}
-        geometry = feature.get("geometry", {}) or {}
-        if geometry.get("type") != "LineString":
-            continue
-        distance_m = float(props.get("distance", 0) or 0)
-        total_distance += distance_m
-        total_time += float(props.get("time", 0) or 0)
-        road_name = str(props.get("description", "")).split(",", 1)[0].strip()
-        if road_name.endswith("대로"):
-            main_road_distance_m += distance_m * 2
-        elif road_name.endswith("로"):
-            main_road_distance_m += distance_m
-        for lng, lat in geometry.get("coordinates", []):
-            coords.append((float(lat), float(lng)))
+    coords, total_distance, total_time, main_road_distance_m = _coords_from_tmap_features(features)
 
     navigation_steps = _parse_tmap_navigation_steps(features)
     if not navigation_steps:
