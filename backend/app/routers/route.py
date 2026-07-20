@@ -139,7 +139,13 @@ def compute_route(req: RouteRequest) -> RouteResponse:
         f"(mock={routing_mock})"
     )
 
-    raw_candidates = get_route_candidates(origin_xy, dest_xy, force_mock=req.mock)
+    raw_candidates = get_route_candidates(
+        origin_xy,
+        dest_xy,
+        force_mock=req.mock,
+        origin_name=origin.name or origin.query,
+        destination_name=destination.name or destination.query,
+    )
     night = is_nighttime()
     scored = score_candidates(raw_candidates, is_night=night)
 

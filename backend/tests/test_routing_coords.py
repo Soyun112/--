@@ -93,10 +93,31 @@ def test_night_academy_commute_uses_seolleung_main_road_only():
         get_route_candidates,
     )
 
-    candidates = get_route_candidates(_NIGHT_ACADEMY_ORIGIN, _NIGHT_ACADEMY_HOME, force_mock=True)
+    candidates = get_route_candidates(
+        _NIGHT_ACADEMY_ORIGIN,
+        _NIGHT_ACADEMY_HOME,
+        force_mock=True,
+        origin_name="필수학학원",
+        destination_name="개나리SK뷰5차아파트",
+    )
     assert len(candidates) == 1
     assert candidates[0].id == "route-demo-night-main"
     coords = candidates[0].coordinates
     # 학원에서 먼저 선릉로 쪽으로 서진한 뒤 북상
     assert coords[2][1] < coords[0][1]
     assert max(pt[0] for pt in coords) >= coords[-1][0] - 1e-6
+
+
+def test_night_academy_detected_by_name_even_if_coords_drift():
+    from app.services.routing import get_route_candidates
+
+    # 좌표가 조금 달라도 이름으로 야간 하원 시나리오를 잡는다.
+    candidates = get_route_candidates(
+        (37.4995, 127.0530),
+        (37.5015, 127.0495),
+        force_mock=True,
+        origin_name="필수학학원",
+        destination_name="개나리SK뷰5차아파트",
+    )
+    assert len(candidates) == 1
+    assert candidates[0].id == "route-demo-night-main"

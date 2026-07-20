@@ -90,12 +90,14 @@ def _strip_tags(text: str) -> str:
 
 def _lookup_dict(query: str) -> Optional[GeocodeResult]:
     key = query.strip().replace(" ", "")
+    key_lower = key.lower()
     for table, src in ((DEMO_PLACES, "DEMO_DICT"), (STATION_DICT, "STATION_DICT")):
-        # 정확 일치 우선, 없으면 "역" 유무를 보정해 재시도
-        for candidate in (key, key.rstrip("역"), key + "역"):
-            if candidate in table:
-                lat, lng, label = table[candidate]
-                return GeocodeResult(lat=lat, lng=lng, label=label, source=src)
+        # 정확 일치 우선, 없으면 "역" 유무·대소문자를 보정해 재시도
+        for candidate in (key, key.rstrip("역"), key + "역", key_lower):
+            for table_key, value in table.items():
+                if table_key == candidate or table_key.lower() == candidate.lower():
+                    lat, lng, label = value
+                    return GeocodeResult(lat=lat, lng=lng, label=label, source=src)
     return None
 
 
