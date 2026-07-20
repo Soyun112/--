@@ -1,4 +1,8 @@
-from app.services.routing import _coords_from_tmap_features, _remove_polyline_spikes
+from app.services.routing import (
+    _clean_route_polyline,
+    _coords_from_tmap_features,
+    _remove_polyline_spikes,
+)
 
 
 def test_coords_sorted_by_index_and_deduped():
@@ -59,3 +63,24 @@ def test_remove_polyline_spikes_keeps_real_corner():
         (37.5000, 127.0515),
     ]
     assert _remove_polyline_spikes(coords) == coords
+
+
+def test_remove_out_and_back_spurs_collapses_alley_roundtrip():
+    # 남하 중 동쪽 골목으로 ~80m 나갔다가 같은 길로 되돌아와 계속 남하
+    coords = [
+        (37.5015, 127.0500),  # main
+        (37.5010, 127.0500),  # junction
+        (37.5010, 127.0504),
+        (37.5010, 127.0508),
+        (37.5010, 127.0512),  # tip (U-turn)
+        (37.5010, 127.0508),
+        (37.5010, 127.0504),
+        (37.5010, 127.0500),  # back to junction
+        (37.5005, 127.0500),  # continue south
+    ]
+    cleaned = _clean_route_polyline(coords)
+    assert (37.5010, 127.0512) not in cleaned
+    assert (37.5010, 127.0508) not in cleaned
+    assert cleaned[0] == coords[0]
+    assert cleaned[-1] == coords[-1]
+    assert len(cleaned) <= 4

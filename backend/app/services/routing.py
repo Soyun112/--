@@ -208,6 +208,62 @@ def _remove_polyline_spikes(
     return result
 
 
+def _remove_out_and_back_spurs(
+    coords: List[Tuple[float, float]],
+    *,
+    tip_turn_min: float = 150.0,
+    match_tol_m: float = 14.0,
+    max_half_spur_m: float = 180.0,
+) -> List[Tuple[float, float]]:
+    """골목으로 나갔다가 같은 길로 되돌아오는 긴 왕복(스파이크) 구간을 접는다."""
+    if len(coords) < 4:
+        return list(coords)
+
+    result = list(coords)
+    changed = True
+    while changed:
+        changed = False
+        for tip in range(1, len(result) - 1):
+            turn = _heading_change_deg(result[tip - 1], result[tip], result[tip + 1])
+            if turn < tip_turn_min:
+                continue
+
+            best_k = 0
+            outbound = 0.0
+            for k in range(1, min(tip, len(result) - 1 - tip) + 1):
+                outbound += _segment_m(result[tip - k + 1], result[tip - k])
+                if outbound > max_half_spur_m:
+                    break
+                if _segment_m(result[tip - k], result[tip + k]) > match_tol_m:
+                    break
+                best_k = k
+
+            if best_k < 1:
+                # 샘플이 비대칭이어도 tip 양옆이 가까우면 유턴 꼭짓점만 제거
+                ab = _segment_m(result[tip - 1], result[tip])
+                bc = _segment_m(result[tip], result[tip + 1])
+                ac = _segment_m(result[tip - 1], result[tip + 1])
+                if ab <= max_half_spur_m and bc <= max_half_spur_m and ac < max(ab, bc) * 0.55:
+                    del result[tip]
+                    changed = True
+                    break
+                continue
+
+            left = tip - best_k
+            right = tip + best_k
+            result = result[: left + 1] + result[right + 1 :]
+            changed = True
+            break
+    return result
+
+
+def _clean_route_polyline(coords: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    """긴 왕복 골목을 먼저 접고, 남은 짧은 스파이크를 제거한다."""
+    cleaned = _remove_out_and_back_spurs(coords)
+    cleaned = _remove_polyline_spikes(cleaned)
+    return cleaned
+
+
 def _coords_from_tmap_features(
     features: list[dict[str, Any]],
 ) -> tuple[List[Tuple[float, float]], float, float, float]:
@@ -236,7 +292,7 @@ def _coords_from_tmap_features(
         for lng, lat in geometry.get("coordinates", []):
             _append_unique_coord(coords, float(lat), float(lng))
 
-    coords = _remove_polyline_spikes(coords)
+    coords = _clean_route_polyline(coords)
     return coords, total_distance, total_time, main_road_distance_m
 
 
