@@ -10,7 +10,8 @@ from dotenv import load_dotenv
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = BACKEND_DIR.parent
 
-load_dotenv(REPO_ROOT / ".env")
+# override=True: 셸에 빈 TMAP_APP_KEY 등이 남아 있어도 .env 값이 우선한다.
+load_dotenv(REPO_ROOT / ".env", override=True)
 
 
 def _bool_env(name: str, default: bool) -> bool:

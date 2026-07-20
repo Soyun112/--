@@ -237,6 +237,11 @@ button {
   background: #eef3f8;
   border: 1px solid var(--border);
   overflow: hidden;
+  position: relative;
+}
+#tmap > div {
+  width: 100% !important;
+  height: 100% !important;
 }
 .mode-message { margin: -4px 0 12px; color: var(--muted); font-size: 13px; }
 

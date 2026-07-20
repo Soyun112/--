@@ -956,21 +956,39 @@ async function tryInitTmap() {
   try {
     const appKey = state.config && state.config.tmap_web_key;
     await loadTmapSdk(appKey);
+    // SDK onload만으로는 Tmapv2 객체가 아직 없을 수 있어 짧게 대기
+    const deadline = Date.now() + 5000;
+    while (!window.Tmapv2 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    if (!window.Tmapv2) {
+      throw new Error("Tmapv2 SDK가 로드되지 않았습니다.");
+    }
+
     const container = document.getElementById("tmap");
     container.style.display = "block";
     document.getElementById("svg-map").style.display = "none";
+
+    // Tmap은 height:"100%"일 때 높이 0으로 그려져 빈 칸만 남는 경우가 많음 → px 고정
+    const mapHeight = Math.max(container.clientHeight || 0, 420);
     const center = state.config.demo_center;
-    state.tmap = new Tmapv2.Map(container, {
+    state.tmap = new Tmapv2.Map("tmap", {
       center: new Tmapv2.LatLng(center.lat, center.lng),
       width: "100%",
-      height: "100%",
+      height: `${mapHeight}px`,
       zoom: 16,
+      zoomControl: true,
+      scrollwheel: true,
     });
     state.tmapOverlays = [];
     state.tmapReady = true;
   } catch (err) {
     console.warn("Tmap 지도 로드 실패, SVG 스키매틱 지도로 대체합니다.", err);
     state.tmapReady = false;
+    const tmapEl = document.getElementById("tmap");
+    const svgEl = document.getElementById("svg-map");
+    if (tmapEl) tmapEl.style.display = "none";
+    if (svgEl) svgEl.style.display = "block";
   }
 }
 
