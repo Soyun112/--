@@ -732,7 +732,7 @@ async function ensureKidGuideShareUrl() {
       body: JSON.stringify(payload),
     });
     const base = resolveKidGuideFrontendBase();
-    cachedKidGuideShareUrl = `${base}/g?id=${encodeURIComponent(data.id)}`;
+    cachedKidGuideShareUrl = `${base}/kid-guide.html?id=${encodeURIComponent(data.id)}`;
     return cachedKidGuideShareUrl;
   } catch (err) {
     console.warn("공유 API 사용 불가 — 링크에 안내 데이터를 직접 담아 보냅니다.", err);

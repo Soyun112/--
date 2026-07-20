@@ -39,5 +39,6 @@ function resolveKidGuideFrontendBase() {
 function buildKidGuideInlineUrl(payload) {
   const encoded = encodeKidGuidePayload(payload);
   const base = resolveKidGuideFrontendBase();
-  return `${base}/g?d=${encodeURIComponent(encoded)}`;
+  // kid-guide.html 은 정적 파일이라 Vercel에서 바로 열림 (/g 는 rewrite 필요)
+  return `${base}/kid-guide.html?d=${encodeURIComponent(encoded)}`;
 }

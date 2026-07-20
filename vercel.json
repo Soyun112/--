@@ -5,6 +5,10 @@
     {
       "source": "/api/:path*",
       "destination": "https://kids-safe-route-api.onrender.com/api/:path*"
+    },
+    {
+      "source": "/g",
+      "destination": "/kid-guide.html"
     }
   ]
 }
