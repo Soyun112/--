@@ -14,6 +14,7 @@ from ..config import settings
 
 TMAP_POI_URL = "https://apis.openapi.sk.com/tmap/pois"
 TMAP_FULLADDR_URL = "https://apis.openapi.sk.com/tmap/geo/fullAddrGeo"
+TMAP_ROAD_MATCH_URL = "https://apis.openapi.sk.com/tmap/road/matchToRoads"
 
 _KO_BOUNDS = {"lat_min": 32.0, "lat_max": 39.5, "lng_min": 124.0, "lng_max": 132.0}
 
@@ -44,22 +45,34 @@ def _headers() -> dict[str, str]:
 def search_poi(
     query: str,
     *,
-    count: int = 5,
+    count: int = 10,
     near: tuple[float, float] | None = None,
     max_distance_m: float = 2500.0,
+    radius_km: int = 2,
 ) -> Optional[TmapGeoHit]:
-    """Tmap POI 통합검색 — 건물명·학원·역 이름."""
+    """Tmap POI 통합검색 — 건물명·학원·역 이름 (반경 검색 우선)."""
     if not settings.tmap_app_key:
         return None
     try:
+        params: dict[str, str | int | float] = {
+            "version": "1",
+            "searchKeyword": query,
+            "resCoordType": "WGS84GEO",
+            "count": count,
+        }
+        if near is not None:
+            params.update(
+                {
+                    "searchtypCd": "R",
+                    "centerLat": near[0],
+                    "centerLon": near[1],
+                    "radius": radius_km,
+                }
+            )
+
         resp = requests.get(
             TMAP_POI_URL,
-            params={
-                "version": "1",
-                "searchKeyword": query,
-                "resCoordType": "WGS84GEO",
-                "count": count,
-            },
+            params=params,
             headers=_headers(),
             timeout=10,
         )
@@ -136,3 +149,79 @@ def geocode_full_address(query: str) -> Optional[TmapGeoHit]:
         return TmapGeoHit(lat=lat, lng=lng, label=str(label), source="TMAP_FULLADDR")
     except Exception:
         return None
+
+
+def _append_unique_coord(
+    coords: list[tuple[float, float]],
+    lat: float,
+    lng: float,
+    *,
+    min_gap_m: float = 0.5,
+) -> None:
+    if not coords:
+        coords.append((lat, lng))
+        return
+    prev_lat, prev_lng = coords[-1]
+    if prev_lat == lat and prev_lng == lng:
+        return
+    from math import asin, cos, radians, sin, sqrt
+
+    lat1, lng1 = radians(prev_lat), radians(prev_lng)
+    lat2, lng2 = radians(lat), radians(lng)
+    dlat, dlng = lat2 - lat1, lng2 - lng1
+    h = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlng / 2) ** 2
+    gap = 6_371_000 * 2 * asin(sqrt(h))
+    if gap < min_gap_m:
+        return
+    coords.append((lat, lng))
+
+
+def match_coords_to_roads(coords: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Tmap Road API(이동한도로찾기)로 좌표를 도로망에 맞춰 보간점을 추가한다."""
+    if not settings.tmap_app_key or len(coords) < 2:
+        return coords
+    if not settings.tmap_road_match_enabled:
+        return coords
+
+    # API 최대 100점 — 긴 경로는 구간별로 나눠 호출
+    chunk_size = 90
+    matched_all: list[tuple[float, float]] = []
+    for start in range(0, len(coords), chunk_size):
+        chunk = coords[start : start + chunk_size]
+        if len(chunk) < 2:
+            if chunk:
+                _append_unique_coord(matched_all, chunk[0][0], chunk[0][1])
+            continue
+        coords_str = "|".join(f"{lng},{lat}" for lat, lng in chunk)
+        try:
+            resp = requests.post(
+                TMAP_ROAD_MATCH_URL,
+                params={"version": "1"},
+                headers={
+                    **_headers(),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={"responseType": "1", "coords": coords_str},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            points = resp.json().get("resultData", {}).get("matchedPoints", [])
+        except Exception:
+            for lat, lng in chunk:
+                _append_unique_coord(matched_all, lat, lng)
+            continue
+
+        for point in points:
+            loc = point.get("matchedLocation") or point.get("mathedLocation")
+            if not loc:
+                continue
+            try:
+                _append_unique_coord(
+                    matched_all,
+                    float(loc["latitude"]),
+                    float(loc["longitude"]),
+                )
+            except (TypeError, ValueError, KeyError):
+                continue
+
+    return matched_all if len(matched_all) >= 2 else coords

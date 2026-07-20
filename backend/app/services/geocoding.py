@@ -153,9 +153,9 @@ def _naver_local(query: str) -> Optional[GeocodeResult]:
         return None
 
 
-def _tmap_poi(query: str) -> Optional[GeocodeResult]:
-    near = (settings.demo_center_lat, settings.demo_center_lng)
-    hit = search_poi(query, near=near)
+def _tmap_poi(query: str, near: tuple[float, float] | None = None) -> Optional[GeocodeResult]:
+    center = near or (settings.demo_center_lat, settings.demo_center_lng)
+    hit = search_poi(query, near=center)
     return GeocodeResult(hit.lat, hit.lng, hit.label, hit.source) if hit else None
 
 
@@ -164,25 +164,33 @@ def _tmap_fulladdr(query: str) -> Optional[GeocodeResult]:
     return GeocodeResult(hit.lat, hit.lng, hit.label, hit.source) if hit else None
 
 
-def geocode(query: str) -> Optional[GeocodeResult]:
-    """이름/주소 문자열을 좌표로 변환. 실패 시 None."""
+def geocode(query: str, near: tuple[float, float] | None = None) -> Optional[GeocodeResult]:
+    """이름/주소 문자열을 좌표로 변환. near가 있으면 그 주변 POI를 우선한다."""
     q = (query or "").strip()
     if not q:
         return None
 
+    poi_near = near or (settings.demo_center_lat, settings.demo_center_lng)
+
     # Tmap appKey가 있으면 POI·주소 API로 도로 쪽 좌표를 먼저 맞춘다.
     if settings.tmap_app_key:
-        for provider in (_tmap_poi, _tmap_fulladdr):
-            result = provider(q)
-            if result:
-                return result
+        hit = search_poi(q, near=poi_near)
+        if hit:
+            return GeocodeResult(hit.lat, hit.lng, hit.label, hit.source)
+        hit = geocode_full_address(q)
+        if hit:
+            return GeocodeResult(hit.lat, hit.lng, hit.label, hit.source)
 
     hit = _lookup_dict(q)
     if hit:
         return hit
 
-    for provider in (_kakao_keyword, _naver_local, _tmap_poi, _tmap_fulladdr):
+    for provider in (_kakao_keyword, _naver_local):
         result = provider(q)
         if result:
             return result
-    return None
+
+    result = _tmap_poi(q, near=poi_near)
+    if result:
+        return result
+    return _tmap_fulladdr(q)

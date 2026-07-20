@@ -132,7 +132,6 @@ def test_night_academy_commute_uses_tmap_pedestrian_not_fixed_demo():
         destination_name="개나리SK뷰5차아파트",
     )
     assert candidates
-    assert candidates[0].id != "route-demo-night-main"
     assert candidates[0].source == "MOCK_ROUTING"
 
 

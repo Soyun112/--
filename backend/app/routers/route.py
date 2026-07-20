@@ -43,7 +43,12 @@ def geocode_place(q: str = Query(..., min_length=1, description="건물명/역�
     return GeocodeResponse(query=q, lat=result.lat, lng=result.lng, label=result.label, source=result.source)
 
 
-def _resolve_waypoint(wp: Waypoint, role: str) -> Waypoint:
+def _resolve_waypoint(
+    wp: Waypoint,
+    role: str,
+    *,
+    near: tuple[float, float] | None = None,
+) -> Waypoint:
     """좌표가 있으면 그대로, 없으면 query/name을 지오코딩해 좌표를 채운 Waypoint를 반환."""
     if wp.lat is not None and wp.lng is not None:
         return Waypoint(lat=wp.lat, lng=wp.lng, name=wp.name or wp.query)
@@ -52,7 +57,7 @@ def _resolve_waypoint(wp: Waypoint, role: str) -> Waypoint:
     if not query:
         raise HTTPException(status_code=400, detail=f"{role}: 좌표(lat/lng) 또는 이름(query)이 필요합니다.")
 
-    result = geocoding.geocode(query)
+    result = geocoding.geocode(query, near=near)
     if result is None:
         raise HTTPException(status_code=404, detail=f'{role}: "{query}" 위치를 찾지 못했습니다.')
     return Waypoint(lat=result.lat, lng=result.lng, name=wp.name or result.label)
@@ -128,7 +133,11 @@ def get_public_data_layers() -> PublicDataResponse:
 @router.post("/route", response_model=RouteResponse)
 def compute_route(req: RouteRequest) -> RouteResponse:
     origin = _resolve_waypoint(req.origin, "출발지")
-    destination = _resolve_waypoint(req.destination, "목적지")
+    destination = _resolve_waypoint(
+        req.destination,
+        "목적지",
+        near=(origin.lat, origin.lng),
+    )
 
     origin_xy = (origin.lat, origin.lng)
     dest_xy = (destination.lat, destination.lng)

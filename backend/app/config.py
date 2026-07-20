@@ -52,6 +52,8 @@ class Settings:
     # 긴 직선 구간(보행 API가 좌표를 성기게 줄 때)을 구간별 재탐색으로 촘촘히 만든다.
     tmap_route_densify_enabled: bool = _bool_env("TMAP_ROUTE_DENSIFY_ENABLED", True)
     tmap_route_densify_min_leg_m: float = float(os.getenv("TMAP_ROUTE_DENSIFY_MIN_LEG_M", "25"))
+    # Tmap Road API(matchToRoads)로 경로 좌표를 도로망에 스냅
+    tmap_road_match_enabled: bool = _bool_env("TMAP_ROAD_MATCH_ENABLED", True)
     document_ingest_enabled: bool = _bool_env("DOCUMENT_INGEST_ENABLED", False)
     enable_openapi_docs: bool = _bool_env("ENABLE_OPENAPI_DOCS", False)
 

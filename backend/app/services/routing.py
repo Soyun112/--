@@ -17,6 +17,7 @@ import numpy as np
 import requests
 
 from ..config import settings
+from .tmap_geo import match_coords_to_roads
 from ..console_safe import console_safe as _console_safe, safe_print
 from .geo import haversine_m, min_distance_to_route, route_length_m
 from .landmarks import landmark_for
@@ -707,19 +708,34 @@ def _log_navigation_steps(candidate: RouteCandidateRaw) -> None:
 
 def _mock_candidates(origin: Tuple[float, float], destination: Tuple[float, float]) -> List[RouteCandidateRaw]:
     """오프라인 데모용. LIVE에서는 Tmap 실패 시 MOCK으로 떨어지지 않는다."""
-    coords = [origin, destination]
-    dist = route_length_m(coords)
-    return [
-        RouteCandidateRaw(
-            id="route-mock-demo",
-            label="데모 직선 (Tmap 키 없음)",
-            coordinates=coords,
-            distance_m=dist,
-            duration_s=dist / WALK_SPEED_MPS,
-            source="MOCK_ROUTING",
-            navigation_steps=_mock_navigation_steps(coords),
-        )
+    o_lat, o_lng = origin
+    d_lat, d_lng = destination
+
+    diagonal = [origin, destination]
+    grid_lat_first = [origin, (o_lat, d_lng), destination]
+    grid_lng_first = [origin, (d_lat, o_lng), destination]
+
+    candidates_raw = [
+        ("route-direct", "데모 직선 (Tmap 키 없음)", diagonal),
+        ("route-grid-a", "데모 큰길 A", grid_lat_first),
+        ("route-grid-b", "데모 큰길 B", grid_lng_first),
     ]
+
+    results: List[RouteCandidateRaw] = []
+    for cid, label, coords in candidates_raw:
+        dist = route_length_m(coords)
+        results.append(
+            RouteCandidateRaw(
+                id=cid,
+                label=label,
+                coordinates=coords,
+                distance_m=dist,
+                duration_s=dist / WALK_SPEED_MPS,
+                source="MOCK_ROUTING",
+                navigation_steps=_mock_navigation_steps(coords),
+            )
+        )
+    return results
 
 
 def _fetch_tmap_pedestrian_data(
@@ -834,6 +850,11 @@ def _call_tmap(
         features,
         search_option=option,
     )
+
+    before_road = len(coords)
+    coords = match_coords_to_roads(coords)
+    if len(coords) != before_road:
+        print(f"[Tmap] Road API 도로 매칭 {before_road} -> {len(coords)} ({route_label})")
 
     navigation_steps = _parse_tmap_navigation_steps(features)
     if not navigation_steps:

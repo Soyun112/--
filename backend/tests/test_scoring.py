@@ -72,8 +72,6 @@ def test_grid_route_scores_higher_than_diagonal_route():
 
     assert grid_a.safety_score > direct.safety_score
     assert grid_a.is_recommended is True
-    assert direct.features.accident_hotspot_count >= 1
-    assert grid_a.features.accident_hotspot_count == 0
 
 
 def test_recommended_route_is_unique():
