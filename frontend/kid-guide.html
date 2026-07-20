@@ -12,6 +12,7 @@
   <meta property="og:description" content="링크를 누르면 길 안내 카드가 바로 열려요!">
   <title>👶 오늘의 안전 길</title>
   <link rel="stylesheet" href="kid-guide.css">
+  <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
   <script src="kid-guide-share.js"></script>
   <script>
     (function preloadGuide() {
@@ -19,15 +20,6 @@
       if (inline && inline.steps && inline.steps.length) {
         window.__KID_GUIDE_PRELOAD__ = inline;
         document.documentElement.classList.add("has-preload");
-        return;
-      }
-      var hash = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
-      if (hash && !hash.startsWith("id=") && typeof decodeKidGuidePayload === "function") {
-        var decoded = decodeKidGuidePayload(hash);
-        if (decoded && decoded.steps && decoded.steps.length) {
-          window.__KID_GUIDE_PRELOAD__ = decoded;
-          document.documentElement.classList.add("has-preload");
-        }
       }
     })();
   </script>

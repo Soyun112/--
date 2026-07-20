@@ -721,24 +721,7 @@ function buildKidGuideShareText() {
 }
 
 async function ensureKidGuideShareUrl() {
-  const payload = buildKidGuideSharePayload();
-
-  // Render SQLite — 짧은 링크 (배포된 경우)
-  try {
-    const data = await fetchJson("/api/share/kid-guide", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (data?.id) {
-      cachedKidGuideShareUrl = buildKidGuideShortUrl(data.id);
-      return cachedKidGuideShareUrl;
-    }
-  } catch (err) {
-    console.warn("짧은 링크 생성 실패 — 해시 링크 사용", err);
-  }
-
-  cachedKidGuideShareUrl = buildKidGuideShareUrl(payload);
+  cachedKidGuideShareUrl = buildKidGuideShareUrl(buildKidGuideSharePayload());
   return cachedKidGuideShareUrl;
 }
 
@@ -810,8 +793,8 @@ async function shareKidGuide(mode = "kakao") {
     await copyTextToClipboard(url);
     showKidShareToast(
       mode === "kakao"
-        ? "카톡에 붙여넣으면, 누르는 순간 길 안내 카드가 열려요!"
-        : "링크 복사됐어요! 보내면 누르는 순간 카드가 열려요."
+        ? "카톡에 붙여넣기 하세요. 링크 끝까지 잘렸으면 다시 복사해 주세요."
+        : "링크 복사됐어요! guide?d= 로 시작하는지 확인해 주세요."
     );
   } catch (err) {
     if (err?.name !== "AbortError") {
