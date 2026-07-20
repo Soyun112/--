@@ -19,6 +19,15 @@
       if (inline && inline.steps && inline.steps.length) {
         window.__KID_GUIDE_PRELOAD__ = inline;
         document.documentElement.classList.add("has-preload");
+        return;
+      }
+      var hash = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
+      if (hash && !hash.startsWith("id=") && typeof decodeKidGuidePayload === "function") {
+        var decoded = decodeKidGuidePayload(hash);
+        if (decoded && decoded.steps && decoded.steps.length) {
+          window.__KID_GUIDE_PRELOAD__ = decoded;
+          document.documentElement.classList.add("has-preload");
+        }
       }
     })();
   </script>

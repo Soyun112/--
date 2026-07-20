@@ -1,4 +1,4 @@
-/** 아이용 길 안내 공유 — 서버 없이 /g/ 경로 링크로 바로 열림 (카톡·모바일용) */
+/** 아이용 길 안내 공유 — 서버 없이 # 해시 또는 /g/ 경로로 바로 열림 */
 function compactKidGuidePayload(payload) {
   return {
     t: payload.title || "",
@@ -58,19 +58,29 @@ function decodeKidGuidePayload(encoded) {
   }
 }
 
+function readShareIdFromLocation() {
+  const params = new URLSearchParams(window.location.search);
+  const queryId = params.get("id");
+  if (queryId) return queryId;
+
+  const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
+  if (hash.startsWith("id=")) return hash.slice(3);
+  return null;
+}
+
 function readInlineGuidePayload() {
+  const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
+  if (hash && !hash.startsWith("id=")) {
+    const fromHash = decodeKidGuidePayload(hash);
+    if (fromHash?.steps?.length) return fromHash;
+  }
+
   const params = new URLSearchParams(window.location.search);
   let encoded = params.get("d");
 
   if (!encoded) {
     const parts = params.getAll("p");
-    if (parts.length) encoded = parts.join("");
-  }
-
-  if (!encoded) {
-    const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
-    if (hash.startsWith("d=")) encoded = hash.slice(2);
-    else if (hash && !hash.includes("=")) encoded = hash;
+    if (parts.length) encoded = parts.join("").replace(/\//g, "");
   }
 
   if (!encoded) {
@@ -95,19 +105,14 @@ function resolveKidGuideFrontendBase() {
   return window.location.origin;
 }
 
-function buildKidGuideInlineUrl(payload) {
+/** 카톡·모바일: 짧은 /guide#데이터 (해시는 서버 안 거치고 바로 카드 표시) */
+function buildKidGuideShareUrl(payload) {
   const encoded = encodeKidGuidePayload(payload);
   const base = resolveKidGuideFrontendBase();
-
-  // 카톡에서 ?query 가 잘리므로 경로(/g/...) 방식. 너무 길면 경로를 여러 조각으로.
-  if (encoded.length <= 720) {
-    return `${base}/g/${encoded}`;
-  }
-
-  const chunks = encoded.match(/.{1,360}/g) || [];
-  return `${base}/g/${chunks.join("/")}`;
+  return `${base}/guide#${encoded}`;
 }
 
-function buildKidGuideShareUrl(payload) {
-  return buildKidGuideInlineUrl(payload);
+function buildKidGuideShortUrl(id) {
+  const base = resolveKidGuideFrontendBase();
+  return `${base}/guide#id=${encodeURIComponent(id)}`;
 }

@@ -721,8 +721,24 @@ function buildKidGuideShareText() {
 }
 
 async function ensureKidGuideShareUrl() {
-  if (cachedKidGuideShareUrl) return cachedKidGuideShareUrl;
-  cachedKidGuideShareUrl = buildKidGuideShareUrl(buildKidGuideSharePayload());
+  const payload = buildKidGuideSharePayload();
+
+  // Render SQLite — 짧은 링크 (배포된 경우)
+  try {
+    const data = await fetchJson("/api/share/kid-guide", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (data?.id) {
+      cachedKidGuideShareUrl = buildKidGuideShortUrl(data.id);
+      return cachedKidGuideShareUrl;
+    }
+  } catch (err) {
+    console.warn("짧은 링크 생성 실패 — 해시 링크 사용", err);
+  }
+
+  cachedKidGuideShareUrl = buildKidGuideShareUrl(payload);
   return cachedKidGuideShareUrl;
 }
 
@@ -773,6 +789,7 @@ async function shareKidGuide(mode = "kakao") {
       button.textContent = mode === "copy" ? "복사하는 중…" : "보내는 중…";
     }
 
+    resetKidGuideShareCache();
     const text = buildKidGuideShareText();
     const url = await ensureKidGuideShareUrl();
 

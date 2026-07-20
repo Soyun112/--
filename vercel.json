@@ -8,7 +8,7 @@
     },
     {
       "source": "/g/:path*",
-      "destination": "/kid-guide.html"
+      "destination": "/kid-guide.html?p=:path*"
     },
     {
       "source": "/g",

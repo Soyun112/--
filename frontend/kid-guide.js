@@ -128,6 +128,12 @@ function bindSwipe() {
   );
 }
 
+async function fetchShareById(shareId) {
+  const res = await fetch(`${API_BASE}/api/share/kid-guide/${encodeURIComponent(shareId)}`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
 async function loadGuide() {
   if (window.__KID_GUIDE_PRELOAD__?.steps?.length) {
     showApp(window.__KID_GUIDE_PRELOAD__);
@@ -140,28 +146,21 @@ async function loadGuide() {
     return;
   }
 
-  const params = new URLSearchParams(window.location.search);
-  const shareId = params.get("id");
+  const shareId = readShareIdFromLocation();
   if (shareId) {
     try {
-      const res = await fetch(`${API_BASE}/api/share/kid-guide/${encodeURIComponent(shareId)}`);
-      if (res.ok) {
-        showApp(await res.json());
+      const data = await fetchShareById(shareId);
+      if (data?.steps?.length) {
+        showApp(data);
         return;
       }
     } catch {
       /* fall through */
     }
-    showError("링크가 만료됐어요.\n엄마·아빠에게 다시 보내달라고 하세요.");
-    return;
   }
 
-  const hadDataHint =
-    params.has("d") || /\/g\//i.test(window.location.pathname) || window.location.hash.length > 1;
   showError(
-    hadDataHint
-      ? "링크가 잘렸을 수 있어요.\n다시 링크 복사해서 보내달라고 하세요."
-      : "공유 링크가 올바르지 않아요."
+    "길 안내를 불러오지 못했어요.\n엄마·아빠에게 링크 복사를 다시 눌러달라고 하세요."
   );
 }
 
