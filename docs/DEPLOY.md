@@ -59,6 +59,7 @@ PUBLIC_DATA_MOCK=true
 | Name | Value |
 |------|--------|
 | `BACKEND_URL` | Render URL (예: `https://kids-safe-route-api.onrender.com`, 끝 `/` 없이) |
+| `TMAP_APP_KEY` | 티맵 지도 SDK용 (로컬 `.env`와 동일 키). 없으면 지도 타일 인증이 약해질 수 있음 |
 
 4. **Deployments → Redeploy**
 

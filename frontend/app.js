@@ -993,40 +993,25 @@ async function waitUntil(predicate, timeoutMs, label) {
 
 async function loadTmapSdk(appKey) {
   if (isTmapReady()) return;
-  if (!appKey) {
-    throw new Error("Tmap 웹 appKey가 없습니다. (.env 의 TMAP_APP_KEY 확인)");
-  }
-  if (window.__TMAP_BOOT_ERROR__) {
-    throw new Error(window.__TMAP_BOOT_ERROR__);
-  }
 
-  // jsv2 URL은 실제 SDK가 아니라 document.write 로 tmapjs2.min.js 를 넣는 스텁이다.
-  // createElement(async)로 넣으면 document.write 가 실패 → LatLng/Map 이 안 생김.
-  // 그래서 스텁만 있으면 실제 SDK URL을 직접 로드한다.
-  const ensureStub = async () => {
-    if (window.Tmapv2 && typeof window.Tmapv2._getScriptLocation === "function") return;
-    await loadScriptOnce(
-      `https://apis.openapi.sk.com/tmap/jsv2?version=1&appKey=${encodeURIComponent(appKey)}`,
-      "1"
-    );
-    await waitUntil(
-      () => window.Tmapv2 && typeof window.Tmapv2._getScriptLocation === "function",
-      8000,
-      "Tmap 로더 스텁을 불러오지 못했습니다."
-    );
-  };
-
-  await ensureStub();
-
-  if (!isTmapReady()) {
-    const base = window.Tmapv2._getScriptLocation();
-    // 공식 로더가 넣는 실제 SDK 파일
-    await loadScriptOnce(`${base}tmapjs2.min.js?version=20231206`, "core");
-  }
-
+  // jsv2 로더는 document.write 스텁이라 동적 로드 시 LatLng/Map 이 안 생기고,
+  // 이미 로드된 SDK를 stub 로 덮어쓰기도 한다 → 실제 SDK만 직접 로드한다.
+  const n = Math.floor(Math.random() * 3) + 1;
+  const coreUrl = `https://topopentile${n}.tmap.co.kr/scriptSDKV2/tmapjs2.min.js?version=20231206`;
+  await loadScriptOnce(coreUrl, "core");
   await waitUntil(isTmapReady, 15000, "Tmapv2.Map/LatLng 생성자가 준비되지 않았습니다.");
+
   if (typeof window.Tmapv2.setHttpsMode === "function") {
     window.Tmapv2.setHttpsMode(true);
+  }
+  // appKey는 타일 인증용으로 전역에 남겨 둔다(SDK가 참조하는 경우 대비)
+  if (appKey) {
+    window.__TMAP_APP_KEY__ = appKey;
+    try {
+      window.Tmapv2.appKey = appKey;
+    } catch (_) {
+      /* ignore */
+    }
   }
 }
 
@@ -1035,7 +1020,10 @@ async function tryInitTmap() {
   const svgEl = document.getElementById("svg-map");
   try {
     setMapStatus("티맵 지도를 불러오는 중…", true);
-    const appKey = state.config && state.config.tmap_web_key;
+    const appKey =
+      (state.config && state.config.tmap_web_key) ||
+      window.__TMAP_APP_KEY__ ||
+      "";
     await loadTmapSdk(appKey);
 
     // 이전에 실패한 지도 DOM이 남아 있으면 비우고 다시 생성
