@@ -944,11 +944,26 @@ function setMapStatus(message, visible = true) {
   el.classList.toggle("visible", Boolean(visible && message));
 }
 
-function loadScriptOnce(src) {
+function isTmapReady() {
+  const T = window.Tmapv2;
+  // Tmapv2 객체만 있고 LatLng/Map 생성자가 아직 없는 순간이 있음 → 둘 다 function 일 때만 준비 완료
+  return Boolean(
+    T &&
+      typeof T.Map === "function" &&
+      typeof T.LatLng === "function" &&
+      typeof T.LatLngBounds === "function" &&
+      typeof T.Polyline === "function" &&
+      typeof T.Marker === "function"
+  );
+}
+
+function loadScriptOnce(src, datasetKey) {
   return new Promise((resolve, reject) => {
-    const existing = document.querySelector(`script[src="${src}"]`);
+    const existing = datasetKey
+      ? document.querySelector(`script[data-tmap-sdk="${datasetKey}"]`)
+      : document.querySelector(`script[src="${src}"]`);
     if (existing) {
-      if (existing.dataset.loaded === "1") return resolve();
+      if (existing.dataset.loaded === "1" || window.__TMAP_SCRIPT_LOADED__) return resolve();
       existing.addEventListener("load", () => resolve());
       existing.addEventListener("error", () => reject(new Error(`스크립트 로드 실패: ${src}`)));
       return;
@@ -956,8 +971,10 @@ function loadScriptOnce(src) {
     const script = document.createElement("script");
     script.src = src;
     script.async = true;
+    if (datasetKey) script.dataset.tmapSdk = datasetKey;
     script.onload = () => {
       script.dataset.loaded = "1";
+      window.__TMAP_SCRIPT_LOADED__ = true;
       resolve();
     };
     script.onerror = () => reject(new Error(`스크립트 로드 실패: ${src}`));
@@ -965,23 +982,49 @@ function loadScriptOnce(src) {
   });
 }
 
+async function waitUntil(predicate, timeoutMs, label) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(label || "대기 시간 초과");
+}
+
 async function loadTmapSdk(appKey) {
-  if (window.Tmapv2) return;
+  if (isTmapReady()) return;
   if (!appKey) {
     throw new Error("Tmap 웹 appKey가 없습니다. (.env 의 TMAP_APP_KEY 확인)");
   }
-  // Tmap JS 샘플/문서에서 jQuery를 선행 로드하는 경우가 많음
-  if (!window.jQuery) {
-    await loadScriptOnce("https://code.jquery.com/jquery-3.7.1.min.js");
+  if (window.__TMAP_BOOT_ERROR__) {
+    throw new Error(window.__TMAP_BOOT_ERROR__);
   }
-  await loadScriptOnce(`https://apis.openapi.sk.com/tmap/jsv2?version=1&appKey=${encodeURIComponent(appKey)}`);
-  const deadline = Date.now() + 8000;
-  while (!window.Tmapv2 && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 50));
+
+  // jsv2 URL은 실제 SDK가 아니라 document.write 로 tmapjs2.min.js 를 넣는 스텁이다.
+  // createElement(async)로 넣으면 document.write 가 실패 → LatLng/Map 이 안 생김.
+  // 그래서 스텁만 있으면 실제 SDK URL을 직접 로드한다.
+  const ensureStub = async () => {
+    if (window.Tmapv2 && typeof window.Tmapv2._getScriptLocation === "function") return;
+    await loadScriptOnce(
+      `https://apis.openapi.sk.com/tmap/jsv2?version=1&appKey=${encodeURIComponent(appKey)}`,
+      "1"
+    );
+    await waitUntil(
+      () => window.Tmapv2 && typeof window.Tmapv2._getScriptLocation === "function",
+      8000,
+      "Tmap 로더 스텁을 불러오지 못했습니다."
+    );
+  };
+
+  await ensureStub();
+
+  if (!isTmapReady()) {
+    const base = window.Tmapv2._getScriptLocation();
+    // 공식 로더가 넣는 실제 SDK 파일
+    await loadScriptOnce(`${base}tmapjs2.min.js?version=20231206`, "core");
   }
-  if (!window.Tmapv2) {
-    throw new Error("Tmapv2 객체를 만들지 못했습니다. (앱키/도메인 허용 확인)");
-  }
+
+  await waitUntil(isTmapReady, 15000, "Tmapv2.Map/LatLng 생성자가 준비되지 않았습니다.");
   if (typeof window.Tmapv2.setHttpsMode === "function") {
     window.Tmapv2.setHttpsMode(true);
   }
@@ -995,21 +1038,22 @@ async function tryInitTmap() {
     const appKey = state.config && state.config.tmap_web_key;
     await loadTmapSdk(appKey);
 
+    // 이전에 실패한 지도 DOM이 남아 있으면 비우고 다시 생성
+    container.innerHTML = "";
     container.style.display = "block";
-    if (svgEl) svgEl.style.display = "none";
-    // 생성 전에 컨테이너 크기를 px로 확정 (display:none 상태에서 만들면 빈 지도가 됨)
     container.style.width = "100%";
     container.style.height = "420px";
+    if (svgEl) svgEl.style.display = "none";
 
     const center = (state.config && state.config.demo_center) || { lat: 37.5013, lng: 127.0396 };
-    state.tmap = new Tmapv2.Map("tmap", {
-      center: new Tmapv2.LatLng(center.lat, center.lng),
+    const T = window.Tmapv2;
+    state.tmap = new T.Map("tmap", {
+      center: new T.LatLng(center.lat, center.lng),
       width: "100%",
       height: "420px",
       zoom: 16,
       zoomControl: true,
       scrollwheel: true,
-      httpsMode: true,
     });
     state.tmapOverlays = [];
     state.tmapReady = true;
