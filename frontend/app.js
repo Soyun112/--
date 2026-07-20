@@ -9,8 +9,8 @@ function resolveApiBase() {
     host === "localhost" ||
     host === "127.0.0.1" ||
     window.location.protocol === "file:";
-  // Vercel·커스텀 도메인 모두 상대경로(/api) 사용 → vercel.json rewrite로 Render 연결
-  if (!isLocal) {
+  // 백엔드가 frontend 정적파일을 같이 제공할 때(같은 origin)는 상대경로 사용
+  if (!isLocal || window.location.port === "8000") {
     return "";
   }
   return "http://127.0.0.1:8000";
@@ -937,58 +937,92 @@ function renderSvgMap(routeData, publicData) {
 
 // ---------- Tmap 지도 (Tmap JS SDK v2) ----------
 
-function loadTmapSdk(appKey) {
+function setMapStatus(message, visible = true) {
+  const el = document.getElementById("map-status");
+  if (!el) return;
+  el.textContent = message || "";
+  el.classList.toggle("visible", Boolean(visible && message));
+}
+
+function loadScriptOnce(src) {
   return new Promise((resolve, reject) => {
-    if (window.Tmapv2) return resolve();
-    if (!appKey) {
-      reject(new Error("Tmap 웹 appKey가 없습니다. (백엔드 /api/config의 tmap_web_key 확인)"));
+    const existing = document.querySelector(`script[src="${src}"]`);
+    if (existing) {
+      if (existing.dataset.loaded === "1") return resolve();
+      existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => reject(new Error(`스크립트 로드 실패: ${src}`)));
       return;
     }
     const script = document.createElement("script");
-    script.src = `https://apis.openapi.sk.com/tmap/jsv2?version=1&appKey=${appKey}`;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Tmap SDK 로드 실패 (오프라인 상태일 수 있음)"));
+    script.src = src;
+    script.async = true;
+    script.onload = () => {
+      script.dataset.loaded = "1";
+      resolve();
+    };
+    script.onerror = () => reject(new Error(`스크립트 로드 실패: ${src}`));
     document.head.appendChild(script);
   });
 }
 
+async function loadTmapSdk(appKey) {
+  if (window.Tmapv2) return;
+  if (!appKey) {
+    throw new Error("Tmap 웹 appKey가 없습니다. (.env 의 TMAP_APP_KEY 확인)");
+  }
+  // Tmap JS 샘플/문서에서 jQuery를 선행 로드하는 경우가 많음
+  if (!window.jQuery) {
+    await loadScriptOnce("https://code.jquery.com/jquery-3.7.1.min.js");
+  }
+  await loadScriptOnce(`https://apis.openapi.sk.com/tmap/jsv2?version=1&appKey=${encodeURIComponent(appKey)}`);
+  const deadline = Date.now() + 8000;
+  while (!window.Tmapv2 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  if (!window.Tmapv2) {
+    throw new Error("Tmapv2 객체를 만들지 못했습니다. (앱키/도메인 허용 확인)");
+  }
+  if (typeof window.Tmapv2.setHttpsMode === "function") {
+    window.Tmapv2.setHttpsMode(true);
+  }
+}
+
 async function tryInitTmap() {
+  const container = document.getElementById("tmap");
+  const svgEl = document.getElementById("svg-map");
   try {
+    setMapStatus("티맵 지도를 불러오는 중…", true);
     const appKey = state.config && state.config.tmap_web_key;
     await loadTmapSdk(appKey);
-    // SDK onload만으로는 Tmapv2 객체가 아직 없을 수 있어 짧게 대기
-    const deadline = Date.now() + 5000;
-    while (!window.Tmapv2 && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    if (!window.Tmapv2) {
-      throw new Error("Tmapv2 SDK가 로드되지 않았습니다.");
-    }
 
-    const container = document.getElementById("tmap");
     container.style.display = "block";
-    document.getElementById("svg-map").style.display = "none";
+    if (svgEl) svgEl.style.display = "none";
+    // 생성 전에 컨테이너 크기를 px로 확정 (display:none 상태에서 만들면 빈 지도가 됨)
+    container.style.width = "100%";
+    container.style.height = "420px";
 
-    // Tmap은 height:"100%"일 때 높이 0으로 그려져 빈 칸만 남는 경우가 많음 → px 고정
-    const mapHeight = Math.max(container.clientHeight || 0, 420);
-    const center = state.config.demo_center;
+    const center = (state.config && state.config.demo_center) || { lat: 37.5013, lng: 127.0396 };
     state.tmap = new Tmapv2.Map("tmap", {
       center: new Tmapv2.LatLng(center.lat, center.lng),
       width: "100%",
-      height: `${mapHeight}px`,
+      height: "420px",
       zoom: 16,
       zoomControl: true,
       scrollwheel: true,
+      httpsMode: true,
     });
     state.tmapOverlays = [];
     state.tmapReady = true;
+    setMapStatus("", false);
   } catch (err) {
     console.warn("Tmap 지도 로드 실패, SVG 스키매틱 지도로 대체합니다.", err);
     state.tmapReady = false;
-    const tmapEl = document.getElementById("tmap");
-    const svgEl = document.getElementById("svg-map");
-    if (tmapEl) tmapEl.style.display = "none";
+    if (container) container.style.display = "none";
     if (svgEl) svgEl.style.display = "block";
+    setMapStatus(
+      `티맵 지도를 불러오지 못했습니다. (${err.message || err}) 경로 결과는 SVG로 표시됩니다.`,
+      true
+    );
   }
 }
 
@@ -1128,11 +1162,15 @@ function renderTmapRoutes(routeData, publicData) {
 
 function renderMap(routeData, publicData, refreshLegend = true) {
   if (state.tmapReady) {
+    setMapStatus("", false);
+    document.getElementById("tmap").style.display = "block";
+    document.getElementById("svg-map").style.display = "none";
     renderTmapRoutes(routeData, publicData);
   } else {
     document.getElementById("svg-map").style.display = "block";
     document.getElementById("tmap").style.display = "none";
     renderSvgMap(routeData, publicData);
+    setMapStatus("", false);
   }
   if (refreshLegend) renderLegend();
 }

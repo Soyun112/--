@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import sys
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from . import db
 from .config import settings
 from .routers import documents, route
 from .services import public_data
+
+FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -96,3 +101,8 @@ def get_public_config() -> dict:
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+# API 라우트 등록 이후에 정적 프론트를 마운트해야 /api 가 가려지지 않는다.
+if FRONTEND_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
