@@ -1372,41 +1372,48 @@ function setTheme(theme) {
   localStorage.setItem("kids-theme", theme);
 }
 
-async function init() {
-  document.getElementById("google-login-btn").addEventListener("click", startGoogleLogin);
-  document.getElementById("logout-btn").addEventListener("click", logout);
-
-  const user = await requireAuth();
-  if (!user) return;
-
-  document.getElementById("fill-demo-btn").addEventListener("click", fillDemoCoordinates);
-  document.getElementById("demo-scenario-select").addEventListener("change", fillDemoCoordinates);
-  document.getElementById("swap-locations").addEventListener("click", swapLocations);
-  document.getElementById("route-form").addEventListener("submit", handleSubmit);
+function bindAppUi() {
+  document.getElementById("demo-scenario-select")?.addEventListener("change", fillDemoCoordinates);
+  document.getElementById("swap-locations")?.addEventListener("click", swapLocations);
+  document.getElementById("route-form")?.addEventListener("submit", handleSubmit);
   document.querySelectorAll(".mode-button").forEach((button) => {
     button.addEventListener("click", () => setMode(button.dataset.mode));
   });
-  document.getElementById("theme-toggle").addEventListener("click", () => {
+  document.getElementById("theme-toggle")?.addEventListener("click", () => {
     setTheme(document.body.classList.contains("theme-dark") ? "light" : "dark");
   });
-  document.getElementById("candidates-list").addEventListener("click", (event) => {
+  document.getElementById("candidates-list")?.addEventListener("click", (event) => {
     const card = event.target.closest(".candidate-card[data-route-id]");
     if (card) selectRoute(card.dataset.routeId);
   });
-  document.getElementById("candidates-list").addEventListener("keydown", (event) => {
+  document.getElementById("candidates-list")?.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" && event.key !== " ") return;
     const card = event.target.closest(".candidate-card[data-route-id]");
     if (!card) return;
     event.preventDefault();
     selectRoute(card.dataset.routeId);
   });
-  document.getElementById("kid-card-close").addEventListener("click", closeKidCardMode);
-  document.getElementById("kid-card-prev").addEventListener("click", () => stepKidCard(-1));
-  document.getElementById("kid-card-next").addEventListener("click", () => stepKidCard(1));
+  document.getElementById("kid-card-close")?.addEventListener("click", closeKidCardMode);
+  document.getElementById("kid-card-prev")?.addEventListener("click", () => stepKidCard(-1));
+  document.getElementById("kid-card-next")?.addEventListener("click", () => stepKidCard(1));
   startLiveClock();
   setMode(state.mode);
   setTheme(localStorage.getItem("kids-theme") || "light");
   fillDemoCoordinates();
+}
+
+async function init() {
+  document.getElementById("google-login-btn")?.addEventListener("click", startGoogleLogin);
+  document.getElementById("logout-btn")?.addEventListener("click", logout);
+
+  const user = await requireAuth();
+  if (!user) return;
+
+  try {
+    bindAppUi();
+  } catch (err) {
+    console.error("화면 연결 중 오류가 났습니다. 지도는 계속 불러옵니다.", err);
+  }
 
   try {
     state.config = await fetchJson("/api/config");
