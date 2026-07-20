@@ -174,9 +174,9 @@ def _heading_change_deg(a: Tuple[float, float], b: Tuple[float, float], c: Tuple
 def _remove_polyline_spikes(
     coords: List[Tuple[float, float]],
     *,
-    max_leg_m: float = 40.0,
-    min_turn_deg: float = 95.0,
-    min_detour_m: float = 6.0,
+    max_leg_m: float = 60.0,
+    min_turn_deg: float = 90.0,
+    min_detour_m: float = 5.0,
 ) -> List[Tuple[float, float]]:
     """사거리 횡단 등으로 잠깐 삐져나갔다 돌아오는 꼭짓점을 제거한다."""
     if len(coords) < 3:
@@ -211,9 +211,9 @@ def _remove_polyline_spikes(
 def _remove_out_and_back_spurs(
     coords: List[Tuple[float, float]],
     *,
-    tip_turn_min: float = 150.0,
-    match_tol_m: float = 14.0,
-    max_half_spur_m: float = 180.0,
+    tip_turn_min: float = 135.0,
+    match_tol_m: float = 25.0,
+    max_half_spur_m: float = 250.0,
 ) -> List[Tuple[float, float]]:
     """골목으로 나갔다가 같은 길로 되돌아오는 긴 왕복(스파이크) 구간을 접는다."""
     if len(coords) < 4:
@@ -257,10 +257,102 @@ def _remove_out_and_back_spurs(
     return result
 
 
+def _to_local_xy(
+    lat: float, lng: float, lat0: float, lng0: float
+) -> tuple[float, float]:
+    x = (lng - lng0) * 111_320.0 * math.cos(math.radians(lat0))
+    y = (lat - lat0) * 110_540.0
+    return x, y
+
+
+def _point_segment_distance_m(
+    point: Tuple[float, float],
+    start: Tuple[float, float],
+    end: Tuple[float, float],
+) -> float:
+    """점-선분 최단거리(미터). MVP용 평면 근사."""
+    if start == end:
+        return _segment_m(point, start)
+    lat0, lng0 = start
+    px, py = _to_local_xy(point[0], point[1], lat0, lng0)
+    ax, ay = _to_local_xy(start[0], start[1], lat0, lng0)
+    bx, by = _to_local_xy(end[0], end[1], lat0, lng0)
+    dx, dy = bx - ax, by - ay
+    length_sq = dx * dx + dy * dy
+    if length_sq <= 0:
+        return _segment_m(point, start)
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length_sq))
+    qx, qy = ax + t * dx, ay + t * dy
+    return math.hypot(px - qx, py - qy)
+
+
+def _simplify_polyline(
+    coords: List[Tuple[float, float]],
+    *,
+    tolerance_m: float = 12.0,
+) -> List[Tuple[float, float]]:
+    """Douglas-Peucker로 미세 흔들림을 줄여 내비 안내선처럼 단순화한다."""
+    if len(coords) < 3:
+        return list(coords)
+
+    def _dp(points: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+        if len(points) < 3:
+            return points
+        start, end = points[0], points[-1]
+        max_dist = -1.0
+        max_idx = 0
+        for i in range(1, len(points) - 1):
+            dist = _point_segment_distance_m(points[i], start, end)
+            if dist > max_dist:
+                max_dist = dist
+                max_idx = i
+        if max_dist > tolerance_m:
+            left = _dp(points[: max_idx + 1])
+            right = _dp(points[max_idx:])
+            return left[:-1] + right
+        return [start, end]
+
+    return _dp(list(coords))
+
+
+def _keep_major_turns(
+    coords: List[Tuple[float, float]],
+    *,
+    min_turn_deg: float = 28.0,
+    min_spacing_m: float = 10.0,
+) -> List[Tuple[float, float]]:
+    """큰 꺾임만 남겨 오른쪽 내비처럼 코너 위주 경로로 만든다."""
+    if len(coords) < 3:
+        return list(coords)
+
+    kept: List[Tuple[float, float]] = [coords[0]]
+    for i in range(1, len(coords) - 1):
+        turn = _heading_change_deg(coords[i - 1], coords[i], coords[i + 1])
+        # 잔여 유턴성 꼭짓점은 버림
+        if turn >= 150.0 and _segment_m(coords[i - 1], coords[i + 1]) < 50.0:
+            continue
+        if turn < min_turn_deg:
+            continue
+        if _segment_m(kept[-1], coords[i]) < min_spacing_m:
+            continue
+        kept.append(coords[i])
+
+    if kept[-1] != coords[-1]:
+        kept.append(coords[-1])
+    return kept
+
+
 def _clean_route_polyline(coords: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
-    """긴 왕복 골목을 먼저 접고, 남은 짧은 스파이크를 제거한다."""
+    """MVP: 골목 왕복·잔여 스파이크를 제거하고 내비처럼 단순화한다."""
     cleaned = _remove_out_and_back_spurs(coords)
     cleaned = _remove_polyline_spikes(cleaned)
+    cleaned = _remove_out_and_back_spurs(cleaned)
+    cleaned = _simplify_polyline(cleaned, tolerance_m=12.0)
+    # 점이 많을 때만 코너만 남겨 과도한 축약을 막는다.
+    if len(cleaned) >= 5:
+        cleaned = _keep_major_turns(cleaned)
+    if len(cleaned) < 2:
+        return list(coords)
     return cleaned
 
 
@@ -293,6 +385,11 @@ def _coords_from_tmap_features(
             _append_unique_coord(coords, float(lat), float(lng))
 
     coords = _clean_route_polyline(coords)
+    cleaned_len = route_length_m(coords)
+    if cleaned_len > 0 and total_distance > cleaned_len * 1.05:
+        # 왕복 골목을 접은 뒤에는 거리·시간도 표시용으로 맞춰 준다.
+        total_time = total_time * (cleaned_len / total_distance)
+        total_distance = cleaned_len
     return coords, total_distance, total_time, main_road_distance_m
 
 
