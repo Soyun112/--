@@ -18,13 +18,14 @@ def _now() -> datetime:
 
 def create_access_token(*, sub: str, email: str, name: str, picture: str | None) -> str:
     expire = _now() + timedelta(hours=settings.jwt_expire_hours)
+    now = _now()
     payload = {
         "sub": sub,
         "email": email,
         "name": name,
         "picture": picture,
-        "exp": expire,
-        "iat": _now(),
+        "exp": int(expire.timestamp()),
+        "iat": int(now.timestamp()),
         "typ": "access",
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=ALGORITHM)
@@ -36,11 +37,12 @@ def decode_token(token: str) -> dict[str, Any]:
 
 def create_oauth_state(*, frontend_url: str) -> str:
     expire = _now() + timedelta(minutes=10)
+    now = _now()
     payload = {
         "frontend_url": frontend_url,
         "nonce": secrets.token_urlsafe(16),
-        "exp": expire,
-        "iat": _now(),
+        "exp": int(expire.timestamp()),
+        "iat": int(now.timestamp()),
         "typ": "oauth_state",
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=ALGORITHM)

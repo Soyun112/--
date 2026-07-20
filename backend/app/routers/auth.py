@@ -90,7 +90,8 @@ def google_callback(
             name=profile["name"],
             picture=profile.get("picture"),
         )
-        return RedirectResponse(f"{frontend_url}/#access_token={token}", status_code=302)
+        safe_token = quote(token, safe="")
+        return RedirectResponse(f"{frontend_url}/#access_token={safe_token}", status_code=302)
     except jwt.PyJWTError:
         return RedirectResponse(f"{fallback}?auth_error=invalid_state", status_code=302)
     except requests.HTTPError:
@@ -112,6 +113,11 @@ def auth_me(authorization: Annotated[str | None, Header()] = None) -> UserProfil
         raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.") from exc
     except jwt.PyJWTError as exc:
         raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.") from exc
+
+
+@router.get("/status")
+def auth_status() -> dict:
+    return {"enabled": settings.auth_enabled}
 
 
 @router.post("/logout", response_model=LogoutResponse)

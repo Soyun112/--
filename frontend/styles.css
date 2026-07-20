@@ -755,11 +755,20 @@ body.theme-dark .kid-card.arrived { background: linear-gradient(160deg, #3a3010,
 
 /* ---- Google OAuth 로그인 ---- */
 .login-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
   min-height: 100vh;
   display: grid;
   place-items: center;
   padding: 24px;
   background: linear-gradient(160deg, #e8f1fb 0%, #f4f7fb 45%, #eef6ff 100%);
+}
+.login-screen[hidden] {
+  display: none !important;
+}
+#app-shell[hidden] {
+  display: none !important;
 }
 .login-card {
   width: min(420px, 100%);

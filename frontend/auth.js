@@ -11,7 +11,6 @@ function resolveApiBase() {
     host === "localhost" ||
     host === "127.0.0.1" ||
     window.location.protocol === "file:";
-  // 백엔드(8000)에서 정적 파일을 같이 제공할 때는 상대경로 /api 사용
   if (!isLocal || window.location.port === "8000") {
     return "";
   }
@@ -32,19 +31,16 @@ function clearAuthToken() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
-function getFrontendOrigin() {
-  if (window.location.protocol === "file:") {
-    return "http://127.0.0.1:5500";
-  }
-  return `${window.location.origin}${window.location.pathname.replace(/\/[^/]*$/, "") || ""}`.replace(/\/$/, "") ||
-    window.location.origin;
-}
-
 function consumeTokenFromUrl() {
   const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
   const hashParams = new URLSearchParams(hash);
-  const tokenFromHash = hashParams.get("access_token");
+  let tokenFromHash = hashParams.get("access_token");
   if (tokenFromHash) {
+    try {
+      tokenFromHash = decodeURIComponent(tokenFromHash);
+    } catch {
+      /* keep raw */
+    }
     setAuthToken(tokenFromHash);
     history.replaceState(null, "", window.location.pathname + window.location.search);
     return true;
@@ -75,18 +71,34 @@ function startGoogleLogin() {
 
 async function fetchCurrentUser() {
   const token = getAuthToken();
-  if (!token) return null;
+  if (!token) return { user: null, error: null };
+
   try {
     const res = await fetch(`${API_BASE}/api/auth/me`, {
       headers: { ...authHeaders() },
     });
+    if (res.status === 404) {
+      return {
+        user: null,
+        error: "백엔드에 로그인 API가 없습니다. Render에서 최신 코드를 Deploy latest commit 하세요.",
+      };
+    }
+    if (res.status === 503) {
+      return {
+        user: null,
+        error: "Google OAuth 환경변수가 Render에 설정되지 않았습니다.",
+      };
+    }
     if (!res.ok) {
       if (res.status === 401) clearAuthToken();
-      return null;
+      return { user: null, error: "로그인 세션이 만료되었거나 유효하지 않습니다." };
     }
-    return await res.json();
+    return { user: await res.json(), error: null };
   } catch {
-    return null;
+    return {
+      user: null,
+      error: "백엔드에 연결할 수 없습니다. BACKEND_URL(Render) 설정을 확인하세요.",
+    };
   }
 }
 
@@ -110,8 +122,14 @@ function renderUserProfile(user) {
 }
 
 function showLoginScreen(message) {
-  document.getElementById("login-screen").hidden = false;
-  document.getElementById("app-shell").hidden = true;
+  const login = document.getElementById("login-screen");
+  const app = document.getElementById("app-shell");
+  login.hidden = false;
+  login.style.display = "";
+  if (app) {
+    app.hidden = true;
+    app.style.display = "none";
+  }
   const errEl = document.getElementById("login-error");
   if (errEl) {
     errEl.textContent = message || "";
@@ -120,8 +138,14 @@ function showLoginScreen(message) {
 }
 
 function showAppShell() {
-  document.getElementById("login-screen").hidden = true;
-  document.getElementById("app-shell").hidden = false;
+  const login = document.getElementById("login-screen");
+  const app = document.getElementById("app-shell");
+  login.hidden = true;
+  login.style.display = "none";
+  if (app) {
+    app.hidden = false;
+    app.style.display = "";
+  }
 }
 
 function logout() {
@@ -137,9 +161,9 @@ async function requireAuth() {
     return null;
   }
 
-  const user = await fetchCurrentUser();
+  const { user, error } = await fetchCurrentUser();
   if (!user) {
-    showLoginScreen();
+    showLoginScreen(error || "");
     return null;
   }
 
