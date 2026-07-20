@@ -60,11 +60,20 @@ function authHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-function startGoogleLogin() {
-  let frontendUrl = window.location.origin;
-  if (window.location.protocol === "file:") {
-    frontendUrl = "http://127.0.0.1:5500";
+function resolveFrontendUrl() {
+  const host = window.location.hostname.toLowerCase();
+  // Render 백엔드 URL로 앱을 열면 OAuth 후에도 Render에 남음 → Vercel로 고정
+  if (host.endsWith(".onrender.com")) {
+    return "https://kids-abcd.vercel.app";
   }
+  if (window.location.protocol === "file:") {
+    return "http://127.0.0.1:5500";
+  }
+  return window.location.origin;
+}
+
+function startGoogleLogin() {
+  const frontendUrl = resolveFrontendUrl();
   const loginUrl = `${API_BASE}/api/auth/google/login?frontend_url=${encodeURIComponent(frontendUrl)}`;
   window.location.href = loginUrl;
 }
