@@ -84,3 +84,19 @@ def test_clean_route_collapses_alley_and_keeps_main_corridor():
     assert cleaned[-1] == coords[-1]
     # 골목이 접히면 남북 본선 위주로 짧아진다
     assert len(cleaned) <= 5
+
+
+def test_night_academy_commute_uses_seolleung_main_road_only():
+    from app.services.routing import (
+        _NIGHT_ACADEMY_HOME,
+        _NIGHT_ACADEMY_ORIGIN,
+        get_route_candidates,
+    )
+
+    candidates = get_route_candidates(_NIGHT_ACADEMY_ORIGIN, _NIGHT_ACADEMY_HOME, force_mock=True)
+    assert len(candidates) == 1
+    assert candidates[0].id == "route-demo-night-main"
+    coords = candidates[0].coordinates
+    # 학원에서 먼저 선릉로 쪽으로 서진한 뒤 북상
+    assert coords[2][1] < coords[0][1]
+    assert max(pt[0] for pt in coords) >= coords[-1][0] - 1e-6

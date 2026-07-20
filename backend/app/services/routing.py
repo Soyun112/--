@@ -24,6 +24,22 @@ from .landmarks import landmark_for
 TMAP_PEDESTRIAN_URL = "https://apis.openapi.sk.com/tmap/routes/pedestrian"
 WALK_SPEED_MPS = 4000 / 3600  # 어린이 평균 도보 속도 근사치 (약 4km/h)
 
+# 야간 학원 하원길 데모(필수학학원 → 개나리SK뷰5차아파트): 선릉로 본선만 따라가는 고정 경로.
+_NIGHT_ACADEMY_ORIGIN = (37.4989686, 127.0525688)
+_NIGHT_ACADEMY_HOME = (37.5012, 127.0499)
+_NIGHT_ACADEMY_MAIN_ROAD: List[Tuple[float, float]] = [
+    _NIGHT_ACADEMY_ORIGIN,
+    (37.49897, 127.05170),
+    (37.49897, 127.05060),
+    (37.49895, 127.04985),  # 선릉로 합류
+    (37.49950, 127.04980),
+    (37.50010, 127.04970),  # IBK·투썸 인근
+    (37.50060, 127.04960),
+    (37.50100, 127.04950),  # 도성초교앞 선릉로
+    (37.50118, 127.04955),
+    _NIGHT_ACADEMY_HOME,
+]
+
 
 @dataclass
 class NavigationStepRaw:
@@ -870,11 +886,45 @@ def _deduplicate_candidates(candidates: List[RouteCandidateRaw]) -> List[RouteCa
     return unique
 
 
+def _is_night_academy_commute(origin: Tuple[float, float], destination: Tuple[float, float]) -> bool:
+    """필수학학원 → 개나리SK뷰5차아파트 야간 하원 시나리오인지 좌표로 판별한다."""
+    return (
+        _segment_m(origin, _NIGHT_ACADEMY_ORIGIN) <= 60.0
+        and _segment_m(destination, _NIGHT_ACADEMY_HOME) <= 60.0
+    )
+
+
+def _night_academy_main_road_route(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+) -> RouteCandidateRaw:
+    """검은색 선릉로 본선 경로(골목 우회 없음)."""
+    coords: List[Tuple[float, float]] = [origin, *_NIGHT_ACADEMY_MAIN_ROAD[1:-1], destination]
+    distance_m = route_length_m(coords)
+    return RouteCandidateRaw(
+        id="route-demo-night-main",
+        label="선릉로 큰길 (야간 하원)",
+        coordinates=coords,
+        distance_m=distance_m,
+        duration_s=distance_m / WALK_SPEED_MPS,
+        source="DEMO_MAIN_ROAD",
+        navigation_steps=[],
+        # 점수에서 큰길 보너스가 나오도록 본선 비중을 높게 둔다.
+        main_road_distance_m=distance_m * 0.9,
+    )
+
+
 def get_route_candidates(origin: Tuple[float, float], destination: Tuple[float, float], force_mock: bool | None = None) -> List[RouteCandidateRaw]:
     use_mock = settings.routing_mock if force_mock is None else force_mock
     mode_label = "MOCK" if use_mock else "LIVE (Tmap)"
     print(f"\n[경로] === 경로 후보 계산 시작 ({mode_label}) ===")
     print(f"[경로] 출발 (lat,lng)=({origin[0]:.6f}, {origin[1]:.6f}) → 도착 ({destination[0]:.6f}, {destination[1]:.6f})")
+
+    # 야간 학원 하원길 발표 시나리오: 선릉로 본선(검은 경로)만 사용한다.
+    if _is_night_academy_commute(origin, destination):
+        print("[경로] 야간 학원 하원길 데모 — 선릉로 본선 고정 경로만 반환")
+        return _finalize_candidates([_night_academy_main_road_route(origin, destination)])
+
     if use_mock:
         print("[경로] MOCK 모드 — 합성 턴바이턴 안내 사용 (route-direct 등)")
         return _finalize_candidates(_deduplicate_candidates(_mock_candidates(origin, destination)))

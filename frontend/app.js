@@ -56,7 +56,7 @@ const DEMO_SCENARIOS = {
     origin: "필수학학원",
     destination: "개나리SK뷰5차아파트",
     age: 11,
-    note: "학원에서 아파트로 돌아가는 길 중 CCTV·보안등이 있는 경로를 골라 추천합니다.",
+    note: "야간 하원은 선릉로 큰길만 따라가도록 안내합니다(골목 우회 없음).",
   },
   school_to_academy: {
     origin: "도성초등학교",
