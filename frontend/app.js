@@ -953,20 +953,45 @@ function loadScriptOnce(src, datasetKey) {
       : document.querySelector(`script[src="${src}"]`);
     if (existing) {
       if (existing.dataset.loaded === "1" || window.__TMAP_SCRIPT_LOADED__) return resolve();
-      existing.addEventListener("load", () => resolve());
-      existing.addEventListener("error", () => reject(new Error(`스크립트 로드 실패: ${src}`)));
+      if (existing.readyState === "complete" || existing.readyState === "loaded") {
+        existing.dataset.loaded = "1";
+        window.__TMAP_SCRIPT_LOADED__ = true;
+        return resolve();
+      }
+      const timer = setTimeout(
+        () => reject(new Error(`스크립트 로드 시간 초과: ${src}`)),
+        20000
+      );
+      existing.addEventListener("load", () => {
+        clearTimeout(timer);
+        existing.dataset.loaded = "1";
+        window.__TMAP_SCRIPT_LOADED__ = true;
+        resolve();
+      });
+      existing.addEventListener("error", () => {
+        clearTimeout(timer);
+        reject(new Error(`스크립트 로드 실패: ${src}`));
+      });
       return;
     }
     const script = document.createElement("script");
     script.src = src;
     script.async = true;
     if (datasetKey) script.dataset.tmapSdk = datasetKey;
+    const timer = setTimeout(
+      () => reject(new Error(`스크립트 로드 시간 초과: ${src}`)),
+      20000
+    );
     script.onload = () => {
+      clearTimeout(timer);
       script.dataset.loaded = "1";
       window.__TMAP_SCRIPT_LOADED__ = true;
       resolve();
     };
-    script.onerror = () => reject(new Error(`스크립트 로드 실패: ${src}`));
+    script.onerror = () => {
+      clearTimeout(timer);
+      reject(new Error(`스크립트 로드 실패: ${src}`));
+    };
     document.head.appendChild(script);
   });
 }
@@ -983,8 +1008,15 @@ async function waitUntil(predicate, timeoutMs, label) {
 async function loadTmapSdk(appKey) {
   if (isTmapReady()) return;
 
-  // jsv2 로더는 document.write 스텁이라 동적 로드 시 LatLng/Map 이 안 생기고,
-  // 이미 로드된 SDK를 stub 로 덮어쓰기도 한다 → 실제 SDK만 직접 로드한다.
+  if (document.querySelector('script[data-tmap-sdk="1"]')) {
+    try {
+      await waitUntil(isTmapReady, 8000, "Tmap jsv2 스텁이 core SDK를 불러오지 못했습니다.");
+      return;
+    } catch {
+      /* jsv2 실패 시 core 직접 로드 */
+    }
+  }
+
   const n = Math.floor(Math.random() * 3) + 1;
   const coreUrl = `https://topopentile${n}.tmap.co.kr/scriptSDKV2/tmapjs2.min.js?version=20231206`;
   await loadScriptOnce(coreUrl, "core");
@@ -1354,14 +1386,17 @@ async function init() {
   setTheme(localStorage.getItem("kids-theme") || "light");
   fillDemoCoordinates();
 
-  try {
-    state.config = await fetchJson("/api/config");
-  } catch (err) {
-    console.warn("백엔드 설정을 불러오지 못했습니다. 백엔드가 실행 중인지 확인하세요.", err);
-    state.config = { demo_center: { lat: 37.5013, lng: 127.0396 } };
-  }
+  const configPromise = fetchJson("/api/config")
+    .then((cfg) => {
+      state.config = cfg;
+    })
+    .catch((err) => {
+      console.warn("백엔드 설정을 불러오지 못했습니다. 백엔드가 실행 중인지 확인하세요.", err);
+      state.config = { demo_center: { lat: 37.5013, lng: 127.0396 } };
+    });
 
   await tryInitTmap();
+  await configPromise;
   renderLegend();
 }
 
