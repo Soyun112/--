@@ -105,3 +105,5 @@ Vercel·Render 모두 자동 재배포됩니다.
 | 백엔드 연결 안됨 | `BACKEND_URL` 미설정 | Vercel Environment Variables 추가 후 Redeploy |
 | Render 첫 요청 느림 | Free tier cold start | 30초 정도 기다린 후 재시도 |
 | 경로 422 / 좌표 없음 | Render에 예전 코드 | Git push 후 Render 재배포 |
+| 지도가 "불러오는 중"에 멈춤 | Render가 예전 코드(`/api/config`에 `tmap_web_key` 없음) | Render **Manual Deploy** → 최신 `main`. 또는 Vercel에 `TMAP_APP_KEY` 추가 후 Redeploy |
+| `/api/health`에 `api_version` 없음 | Render 미배포 | 대시보드에서 Manual Deploy 후 `api_version` 확인 |

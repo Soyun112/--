@@ -100,7 +100,7 @@ def get_public_config() -> dict:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "api_version": "2026-07-20-tmap"}
 
 
 @app.get("/api/tmap-bootstrap.js")

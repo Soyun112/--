@@ -44,8 +44,10 @@ let keyJs =
   `window.__TMAP_APP_KEY__ = ${JSON.stringify(tmapKey)};\n`;
 if (tmapKey) {
   keyJs +=
-    `document.write("<script data-tmap-sdk='1' src='https://apis.openapi.sk.com/tmap/jsv2?version=1&appKey="` +
-    ` + encodeURIComponent(window.__TMAP_APP_KEY__) + "'><\\/script>");\n`;
+    `if (!(window.Tmapv2 && typeof window.Tmapv2.Map === "function")) {\n` +
+    `  document.write("<script data-tmap-sdk='1' src='https://apis.openapi.sk.com/tmap/jsv2?version=1&appKey="` +
+    ` + encodeURIComponent(window.__TMAP_APP_KEY__) + "'><\\/script>");\n` +
+    `}\n`;
 }
 fs.writeFileSync(keyFile, keyJs);
 console.log(

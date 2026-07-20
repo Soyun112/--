@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>AI 어린이 안심 길찾기</title>
 <link rel="stylesheet" href="styles.css" />
-<!-- Vercel 빌드 시 TMAP_APP_KEY 주입 / 로컬은 빈 값. 백엔드 /api/config 키도 함께 사용 -->
+<!-- Render 동기 부트스트랩: document.write 로 jsv2(실 SDK) 로드. Vercel은 /api → Render 프록시 -->
+<script src="/api/tmap-bootstrap.js"></script>
+<!-- Vercel 빌드 시 TMAP_APP_KEY 가 있으면 여기서도 sync jsv2 주입 (Render 미배포 대비) -->
 <script src="tmap-key.js"></script>
 </head>
 <body>
