@@ -33,12 +33,6 @@ function showApp(data) {
 
   const title = data.title || "오늘의 안전 길";
   document.title = `👶 ${title}`;
-  document.getElementById("kid-guide-route").textContent = title;
-
-  const metaParts = [];
-  if (data.safety_score != null) metaParts.push(`안전 ${data.safety_score}점`);
-  if (data.duration_min != null) metaParts.push(`약 ${data.duration_min}분`);
-  document.getElementById("kid-guide-meta").textContent = metaParts.join(" · ");
 
   state.steps = data.steps || [];
   state.index = 0;

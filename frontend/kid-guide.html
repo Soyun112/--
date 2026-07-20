@@ -6,10 +6,10 @@
   <meta name="theme-color" content="#fff6d8">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="description" content="엄마·아빠가 보낸 안전한 길 안내. 링크를 누르면 바로 카드로 볼 수 있어요.">
+  <meta name="description" content="엄마·아빠가 보낸 안전한 길 안내">
   <meta property="og:type" content="website">
   <meta property="og:title" content="👶 오늘의 안전 길">
-  <meta property="og:description" content="링크를 누르면 아이용 길 안내 카드가 바로 열려요!">
+  <meta property="og:description" content="링크를 누르면 길 안내 카드가 바로 열려요!">
   <title>👶 오늘의 안전 길</title>
   <link rel="stylesheet" href="kid-guide.css">
   <script src="kid-guide-share.js"></script>
@@ -32,16 +32,11 @@
   </div>
 
   <div id="kid-guide-app" class="kid-guide-shell" hidden>
-    <header class="kid-guide-top">
-      <p class="kid-guide-badge">👶 아이용 길 안내</p>
-      <div id="kid-guide-story-bar" class="kid-guide-story-bar" aria-hidden="true"></div>
-      <p id="kid-guide-route" class="kid-guide-route">오늘의 안전 길</p>
-      <p id="kid-guide-meta" class="kid-guide-meta-line"></p>
-    </header>
+    <div id="kid-guide-story-bar" class="kid-guide-story-bar" aria-hidden="true"></div>
 
     <main id="kid-guide-card" class="kid-guide-card-full">
-      <div id="kid-guide-tap-prev" class="kid-guide-tap-left" aria-hidden="true"></div>
-      <div id="kid-guide-tap-next" class="kid-guide-tap-right" aria-hidden="true"></div>
+      <div id="kid-guide-tap-prev" class="kid-guide-tap-left" aria-label="이전"></div>
+      <div id="kid-guide-tap-next" class="kid-guide-tap-right" aria-label="다음"></div>
       <div id="kid-guide-stage" class="kid-guide-stage">
         <div id="kid-guide-icon" class="kid-guide-icon" aria-hidden="true">↑</div>
         <h1 id="kid-guide-text" class="kid-guide-keyword">직진</h1>
@@ -50,10 +45,7 @@
       </div>
     </main>
 
-    <footer class="kid-guide-bottom">
-      <button type="button" id="kid-guide-next-btn" class="kid-guide-next-btn">다음 →</button>
-      <p class="kid-guide-hint">화면 왼쪽·오른쪽을 눌러도 넘길 수 있어요</p>
-    </footer>
+    <button type="button" id="kid-guide-next-btn" class="kid-guide-next-btn">다음 →</button>
   </div>
 
   <script src="kid-guide.js"></script>

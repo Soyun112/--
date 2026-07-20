@@ -1,4 +1,4 @@
-/* 아이용 길 안내 — 모바일 카드뉴스 전용 */
+/* 아이용 길 안내 — 로그인 없이 카드뉴스만 전체 화면 */
 :root {
   --kg-text: #1c2733;
   --kg-muted: #5a6b7d;
@@ -46,10 +46,11 @@ html.has-preload .kid-guide-loading {
   height: 100dvh;
   max-height: 100dvh;
   padding:
-    max(10px, env(safe-area-inset-top))
+    max(12px, env(safe-area-inset-top))
     max(12px, env(safe-area-inset-right))
     max(12px, env(safe-area-inset-bottom))
     max(12px, env(safe-area-inset-left));
+  gap: 12px;
 }
 
 .kid-guide-shell[hidden],
@@ -58,40 +59,11 @@ html.has-preload .kid-guide-loading {
   display: none !important;
 }
 
-.kid-guide-top {
-  flex: 0 0 auto;
-  padding: 4px 4px 10px;
-}
-
-.kid-guide-badge {
-  margin: 0 0 8px;
-  text-align: center;
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--kg-primary);
-  letter-spacing: -0.02em;
-}
-
-.kid-guide-route {
-  margin: 0;
-  text-align: center;
-  font-size: clamp(14px, 3.8vw, 16px);
-  font-weight: 700;
-  line-height: 1.35;
-  color: var(--kg-text);
-}
-
-.kid-guide-meta-line {
-  margin: 4px 0 0;
-  text-align: center;
-  font-size: 12px;
-  color: var(--kg-muted);
-}
-
 .kid-guide-story-bar {
   display: flex;
   gap: 4px;
-  margin-bottom: 12px;
+  flex: 0 0 auto;
+  padding: 0 2px;
 }
 
 .kid-guide-story-seg {
@@ -111,7 +83,7 @@ html.has-preload .kid-guide-loading {
   transition: width 0.25s ease;
 }
 
-.kid-guide-story-seg.done > span { width: 100%; }
+.kid-guide-story-seg.done > span,
 .kid-guide-story-seg.active > span { width: 100%; }
 
 .kid-guide-card-full {
@@ -121,7 +93,6 @@ html.has-preload .kid-guide-loading {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 0;
   border-radius: 28px;
   background: #fff;
   box-shadow: 0 20px 50px rgba(30, 50, 80, 0.18);
@@ -150,12 +121,12 @@ html.has-preload .kid-guide-loading {
   position: relative;
   z-index: 1;
   width: 100%;
-  padding: 28px 20px;
+  padding: 24px 18px;
   text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
 }
 
 .kid-guide-stage.slide-next { animation: kgSlideNext 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
@@ -172,11 +143,11 @@ html.has-preload .kid-guide-loading {
 }
 
 .kid-guide-icon {
-  width: clamp(108px, 28vw, 140px);
-  height: clamp(108px, 28vw, 140px);
+  width: clamp(120px, 32vw, 156px);
+  height: clamp(120px, 32vw, 156px);
   display: grid;
   place-items: center;
-  font-size: clamp(64px, 18vw, 84px);
+  font-size: clamp(72px, 20vw, 92px);
   border-radius: 50%;
   background: linear-gradient(180deg, #f3f8ff, #e7f0fb);
   border: 3px solid #d7e6f8;
@@ -197,7 +168,7 @@ html.has-preload .kid-guide-loading {
 
 .kid-guide-keyword {
   margin: 0;
-  font-size: clamp(28px, 8vw, 36px);
+  font-size: clamp(30px, 9vw, 40px);
   font-weight: 900;
   line-height: 1.25;
   letter-spacing: -0.03em;
@@ -209,12 +180,12 @@ html.has-preload .kid-guide-loading {
 
 .kid-guide-friendly {
   margin: 0;
-  padding: 12px 18px;
+  padding: 14px 20px;
   border-radius: 16px;
   background: linear-gradient(180deg, #fff9ec, #fff2d6);
   border: 2px solid #f3d99a;
   box-shadow: 0 5px 0 rgba(243, 217, 154, 0.55);
-  font-size: clamp(18px, 5vw, 22px);
+  font-size: clamp(19px, 5.5vw, 24px);
   font-weight: 800;
   color: #8a5a10;
   line-height: 1.35;
@@ -224,25 +195,19 @@ html.has-preload .kid-guide-loading {
 
 .kid-guide-landmark {
   margin: 0;
-  padding: 8px 14px;
+  padding: 10px 16px;
   border-radius: 999px;
   background: #fff0f5;
   color: #b44a72;
-  font-size: clamp(14px, 4vw, 16px);
+  font-size: clamp(15px, 4.2vw, 17px);
   font-weight: 700;
 }
 
 .kid-guide-landmark:empty { display: none; }
 
-.kid-guide-bottom {
-  flex: 0 0 auto;
-  padding: 14px 4px 4px;
-  text-align: center;
-}
-
 .kid-guide-next-btn {
+  flex: 0 0 auto;
   width: 100%;
-  max-width: 420px;
   padding: 16px 20px;
   border: none;
   border-radius: 18px;
@@ -269,12 +234,6 @@ html.has-preload .kid-guide-loading {
 .kid-guide-next-btn.arrive-btn {
   background: var(--kg-orange);
   box-shadow: 0 6px 0 #b86a1a;
-}
-
-.kid-guide-hint {
-  margin: 10px 0 0;
-  font-size: 12px;
-  color: var(--kg-muted);
 }
 
 @media (min-width: 768px) {

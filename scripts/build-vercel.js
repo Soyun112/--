@@ -22,6 +22,10 @@ const config = {
       source: "/g",
       destination: "/kid-guide.html",
     },
+    {
+      source: "/guide",
+      destination: "/kid-guide.html",
+    },
   ],
 };
 

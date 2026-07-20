@@ -3,6 +3,16 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var path = location.pathname.replace(/\/+$/, "") || "/";
+  var onGuidePage = /kid-guide\.html$/i.test(path) || path === "/g" || /\/g\.html$/i.test(path);
+  if (!onGuidePage && (q.has("d") || q.has("id"))) {
+    location.replace("kid-guide.html" + location.search + location.hash);
+  }
+})();
+</script>
 <title>AI 어린이 안심 길찾기</title>
 <link rel="stylesheet" href="styles.css" />
 <!-- Tmap SDK는 app.js에서 /api/config 키 로드 후 programmatic 으로 불러옵니다 -->
