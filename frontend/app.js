@@ -4,12 +4,7 @@ const CATEGORY_COLORS = {
   cctv: "#2f7dd1",
   hotspot: "#d64545",
   docRisk: "#e08a2c",
-  docSafety: "#2e9e5b",
   guardian: "#8e44ad",
-  streetlight: "#e0a400",
-  speedCamera: "#2c3e50",
-  safetyBell: "#9b59b6",
-  emergency112: "#e74c3c",
   safetyCctv: "#1a6fbf",
   safetyStreetlight: "#f5b800",
 };
@@ -17,15 +12,10 @@ const CATEGORY_COLORS = {
 const PUBLIC_DATA_LEGEND = [
   ["safety-cctv", "safetyCctv", "안심귀갓길 CCTV"],
   ["safety-streetlight", "safetyStreetlight", "안심귀갓길 보안등"],
-  ["safety-bell", "safetyBell", "안심벨"],
-  ["emergency-112", "emergency112", "112신고"],
-  ["cctv", "cctv", "어린이보호구역/CCTV"],
+  ["cctv", "cctv", "어린이 보호구역 CCTV"],
   ["hotspot", "hotspot", "교통사고다발지역"],
   ["guardian", "guardian", "아동안전지킴이집"],
-  ["streetlight", "streetlight", "보안등/가로등"],
-  ["speed-camera", "speedCamera", "무인단속카메라"],
-  ["doc-risk", "docRisk", "문서 기반 위험지적"],
-  ["doc-safety", "docSafety", "문서 기반 안전조치완료"],
+  ["doc-risk", "docRisk", "문서 기반 위험지역"],
 ];
 
 const DEMO_SCENARIOS = {
@@ -929,9 +919,6 @@ function renderSvgMap(routeData, publicData) {
   const childZones = pointsNearRecommendedRoute(publicData.child_zones || [], routeData);
   const accidentHotspots = pointsNearRecommendedRoute(publicData.accident_hotspots || [], routeData);
   const guardianHouses = pointsNearRecommendedRoute(publicData.guardian_houses || [], routeData);
-  const streetlights = pointsNearRecommendedRoute(publicData.streetlights || [], routeData);
-  const speedCameras = pointsNearRecommendedRoute(publicData.speed_cameras || [], routeData);
-  const cctvs = pointsNearRecommendedRoute(publicData.cctvs || [], routeData);
   const sf = safetyFacilitiesNearRoute(publicData, routeData);
   const documentPoints = pointsNearRecommendedRoute(publicData.doc_risk_points || [], routeData);
   const allPoints = [];
@@ -940,7 +927,7 @@ function renderSvgMap(routeData, publicData) {
     if (!active || c.id !== active.id) return;
     c.coordinates.forEach((pt) => allPoints.push(pt));
   });
-  [childZones, accidentHotspots, guardianHouses, streetlights, speedCameras, cctvs, sf.all, documentPoints]
+  [childZones, accidentHotspots, guardianHouses, sf.cctv, sf.streetlight, documentPoints]
     .forEach((points) => points.forEach((point) => allPoints.push(point)));
   if (allPoints.length === 0) return;
 
@@ -1004,9 +991,6 @@ function renderSvgMap(routeData, publicData) {
     childZones.forEach((z) =>
       drawMarker(z, CATEGORY_COLORS.cctv, "circle", `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`)
     );
-    cctvs.forEach((cctv) =>
-      drawMarker(cctv, CATEGORY_COLORS.cctv, "circle", `CCTV ${cctv.camera_count}대 · ${cctv.purpose || "안전"}`)
-    );
   }
   if (shouldShowPublicLayer("safety-cctv")) sf.cctv.forEach((f) =>
     drawMarker(f, CATEGORY_COLORS.safetyCctv, "circle", `📹 ${f.label} ${f.install_count > 1 ? `x${f.install_count}` : ""} · ${f.dong || f.district || ""}`)
@@ -1014,29 +998,14 @@ function renderSvgMap(routeData, publicData) {
   if (shouldShowPublicLayer("safety-streetlight")) sf.streetlight.forEach((f) =>
     drawMarker(f, CATEGORY_COLORS.safetyStreetlight, "circle", `💡 ${f.label} · ${f.dong || f.district || ""}`)
   );
-  if (shouldShowPublicLayer("safety-bell")) sf.safetyBell.forEach((f) =>
-    drawMarker(f, CATEGORY_COLORS.safetyBell, "diamond", `🔔 ${f.label} · ${f.dong || f.district || ""}`)
-  );
-  if (shouldShowPublicLayer("emergency-112")) sf.emergency112.forEach((f) =>
-    drawMarker(f, CATEGORY_COLORS.emergency112, "triangle", `🚨 ${f.label} · ${f.dong || f.district || ""}`)
-  );
   if (shouldShowPublicLayer("hotspot")) accidentHotspots.forEach((h) =>
     drawMarker(h, CATEGORY_COLORS.hotspot, "triangle", `${h.name || "사고다발지역"} (${h.occurrence_count}건)`)
   );
   if (shouldShowPublicLayer("guardian")) guardianHouses.forEach((g) =>
     drawMarker(g, CATEGORY_COLORS.guardian, "diamond", `🏪 ${g.name || "아동안전지킴이집"}`)
   );
-  if (shouldShowPublicLayer("streetlight")) streetlights.forEach((s) =>
-    drawMarker(s, CATEGORY_COLORS.streetlight, "circle", `💡 ${s.light_type || "보안등"}`)
-  );
-  if (shouldShowPublicLayer("speed-camera")) speedCameras.forEach((c) =>
-    drawMarker(c, CATEGORY_COLORS.speedCamera, "square", `📷 ${c.name || "무인단속카메라"} (제한 ${c.speed_limit_kmh || "?"}km/h)`)
-  );
   if (shouldShowPublicLayer("doc-risk")) documentPoints.filter((d) => d.is_risk).forEach((d) =>
     drawMarker(d, CATEGORY_COLORS.docRisk, "square", `[문서근거] ${d.risk_type} (${d.source_doc})`)
-  );
-  if (shouldShowPublicLayer("doc-safety")) documentPoints.filter((d) => !d.is_risk).forEach((d) =>
-    drawMarker(d, CATEGORY_COLORS.docSafety, "square", `[문서근거] ${d.risk_type} (${d.source_doc})`)
   );
 
   // 출발/목적지 라벨
@@ -1262,9 +1231,6 @@ function renderTmapRoutes(routeData, publicData) {
   const childZones = pointsNearRecommendedRoute(publicData.child_zones || [], routeData);
   const accidentHotspots = pointsNearRecommendedRoute(publicData.accident_hotspots || [], routeData);
   const guardianHouses = pointsNearRecommendedRoute(publicData.guardian_houses || [], routeData);
-  const streetlights = pointsNearRecommendedRoute(publicData.streetlights || [], routeData);
-  const speedCameras = pointsNearRecommendedRoute(publicData.speed_cameras || [], routeData);
-  const cctvs = pointsNearRecommendedRoute(publicData.cctvs || [], routeData);
   const sf = safetyFacilitiesNearRoute(publicData, routeData);
   const documentPoints = pointsNearRecommendedRoute(publicData.doc_risk_points || [], routeData);
 
@@ -1319,9 +1285,6 @@ function renderTmapRoutes(routeData, publicData) {
     childZones.forEach((z) =>
       marker(z, CATEGORY_COLORS.cctv, `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`)
     );
-    cctvs.forEach((cctv) =>
-      marker(cctv, CATEGORY_COLORS.cctv, `CCTV ${cctv.camera_count}대 · ${cctv.purpose || "안전"} · ${cctv.address || ""}`)
-    );
   }
   if (shouldShowPublicLayer("safety-cctv")) sf.cctv.forEach((f) =>
     marker(f, CATEGORY_COLORS.safetyCctv, `📹 ${f.label} ${f.install_count > 1 ? `x${f.install_count}` : ""} · ${f.dong || f.district || ""}`)
@@ -1329,29 +1292,14 @@ function renderTmapRoutes(routeData, publicData) {
   if (shouldShowPublicLayer("safety-streetlight")) sf.streetlight.forEach((f) =>
     marker(f, CATEGORY_COLORS.safetyStreetlight, `💡 ${f.label} · ${f.dong || f.district || ""}`)
   );
-  if (shouldShowPublicLayer("safety-bell")) sf.safetyBell.forEach((f) =>
-    marker(f, CATEGORY_COLORS.safetyBell, `🔔 안심벨 · ${f.dong || f.district || ""}`)
-  );
-  if (shouldShowPublicLayer("emergency-112")) sf.emergency112.forEach((f) =>
-    marker(f, CATEGORY_COLORS.emergency112, `🚨 112신고 · ${f.dong || f.district || ""}`)
-  );
   if (shouldShowPublicLayer("hotspot")) accidentHotspots.forEach((h) =>
     marker(h, CATEGORY_COLORS.hotspot, `${h.name || "사고다발지역"} (${h.occurrence_count}건)`)
   );
   if (shouldShowPublicLayer("guardian")) guardianHouses.forEach((g) =>
     marker(g, CATEGORY_COLORS.guardian, `🏪 ${g.name || "아동안전지킴이집"}`)
   );
-  if (shouldShowPublicLayer("streetlight")) streetlights.forEach((s) =>
-    marker(s, CATEGORY_COLORS.streetlight, `💡 ${s.light_type || "보안등"}`)
-  );
-  if (shouldShowPublicLayer("speed-camera")) speedCameras.forEach((c) =>
-    marker(c, CATEGORY_COLORS.speedCamera, `📷 ${c.name || "무인단속카메라"} (제한 ${c.speed_limit_kmh || "?"}km/h)`)
-  );
   if (shouldShowPublicLayer("doc-risk")) documentPoints.filter((d) => d.is_risk).forEach((d) =>
     marker(d, CATEGORY_COLORS.docRisk, `[문서근거] ${d.risk_type} (${d.source_doc})`)
-  );
-  if (shouldShowPublicLayer("doc-safety")) documentPoints.filter((d) => !d.is_risk).forEach((d) =>
-    marker(d, CATEGORY_COLORS.docSafety, `[문서근거] ${d.risk_type} (${d.source_doc})`)
   );
 
   const originName = routeData.origin.name || "출발";
