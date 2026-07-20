@@ -722,16 +722,7 @@ function buildKidGuideShareText() {
 
 async function ensureKidGuideShareUrl() {
   if (cachedKidGuideShareUrl) return cachedKidGuideShareUrl;
-  const payload = buildKidGuideSharePayload();
-
-  try {
-    cachedKidGuideShareUrl = await createKidGuideShareLink(payload);
-    return cachedKidGuideShareUrl;
-  } catch (err) {
-    console.warn("짧은 공유 링크 생성 실패 — 경로형 링크로 대체합니다.", err);
-  }
-
-  cachedKidGuideShareUrl = buildKidGuideInlineUrl(payload);
+  cachedKidGuideShareUrl = buildKidGuideShareUrl(buildKidGuideSharePayload());
   return cachedKidGuideShareUrl;
 }
 

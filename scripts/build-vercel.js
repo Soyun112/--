@@ -19,7 +19,7 @@ const config = {
       source: "/api/:path*",
       destination: `${backend}/api/:path*`,
     },
-    { source: "/g/:payload", destination: "/kid-guide.html?d=:payload" },
+    { source: "/g/:path*", destination: "/kid-guide.html" },
     { source: "/g", destination: "/kid-guide.html" },
     { source: "/guide", destination: "/kid-guide.html" },
   ],

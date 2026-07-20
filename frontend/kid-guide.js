@@ -142,28 +142,27 @@ async function loadGuide() {
 
   const params = new URLSearchParams(window.location.search);
   const shareId = params.get("id");
-  if (!shareId) {
-    const hadDataHint =
-      params.has("d") || /\/g\//i.test(window.location.pathname) || window.location.hash.length > 1;
-    showError(
-      hadDataHint
-        ? "링크가 잘렸을 수 있어요. 다시 링크 복사해서 보내달라고 하세요."
-        : "공유 링크가 올바르지 않아요."
-    );
+  if (shareId) {
+    try {
+      const res = await fetch(`${API_BASE}/api/share/kid-guide/${encodeURIComponent(shareId)}`);
+      if (res.ok) {
+        showApp(await res.json());
+        return;
+      }
+    } catch {
+      /* fall through */
+    }
+    showError("링크가 만료됐어요.\n엄마·아빠에게 다시 보내달라고 하세요.");
     return;
   }
 
-  try {
-    const res = await fetch(`${API_BASE}/api/share/kid-guide/${encodeURIComponent(shareId)}`);
-    if (!res.ok) {
-      const detail = res.status === 404 ? "링크가 만료되었거나 찾을 수 없어요." : "길 안내를 불러오지 못했어요.";
-      showError(detail);
-      return;
-    }
-    showApp(await res.json());
-  } catch {
-    showError("서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.");
-  }
+  const hadDataHint =
+    params.has("d") || /\/g\//i.test(window.location.pathname) || window.location.hash.length > 1;
+  showError(
+    hadDataHint
+      ? "링크가 잘렸을 수 있어요.\n다시 링크 복사해서 보내달라고 하세요."
+      : "공유 링크가 올바르지 않아요."
+  );
 }
 
 document.getElementById("kid-guide-next-btn")?.addEventListener("click", () => stepCard(1));
