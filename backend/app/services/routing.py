@@ -24,31 +24,6 @@ from .landmarks import landmark_for
 TMAP_PEDESTRIAN_URL = "https://apis.openapi.sk.com/tmap/routes/pedestrian"
 WALK_SPEED_MPS = 4000 / 3600  # 어린이 평균 도보 속도 근사치 (약 4km/h)
 
-# 야간 학원 하원길 데모(필수학학원 → 개나리SK뷰5차아파트): 선릉로(큰길)만 따라가는 경로.
-_NIGHT_ACADEMY_ORIGIN = (37.4989686, 127.0525688)
-_NIGHT_ACADEMY_HOME = (37.5012, 127.0499)
-# 학원 → 선릉로 합류 → IBK/투썸 구간 북상 → 도성초교앞 → 아파트 (골목 우회 없음)
-_NIGHT_ACADEMY_MAIN_ROAD: List[Tuple[float, float]] = [
-    _NIGHT_ACADEMY_ORIGIN,
-    (37.49897, 127.05140),
-    (37.49896, 127.05055),
-    (37.49895, 127.05020),  # 선릉로 합류
-    (37.49945, 127.05012),
-    (37.49995, 127.05005),  # IBK·투썸플레이스 인근
-    (37.50045, 127.04998),
-    (37.50095, 127.04990),  # 도성초교앞 선릉로
-    (37.50115, 127.04988),
-    _NIGHT_ACADEMY_HOME,
-]
-# Tmap에 큰길 경유를 강제할 때 쓰는 선릉로 경유지 (lng,lat 순서로 passList에 넣음)
-_NIGHT_ACADEMY_SEOLLEUNG_VIAS: List[Tuple[float, float]] = [
-    (37.49895, 127.05020),
-    (37.49995, 127.05005),
-    (37.50095, 127.04990),
-]
-_NIGHT_ACADEMY_NAME_KEYS = ("필수학학원", "필수수학학원", "필수수학")
-_NIGHT_HOME_NAME_KEYS = ("개나리sk뷰5차아파트", "개나리sk뷰5차", "개나리sk뷰아파트")
-
 
 @dataclass
 class NavigationStepRaw:
@@ -70,25 +45,6 @@ class RouteCandidateRaw:
     source: str
     navigation_steps: List[NavigationStepRaw] = field(default_factory=list)
     main_road_distance_m: float = 0.0
-
-
-def _perpendicular_offset(origin: Tuple[float, float], destination: Tuple[float, float], offset_m: float) -> Tuple[float, float]:
-    """origin-destination 중간점에서 수직 방향으로 offset_m만큼 떨어진 좌표를 근사 계산."""
-    mid_lat = (origin[0] + destination[0]) / 2
-    mid_lng = (origin[1] + destination[1]) / 2
-
-    dlat = destination[0] - origin[0]
-    dlng = destination[1] - origin[1]
-    length = math.hypot(dlat, dlng) or 1e-9
-    # 위경도 평면상 수직 벡터 (정확한 지오데식은 아니지만 국지적 근사로 충분)
-    perp_lat = -dlng / length
-    perp_lng = dlat / length
-
-    meters_per_deg_lat = 111_320.0
-    meters_per_deg_lng = 111_320.0 * math.cos(math.radians(mid_lat))
-    offset_lat = perp_lat * (offset_m / meters_per_deg_lat)
-    offset_lng = perp_lng * (offset_m / meters_per_deg_lng)
-    return (mid_lat + offset_lat, mid_lng + offset_lng)
 
 
 def _bearing(a: Tuple[float, float], b: Tuple[float, float]) -> float:
@@ -920,76 +876,6 @@ def _deduplicate_candidates(candidates: List[RouteCandidateRaw]) -> List[RouteCa
     return unique
 
 
-def _normalize_place_name(name: str | None) -> str:
-    return (name or "").strip().replace(" ", "").lower()
-
-
-def _name_matches(name: str | None, keys: tuple[str, ...]) -> bool:
-    normalized = _normalize_place_name(name)
-    if not normalized:
-        return False
-    return any(key in normalized or normalized in key for key in keys)
-
-
-def _is_night_academy_commute(
-    origin: Tuple[float, float],
-    destination: Tuple[float, float],
-    origin_name: str | None = None,
-    destination_name: str | None = None,
-) -> bool:
-    """필수학학원 → 개나리SK뷰5차아파트 야간 하원 시나리오인지 이름·좌표로 판별한다."""
-    if _name_matches(origin_name, _NIGHT_ACADEMY_NAME_KEYS) and _name_matches(
-        destination_name, _NIGHT_HOME_NAME_KEYS
-    ):
-        return True
-    return (
-        _segment_m(origin, _NIGHT_ACADEMY_ORIGIN) <= 120.0
-        and _segment_m(destination, _NIGHT_ACADEMY_HOME) <= 120.0
-    )
-
-
-def _night_academy_fixed_route(
-    origin: Tuple[float, float],
-    destination: Tuple[float, float],
-) -> RouteCandidateRaw:
-    """검은색 선릉로 본선 고정 경로(골목 우회 없음)."""
-    coords: List[Tuple[float, float]] = [origin, *_NIGHT_ACADEMY_MAIN_ROAD[1:-1], destination]
-    distance_m = route_length_m(coords)
-    return RouteCandidateRaw(
-        id="route-demo-night-main",
-        label="선릉로 큰길 (야간 하원)",
-        coordinates=coords,
-        distance_m=distance_m,
-        duration_s=distance_m / WALK_SPEED_MPS,
-        source="DEMO_MAIN_ROAD",
-        navigation_steps=[],
-        main_road_distance_m=distance_m * 0.9,
-    )
-
-
-def _night_academy_route(
-    origin: Tuple[float, float],
-    destination: Tuple[float, float],
-    *,
-    use_mock: bool,
-) -> RouteCandidateRaw:
-    """야간 하원: 선릉로 경유지로 Tmap을 시도하고, 실패/골목이면 고정 본선 경로를 쓴다."""
-    if not use_mock and settings.tmap_app_key:
-        pass_list = "_".join(f"{lng},{lat}" for lat, lng in _NIGHT_ACADEMY_SEOLLEUNG_VIAS)
-        via = _call_tmap(origin, destination, pass_list=pass_list)
-        if via and via.coordinates:
-            # 경유지를 지나도 과도하게 우회하면 고정 본선으로 대체
-            fixed = _night_academy_fixed_route(origin, destination)
-            if via.distance_m <= fixed.distance_m * 1.35:
-                via.id = "route-demo-night-main"
-                via.label = "선릉로 큰길 (야간 하원)"
-                via.main_road_distance_m = via.distance_m * 0.9
-                print("[경로] 야간 하원 — Tmap 선릉로 경유 경로 사용")
-                return via
-            print("[경로] 야간 하원 — Tmap 경로가 너무 돌아 고정 본선으로 대체")
-    return _night_academy_fixed_route(origin, destination)
-
-
 def get_route_candidates(
     origin: Tuple[float, float],
     destination: Tuple[float, float],
@@ -1001,11 +887,6 @@ def get_route_candidates(
     mode_label = "MOCK" if use_mock else "LIVE (Tmap)"
     print(f"\n[경로] === 경로 후보 계산 시작 ({mode_label}) ===")
     print(f"[경로] 출발 (lat,lng)=({origin[0]:.6f}, {origin[1]:.6f}) → 도착 ({destination[0]:.6f}, {destination[1]:.6f})")
-
-    # 야간 학원 하원길 발표 시나리오: 선릉로 본선(오른쪽 검은 경로)만 사용한다.
-    if _is_night_academy_commute(origin, destination, origin_name, destination_name):
-        print("[경로] 야간 학원 하원길 데모 — 선릉로 큰길만 반환")
-        return _finalize_candidates([_night_academy_route(origin, destination, use_mock=use_mock)])
 
     if use_mock:
         print("[경로] MOCK 모드 — 합성 턴바이턴 안내 사용 (route-direct 등)")

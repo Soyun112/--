@@ -29,7 +29,7 @@ const DEMO_SCENARIOS = {
     origin: "필수학학원",
     destination: "개나리SK뷰5차아파트",
     age: 11,
-    note: "야간 하원은 선릉로 큰길만 따라가도록 안내합니다(골목 우회 없음).",
+    note: "야간 하원도 Tmap 보행자 큰길(대로 우선) 경로로 안내합니다.",
   },
   school_to_academy: {
     origin: "도성초등학교",
