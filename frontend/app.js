@@ -610,10 +610,12 @@ function renderReports(data) {
     directions.innerHTML = "";
     board.innerHTML = "";
     state.kidCardSteps = [];
+    resetKidGuideShareCache();
     return;
   }
 
   state.kidCardSteps = resolveNavigationSteps(recommended);
+  resetKidGuideShareCache();
   console.log(
     `[경로안내] 선택 경로 ${recommended.id} · ${state.kidCardSteps.length}단계`,
     state.kidCardSteps.slice(0, 5)
@@ -676,6 +678,138 @@ function openKidCardMode() {
 
 function closeKidCardMode() {
   document.getElementById("kid-card-overlay").hidden = true;
+}
+
+let cachedKidGuideShareUrl = null;
+
+function resetKidGuideShareCache() {
+  cachedKidGuideShareUrl = null;
+}
+
+function buildKidGuideSharePayload() {
+  const route = activeRoute(state.lastResult);
+  const steps = state.kidCardSteps;
+  const origin = document.getElementById("origin-query")?.value?.trim() || "";
+  const destination = document.getElementById("dest-query")?.value?.trim() || "";
+  return {
+    title: origin && destination ? `${origin} → ${destination}` : "오늘의 안전 길",
+    origin,
+    destination,
+    safety_score: route?.safety_score ?? null,
+    duration_min: route ? Math.round(route.duration_s / 60) : null,
+    steps: steps.map((step, idx) => {
+      const isArrive = idx === steps.length - 1;
+      const [icon] = navigationIcon(step);
+      const { text: stepText } = kidStepText(step.distance_m);
+      const landmark = landmarkPhrase(step);
+      return {
+        icon: isArrive ? "🎉" : icon,
+        keyword: isArrive ? "도착! 잘했어요" : navigationKeywordPlain(step),
+        friendly: isArrive || !stepText ? "" : `👣 ${stepText} 걸어가요`,
+        distance_m: isArrive ? 0 : step.distance_m || 0,
+        landmark: isArrive || !landmark ? "" : `📍 ${landmark}`,
+        is_arrive: isArrive,
+      };
+    }),
+  };
+}
+
+function buildKidGuideShareText() {
+  const payload = buildKidGuideSharePayload();
+  const parts = [payload.title];
+  if (payload.safety_score != null) parts.push(`안전 ${payload.safety_score}점`);
+  parts.push("아이가 보기 쉬운 길 안내예요.");
+  return parts.join(" · ");
+}
+
+async function ensureKidGuideShareUrl() {
+  if (cachedKidGuideShareUrl) return cachedKidGuideShareUrl;
+  const payload = buildKidGuideSharePayload();
+  const data = await fetchJson("/api/share/kid-guide", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const base = typeof resolveFrontendUrl === "function" ? resolveFrontendUrl() : window.location.origin;
+  cachedKidGuideShareUrl = `${base}/kid-guide.html?id=${encodeURIComponent(data.id)}`;
+  return cachedKidGuideShareUrl;
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
+function showKidShareToast(message) {
+  let toast = document.getElementById("kid-share-toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "kid-share-toast";
+    toast.className = "kid-share-toast";
+    toast.setAttribute("role", "status");
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.classList.add("visible");
+  clearTimeout(showKidShareToast._timer);
+  showKidShareToast._timer = setTimeout(() => toast.classList.remove("visible"), 2800);
+}
+
+async function shareKidGuide(mode = "kakao") {
+  if (!state.kidCardSteps.length) {
+    alert("먼저 길 안내를 만들어 주세요.");
+    return;
+  }
+
+  const buttonId = mode === "copy" ? "kid-card-share-copy" : "kid-card-share-kakao";
+  const button = document.getElementById(buttonId);
+  const originalText = button?.textContent || "";
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "링크 만드는 중…";
+    }
+
+    const url = await ensureKidGuideShareUrl();
+    const text = buildKidGuideShareText();
+
+    if (mode === "kakao" && navigator.share) {
+      await navigator.share({
+        title: "👶 오늘의 안전 길",
+        text,
+        url,
+      });
+      return;
+    }
+
+    await copyTextToClipboard(url);
+    showKidShareToast(
+      mode === "kakao"
+        ? "링크가 복사됐어요. 카톡 채팅에 붙여넣기 하세요!"
+        : "링크가 복사됐어요!"
+    );
+  } catch (err) {
+    if (err?.name !== "AbortError") {
+      alert(err?.message || "공유에 실패했습니다.");
+    }
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
 }
 
 function renderKidCard(direction = 0) {
@@ -1394,6 +1528,8 @@ function bindAppUi() {
     selectRoute(card.dataset.routeId);
   });
   document.getElementById("kid-card-close")?.addEventListener("click", closeKidCardMode);
+  document.getElementById("kid-card-share-kakao")?.addEventListener("click", () => shareKidGuide("kakao"));
+  document.getElementById("kid-card-share-copy")?.addEventListener("click", () => shareKidGuide("copy"));
   document.getElementById("kid-card-prev")?.addEventListener("click", () => stepKidCard(-1));
   document.getElementById("kid-card-next")?.addEventListener("click", () => stepKidCard(1));
   startLiveClock();

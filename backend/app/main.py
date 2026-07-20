@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db
 from .config import settings
-from .routers import auth, documents, route
+from .routers import auth, documents, route, share
 from .services import public_data
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
@@ -42,6 +42,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(route.router)
 app.include_router(documents.router)
+app.include_router(share.router)
 
 
 @app.on_event("startup")
