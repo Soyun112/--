@@ -716,6 +716,7 @@ body.theme-dark .doc-review-skip {
 .candidate-meta { font-size: 12px; color: var(--muted); display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 .candidate-summary { margin-top: 8px; }
 .candidate-time {
+  display: block;
   margin-top: 8px;
   padding: 4px 10px;
   border: 1px solid #b6d8ff;
@@ -724,6 +725,11 @@ body.theme-dark .doc-review-skip {
   background: #f3f9ff;
   font-size: 12px;
   font-weight: 700;
+  text-align: center;
+  box-sizing: border-box;
+}
+.candidate-card:not(.recommended) .candidate-time {
+  display: block;
 }
 .recommended-tag { font-size: 11px; color: var(--accent-green); font-weight: 700; margin-left: 8px; }
 .candidate-details { margin-top: 10px; }

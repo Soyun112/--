@@ -706,9 +706,20 @@ function etaMessageForDuration(durationS) {
 }
 
 function routeTimeRange(durationS) {
-  if (!durationS || durationS <= 0) return "";
+  const seconds = Number(durationS);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
   const departure = new Date();
-  const arrival = new Date(departure.getTime() + durationS * 1000);
+  const arrival = new Date(departure.getTime() + seconds * 1000);
+  return `${formatKoreanTime(departure)} 출발 → ${formatKoreanTime(arrival)} 도착`;
+}
+
+function candidateTimeLine(candidate) {
+  const fromDuration = routeTimeRange(candidate?.duration_s);
+  if (fromDuration) return fromDuration;
+  const minutes = Math.max(1, Math.round(Number(candidate?.duration_s) / 60) || 0);
+  if (!minutes) return "출발 · 도착 시간을 계산하는 중";
+  const departure = new Date();
+  const arrival = new Date(departure.getTime() + minutes * 60 * 1000);
   return `${formatKoreanTime(departure)} 출발 → ${formatKoreanTime(arrival)} 도착`;
 }
 
@@ -804,7 +815,7 @@ function renderCandidates(data) {
             <span class="score-pill" style="background:${scoreColor(c.safety_score)}">${c.safety_score}점</span>
           </h4>
           <div class="star-rating" title="안전 등급 ${c.star_rating}/3">${stars}</div>
-          <div class="candidate-time">${routeTimeRange(c.duration_s)}</div>
+          <div class="candidate-time">${candidateTimeLine(c)}</div>
           <div class="candidate-meta candidate-summary">
             <span>거리: ${(c.distance_m / 1000).toFixed(2)}km</span>
             <span>예상 소요: ${Math.round(c.duration_s / 60)}분</span>
