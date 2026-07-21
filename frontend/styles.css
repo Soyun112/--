@@ -142,73 +142,53 @@ body {
 
 .panel h2 { margin-top: 0; font-size: 16px; color: var(--primary-dark); }
 
+/* 왼쪽 위: 문서 / 왼쪽 아래: 경로+시나리오 / 가운데 위: 지도 / 오른쪽: 비교 */
 .doc-panel {
   grid-column: 1;
-  grid-row: 1 / span 3;
+  grid-row: 1;
   background: linear-gradient(180deg, #f7fbff, #ffffff);
 }
 
-.route-bar {
-  grid-column: 2 / -1;
+.map-panel {
+  grid-column: 2;
   grid-row: 1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 18px 24px;
-  align-items: flex-start;
-}
-
-.route-bar-main {
-  flex: 1 1 420px;
   min-width: 0;
 }
 
-.route-bar-hint { margin-top: 8px; margin-bottom: 0; }
-
-.route-form-horizontal {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
-  gap: 10px 12px;
-  align-items: end;
-}
-
-.route-form-horizontal fieldset {
-  margin-bottom: 0;
-}
-
-.route-form-horizontal .swap-locations {
-  margin: 0 0 6px;
-  width: 40px;
-  height: 40px;
-}
-
-.route-form-horizontal .form-actions {
+.results-panel {
+  grid-column: 3;
+  grid-row: 1 / span 2;
   margin-top: 0;
-  min-width: 120px;
+  padding-top: 20px;
+  border-top: none;
+  max-height: calc(100vh - 120px);
+  overflow: auto;
 }
 
-.route-bar .demo-controls {
-  flex: 0 1 240px;
-  margin-top: 0;
+.route-panel {
+  grid-column: 1;
+  grid-row: 2 / span 2;
+}
+
+.ai-panel {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+}
+
+.route-panel-hint { margin-top: 8px; }
+
+.route-form-stack .swap-locations {
+  margin: -8px 14px -4px auto;
+}
+
+.route-panel .demo-controls {
+  margin-top: 14px;
   padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: #f8fafc;
-  align-self: stretch;
 }
-
-.map-panel { grid-column: 2; grid-row: 2; min-width: 0; }
-
-.results-panel {
-  grid-column: 3;
-  grid-row: 2 / span 2;
-  margin-top: 0;
-  padding-top: 20px;
-  border-top: none;
-  max-height: calc(100vh - 160px);
-  overflow: auto;
-}
-
-.ai-panel { grid-column: 2; grid-row: 3; min-width: 0; }
 
 fieldset {
   border: 1px solid var(--border);
@@ -430,7 +410,7 @@ body.theme-dark .doc-upload-panel {
 body.theme-dark .doc-panel {
   background: linear-gradient(180deg, #1a2430, #16202a);
 }
-body.theme-dark .route-bar .demo-controls {
+body.theme-dark .route-panel .demo-controls {
   background: #1a2430;
   border-color: #2f4054;
 }
@@ -895,22 +875,13 @@ body.theme-dark #tmap { filter: brightness(0.78) contrast(0.92) saturate(0.85); 
     grid-template-rows: none;
   }
   .doc-panel,
-  .route-bar,
+  .route-panel,
   .map-panel,
   .results-panel,
   .ai-panel {
     grid-column: 1;
     grid-row: auto;
     max-height: none;
-  }
-  .route-form-horizontal {
-    grid-template-columns: 1fr;
-  }
-  .route-form-horizontal .swap-locations {
-    margin: 0 auto;
-  }
-  .route-bar .demo-controls {
-    flex: 1 1 100%;
   }
 }
 
