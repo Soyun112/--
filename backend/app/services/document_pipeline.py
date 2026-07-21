@@ -29,7 +29,8 @@ INFORMATION_EXTRACTION_URL = "https://api.upstage.ai/v1/information-extraction"
 CHAT_COMPLETIONS_URL = "https://api.upstage.ai/v1/chat/completions"
 
 # 확신도는 자동 표시를 막지 않는다(MVP: 결과가 보여야 함).
-# 이 값 미만으로 찍힌 지점만 "추정" 마커로 표시하고, 지오코딩 실패분만 확인 UI로 보낸다.
+# 이 값 미만으로 찍힌 지점만 "추정" 마커로 표시하고,
+# 지오코딩이 실패해도 지역 힌트/데모 중심으로라도 일단 찍는다.
 ESTIMATED_CONFIDENCE_THRESHOLD = 0.85
 
 
@@ -48,6 +49,51 @@ def _pending_point_payload(rp: dict[str, Any], *, filename: str, reason: str) ->
         "page": rp.get("page"),
         "source_doc": filename,
     }
+
+
+def _resolve_plot_coordinates(
+    *,
+    geocode_query: str,
+    location_text: str,
+    region_hint: str,
+    point_index: int,
+) -> tuple[float, float, str, float]:
+    """좌표를 최대한 찾아 반환. (lat, lng, note, confidence_cap)
+
+    confidence_cap: 이 경로로 찍었을 때 확신도 상한(추정 표시용).
+    """
+    candidates: list[str] = []
+    for raw in (geocode_query, location_text):
+        q = (raw or "").strip()
+        if q and q not in candidates:
+            candidates.append(q)
+
+    hint = (region_hint or "").strip()
+    # "출발 / 도착" 형태면 앞쪽(출발)을 우선 지역으로 사용
+    hint_parts = [p.strip() for p in re.split(r"[,/|]", hint) if p.strip()]
+    primary_hint = hint_parts[0] if hint_parts else hint
+
+    if primary_hint:
+        for q in list(candidates):
+            combo = f"{primary_hint} {q}".strip()
+            if combo not in candidates:
+                candidates.append(combo)
+        if primary_hint not in candidates:
+            candidates.append(primary_hint)
+
+    for q in candidates:
+        geocoded = geocode_location_text(q)
+        if geocoded is not None:
+            # 지역 힌트만으로 찍었거나 조합 검색이면 추정으로 취급
+            if q == primary_hint or (primary_hint and q.startswith(primary_hint)):
+                return geocoded[0], geocoded[1], f"검색어 보정 후 표시: {q}", 0.5
+            return geocoded[0], geocoded[1], f"검색 성공: {q}", 1.0
+
+    # 최후: 데모/서비스 중심 근처에 흩어져 찍기 (겹침 방지)
+    jitter = ((point_index % 5) - 2) * 0.00035
+    lat = settings.demo_center_lat + jitter
+    lng = settings.demo_center_lng + jitter * 0.8
+    return lat, lng, "검색 실패 → 경로 지역 근처에 추정 표시", 0.25
 
 RISK_SCHEMA = {
     "type": "json_schema",
@@ -310,46 +356,34 @@ def ingest_document(
     skipped_points: list[dict[str, Any]] = []
 
     with db.session() as conn:
-        for rp in normalized:
+        for idx, rp in enumerate(normalized):
             location_text = (rp.get("location_text") or "").strip()
             geocode_query = (rp.get("geocode_query") or location_text).strip()
             confidence = float(rp.get("confidence") or 0)
+            plot_note = rp.get("normalize_note") or ""
+            used_fallback_plot = False
 
             if extracted.get("already_geocoded") and rp.get("lat") is not None:
                 lat, lng = rp["lat"], rp["lng"]
                 confidence = max(confidence, 0.9)
             else:
-                if not geocode_query and not location_text:
-                    skipped_points.append(
-                        _pending_point_payload(
-                            rp,
-                            filename=filename,
-                            reason="위치 문구가 비어 있음",
-                        )
-                    )
-                    continue
-
-                geocoded = geocode_location_text(geocode_query) if geocode_query else None
-                if geocoded is None and location_text and location_text != geocode_query:
-                    geocoded = geocode_location_text(location_text)
-                if geocoded is None:
-                    skipped_points.append(
-                        _pending_point_payload(
-                            rp,
-                            filename=filename,
-                            reason="지오코딩 실패(검색 결과 없음) — 검색어를 고쳐 다시 올려 주세요",
-                        )
-                    )
-                    continue
-                lat, lng = geocoded
-                # 확신도가 낮아도 지도에는 올린다(추정 마커).
+                # 문구가 없어도 일단 지역 근처에 찍는다(MVP).
+                lat, lng, resolve_note, conf_cap = _resolve_plot_coordinates(
+                    geocode_query=geocode_query,
+                    location_text=location_text,
+                    region_hint=region_hint,
+                    point_index=idx,
+                )
+                confidence = min(confidence if confidence > 0 else conf_cap, conf_cap)
+                plot_note = f"{plot_note} · {resolve_note}".strip(" ·")
+                used_fallback_plot = conf_cap <= 0.5
 
             is_estimated = confidence < ESTIMATED_CONFIDENCE_THRESHOLD
             db.insert_doc_risk_point(
                 conn,
                 lat=lat,
                 lng=lng,
-                risk_type=rp.get("risk_type", ""),
+                risk_type=rp.get("risk_type", "") or "문서 위험지점",
                 is_risk=rp.get("is_risk", True),
                 snippet=rp.get("snippet", ""),
                 source_doc=filename,
@@ -369,9 +403,19 @@ def ingest_document(
                     "risk_type": rp.get("risk_type", ""),
                     "is_risk": bool(rp.get("is_risk", True)),
                     "is_estimated": is_estimated,
-                    "note": rp.get("normalize_note"),
+                    "note": plot_note,
                 }
             )
+            # 폴백/힌트로 찍은 건 확인 목록에 남겨 수정할 수 있게 한다.
+            if used_fallback_plot:
+                pending = _pending_point_payload(
+                    {**rp, "geocode_query": geocode_query or location_text or region_hint},
+                    filename=filename,
+                    reason="추정 위치로 표시됨 — 검색어를 고치면 더 정확해져요",
+                )
+                pending["lat"] = lat
+                pending["lng"] = lng
+                skipped_points.append(pending)
 
     extracted = dict(extracted)
     extracted["risk_points"] = normalized

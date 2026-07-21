@@ -114,7 +114,7 @@ def health() -> dict:
     used = usage_snapshot()
     return {
         "status": "ok",
-        "api_version": "2026-07-21-doc-geocode-always",
+        "api_version": "2026-07-21-doc-plot-anyway",
         "tmap_usage": {k: {"used": used.get(k, 0), "limit": limits[k]} for k in limits},
     }
 
