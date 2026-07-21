@@ -16,27 +16,7 @@ const API_BASE = resolveApiBase();
 const state = {
   steps: [],
   index: 0,
-  title: "오늘의 안전 길",
-  meta: "",
 };
-
-function setPageMeta(title, description) {
-  document.title = title;
-  const ogTitle = document.querySelector('meta[property="og:title"]');
-  const ogDesc = document.querySelector('meta[property="og:description"]');
-  if (ogTitle) ogTitle.setAttribute("content", title);
-  if (ogDesc && description) ogDesc.setAttribute("content", description);
-}
-
-function formatGuideMeta(data) {
-  const parts = [];
-  if (data.duration_min) parts.push(`약 ${data.duration_min}분`);
-  if (data.safety_score != null) parts.push(`안전 점수 ${Math.round(data.safety_score)}점`);
-  if (data.origin && data.destination) {
-    parts.push(`${data.origin} → ${data.destination}`);
-  }
-  return parts.join(" · ");
-}
 
 function showError(message) {
   document.getElementById("kid-guide-loading").hidden = true;
@@ -51,23 +31,8 @@ function showApp(data) {
   document.getElementById("kid-guide-error").hidden = true;
   document.getElementById("kid-guide-app").hidden = false;
 
-  const titleText = data.title || "오늘의 안전 길";
-  state.title = titleText;
-  state.meta = formatGuideMeta(data);
-
-  document.getElementById("kid-guide-title").textContent = titleText;
-  const metaEl = document.getElementById("kid-guide-meta");
-  if (metaEl) {
-    if (state.meta) {
-      metaEl.textContent = state.meta;
-      metaEl.hidden = false;
-    } else {
-      metaEl.textContent = "";
-      metaEl.hidden = true;
-    }
-  }
-
-  setPageMeta(`👶 ${titleText}`, state.meta || "링크를 누르면 아이용 길 안내 카드가 바로 열려요!");
+  const title = data.title || "오늘의 안전 길";
+  document.title = `👶 ${title}`;
 
   state.steps = data.steps || [];
   state.index = 0;
@@ -98,39 +63,23 @@ function renderCard(direction = 0) {
   const step = steps[index];
   const isArrive = step.is_arrive || index === total - 1;
 
-  const stepCountEl = document.getElementById("kid-guide-step-count");
-  if (stepCountEl) stepCountEl.textContent = `${index + 1} / ${total}`;
-
   const card = document.getElementById("kid-guide-card");
   card.classList.toggle("arrived", isArrive);
   document.getElementById("kid-guide-icon").textContent = step.icon || (isArrive ? "🎉" : "↑");
   document.getElementById("kid-guide-text").textContent = step.keyword || "";
-
-  let friendly = step.friendly || "";
-  if (!friendly && !isArrive && step.distance_m > 0) {
-    friendly = `👣 앞으로 ${Math.round(step.distance_m)}m 걸어가요`;
-  }
-  document.getElementById("kid-guide-friendly").textContent = friendly;
+  document.getElementById("kid-guide-friendly").textContent = step.friendly || "";
   document.getElementById("kid-guide-landmark").textContent = step.landmark || "";
 
-  const prevBtn = document.getElementById("kid-guide-prev");
-  if (prevBtn) {
-    prevBtn.hidden = index === 0;
-    prevBtn.disabled = index === 0;
-  }
-
   const nextBtn = document.getElementById("kid-guide-next-btn");
-  const nav = document.getElementById("kid-guide-nav");
   if (isArrive) {
     nextBtn.textContent = "🎉 도착! 잘했어요";
     nextBtn.classList.add("arrive-btn");
     nextBtn.disabled = true;
   } else {
-    nextBtn.textContent = index >= total - 2 ? "거의 다 왔어요 →" : "다음 →";
+    nextBtn.textContent = index === total - 2 ? "거의 다 왔어요 →" : "다음 →";
     nextBtn.classList.remove("arrive-btn");
     nextBtn.disabled = false;
   }
-  nav?.classList.toggle("solo-next", index === 0 && !isArrive);
 
   renderStoryBar();
 
@@ -216,7 +165,6 @@ async function loadGuide() {
 }
 
 document.getElementById("kid-guide-next-btn")?.addEventListener("click", () => stepCard(1));
-document.getElementById("kid-guide-prev")?.addEventListener("click", () => stepCard(-1));
 document.getElementById("kid-guide-tap-prev")?.addEventListener("click", () => stepCard(-1));
 document.getElementById("kid-guide-tap-next")?.addEventListener("click", () => stepCard(1));
 

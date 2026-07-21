@@ -709,7 +709,11 @@ function buildKidGuideSharePayload() {
 function buildKidGuideShareText() {
   const payload = buildKidGuideSharePayload();
   const title = payload.title || "오늘의 안전 길";
-  return `👶 ${title}\n링크를 누르면 아이용 길 안내 카드가 바로 열려요!`;
+  return `👶 ${title}\n링크를 누르면 길 안내 카드가 바로 열려요!`;
+}
+
+function buildKidGuideShareClipboardText(url) {
+  return `${buildKidGuideShareText()}\n${url}`;
 }
 
 async function ensureKidGuideShareUrl() {
@@ -765,13 +769,15 @@ async function shareKidGuide(mode = "kakao") {
     }
 
     resetKidGuideShareCache();
+    const payload = buildKidGuideSharePayload();
     const text = buildKidGuideShareText();
     const url = await ensureKidGuideShareUrl();
+    const shareTitle = `👶 ${payload.title || "오늘의 안전 길"}`;
 
     if (mode === "kakao" && navigator.share) {
       try {
         await navigator.share({
-          title: "👶 오늘의 안전 길",
+          title: shareTitle,
           text,
           url,
         });
@@ -782,11 +788,11 @@ async function shareKidGuide(mode = "kakao") {
       }
     }
 
-    await copyTextToClipboard(url);
+    await copyTextToClipboard(buildKidGuideShareClipboardText(url));
     showKidShareToast(
       mode === "kakao"
-        ? "카톡에 붙여넣기 하세요. 링크 끝까지 잘렸으면 다시 복사해 주세요."
-        : "링크 복사됐어요! guide?d= 로 시작하는지 확인해 주세요."
+        ? "카톡에 붙여넣기 하세요. 제목·설명과 링크가 함께 복사됐어요."
+        : "제목·설명과 링크가 함께 복사됐어요!"
     );
   } catch (err) {
     if (err?.name !== "AbortError") {

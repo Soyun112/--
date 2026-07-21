@@ -1,11 +1,9 @@
-/* 아이용 공유 링크 화면 — 로그인 없이 카드만 */
+/* 아이용 길 안내 — 로그인 없이 카드뉴스만 전체 화면 */
 :root {
   --kg-text: #1c2733;
   --kg-muted: #5a6b7d;
   --kg-primary: #1f5a9c;
-  --kg-primary-dark: #16406f;
   --kg-orange: #e08a2c;
-  --kg-card-shadow: 0 20px 50px rgba(30, 50, 80, 0.16);
 }
 
 * { box-sizing: border-box; }
@@ -13,7 +11,8 @@
 html, body {
   margin: 0;
   padding: 0;
-  min-height: 100%;
+  height: 100%;
+  overflow: hidden;
   -webkit-text-size-adjust: 100%;
   touch-action: manipulation;
 }
@@ -35,126 +34,29 @@ html.has-preload .kid-guide-loading {
   align-items: center;
   justify-content: center;
   padding: 24px;
-}
-
-.kid-guide-status-card {
-  width: min(360px, 100%);
-  padding: 32px 28px;
   text-align: center;
-  background: #fff;
-  border-radius: 24px;
-  box-shadow: var(--kg-card-shadow);
-  border: 2px solid rgba(255, 255, 255, 0.95);
-}
-
-.kid-guide-status-card.is-error {
-  border-color: #ffd0d0;
-  background: linear-gradient(180deg, #fff, #fff8f8);
-}
-
-.kid-guide-status-emoji {
-  display: block;
-  font-size: 48px;
-  line-height: 1;
-  margin-bottom: 14px;
-}
-
-.kid-guide-status-title {
-  margin: 0 0 8px;
-  font-size: 20px;
-  font-weight: 900;
-  color: var(--kg-text);
-}
-
-.kid-guide-status-sub {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
   color: var(--kg-muted);
-  line-height: 1.5;
-  white-space: pre-wrap;
-}
-
-.kid-guide-spinner {
-  width: 36px;
-  height: 36px;
-  margin: 20px auto 0;
-  border: 4px solid #e3edf5;
-  border-top-color: var(--kg-primary);
-  border-radius: 50%;
-  animation: kgSpin 0.8s linear infinite;
-}
-
-@keyframes kgSpin {
-  to { transform: rotate(360deg); }
+  font-size: 17px;
+  font-weight: 700;
 }
 
 .kid-guide-shell {
   display: flex;
   flex-direction: column;
-  min-height: 100dvh;
+  height: 100dvh;
   max-height: 100dvh;
-  width: 100%;
-  max-width: 480px;
-  margin: 0 auto;
   padding:
-    max(14px, env(safe-area-inset-top))
-    max(14px, env(safe-area-inset-right))
-    max(14px, env(safe-area-inset-bottom))
-    max(14px, env(safe-area-inset-left));
-  gap: 10px;
+    max(12px, env(safe-area-inset-top))
+    max(12px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
+  gap: 12px;
 }
 
 .kid-guide-shell[hidden],
 .kid-guide-loading[hidden],
 .kid-guide-error[hidden] {
   display: none !important;
-}
-
-.kid-guide-header {
-  flex: 0 0 auto;
-  text-align: center;
-  padding: 4px 6px 0;
-}
-
-.kid-guide-badge {
-  margin: 0 0 6px;
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--kg-primary);
-  letter-spacing: -0.02em;
-}
-
-.kid-guide-title {
-  margin: 0 0 6px;
-  font-size: clamp(18px, 4.8vw, 22px);
-  font-weight: 900;
-  line-height: 1.35;
-  letter-spacing: -0.03em;
-  word-break: keep-all;
-}
-
-.kid-guide-meta {
-  margin: 0 0 8px;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--kg-muted);
-  line-height: 1.45;
-}
-
-.kid-guide-meta[hidden] { display: none !important; }
-
-.kid-guide-step-count {
-  display: inline-block;
-  margin: 0;
-  padding: 6px 14px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
-  color: var(--kg-primary-dark);
-  font-size: 14px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  box-shadow: 0 2px 8px rgba(30, 50, 80, 0.08);
 }
 
 .kid-guide-story-bar {
@@ -166,9 +68,9 @@ html.has-preload .kid-guide-loading {
 
 .kid-guide-story-seg {
   flex: 1;
-  height: 5px;
+  height: 4px;
   border-radius: 999px;
-  background: rgba(28, 39, 51, 0.12);
+  background: rgba(28, 39, 51, 0.14);
   overflow: hidden;
 }
 
@@ -187,15 +89,14 @@ html.has-preload .kid-guide-loading {
 .kid-guide-card-full {
   position: relative;
   flex: 1 1 auto;
-  min-height: 280px;
-  max-height: min(52vh, 440px);
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 28px;
   background: #fff;
-  box-shadow: var(--kg-card-shadow);
-  border: 2px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 20px 50px rgba(30, 50, 80, 0.18);
+  border: 2px solid rgba(255, 255, 255, 0.9);
   overflow: hidden;
 }
 
@@ -211,7 +112,6 @@ html.has-preload .kid-guide-loading {
   bottom: 0;
   width: 38%;
   z-index: 2;
-  cursor: pointer;
 }
 
 .kid-guide-tap-left { left: 0; }
@@ -221,12 +121,12 @@ html.has-preload .kid-guide-loading {
   position: relative;
   z-index: 1;
   width: 100%;
-  padding: 28px 20px;
+  padding: 24px 18px;
   text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
 }
 
 .kid-guide-stage.slide-next { animation: kgSlideNext 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
@@ -243,28 +143,21 @@ html.has-preload .kid-guide-loading {
 }
 
 .kid-guide-icon {
-  width: clamp(120px, 28vw, 156px);
-  height: clamp(120px, 28vw, 156px);
+  width: clamp(120px, 32vw, 156px);
+  height: clamp(120px, 32vw, 156px);
   display: grid;
   place-items: center;
-  font-size: clamp(68px, 18vw, 96px);
-  line-height: 1;
-  color: #fff;
+  font-size: clamp(72px, 20vw, 92px);
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #7fc0ff, #3a8be0 70%);
-  box-shadow: 0 12px 26px rgba(58, 139, 224, 0.35), inset 0 -6px 14px rgba(0, 0, 0, 0.12);
-  animation: kgIconBounce 0.45s ease;
-}
-
-@keyframes kgIconBounce {
-  0% { transform: scale(0.75); }
-  60% { transform: scale(1.06); }
-  100% { transform: scale(1); }
+  background: linear-gradient(180deg, #f3f8ff, #e7f0fb);
+  border: 3px solid #d7e6f8;
+  box-shadow: 0 8px 0 #c5daf3;
 }
 
 .kid-guide-card-full.arrived .kid-guide-icon {
-  background: radial-gradient(circle at 35% 30%, #ffd98a, #ff9e57 70%);
-  box-shadow: 0 12px 26px rgba(255, 158, 87, 0.4);
+  background: linear-gradient(180deg, #fff4cc, #ffe59a);
+  border-color: #ffd36a;
+  box-shadow: 0 8px 0 #f0c55a;
   animation: kgPop 0.55s ease;
 }
 
@@ -275,7 +168,7 @@ html.has-preload .kid-guide-loading {
 
 .kid-guide-keyword {
   margin: 0;
-  font-size: clamp(28px, 8vw, 36px);
+  font-size: clamp(30px, 9vw, 40px);
   font-weight: 900;
   line-height: 1.25;
   letter-spacing: -0.03em;
@@ -287,16 +180,14 @@ html.has-preload .kid-guide-loading {
 
 .kid-guide-friendly {
   margin: 0;
-  width: 100%;
-  max-width: 100%;
-  padding: 12px 16px;
-  border-radius: 14px;
-  background: linear-gradient(180deg, #fff6e2, #ffe9c2);
-  border: 2px solid #ffcf88;
-  box-shadow: 0 4px 0 rgba(255, 207, 136, 0.4);
-  font-size: clamp(17px, 4.5vw, 20px);
+  padding: 14px 20px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fff9ec, #fff2d6);
+  border: 2px solid #f3d99a;
+  box-shadow: 0 5px 0 rgba(243, 217, 154, 0.55);
+  font-size: clamp(19px, 5.5vw, 24px);
   font-weight: 800;
-  color: #b8611a;
+  color: #8a5a10;
   line-height: 1.35;
 }
 
@@ -308,107 +199,51 @@ html.has-preload .kid-guide-loading {
   border-radius: 999px;
   background: #fff0f5;
   color: #b44a72;
-  font-size: clamp(14px, 3.8vw, 16px);
+  font-size: clamp(15px, 4.2vw, 17px);
   font-weight: 700;
 }
 
 .kid-guide-landmark:empty { display: none; }
 
-.kid-guide-nav {
+.kid-guide-next-btn {
   flex: 0 0 auto;
-  display: flex;
-  gap: 10px;
   width: 100%;
-  align-items: stretch;
-}
-
-.kid-guide-nav-btn {
-  padding: 15px 12px;
-  font-size: 18px;
-  font-weight: 900;
+  padding: 16px 20px;
+  border: none;
   border-radius: 18px;
-  border: 3px solid #d7e0ea;
-  background: rgba(255, 255, 255, 0.92);
-  color: var(--kg-text);
+  background: var(--kg-primary);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 800;
   cursor: pointer;
+  box-shadow: 0 6px 0 #16406f;
   transition: transform 0.12s ease;
 }
 
-.kid-guide-nav-btn.ghost {
-  flex: 0 0 56px;
-  font-size: 22px;
-  padding: 15px 0;
-  color: #5a6b7a;
-}
-
-.kid-guide-nav-btn.ghost[hidden] { display: none !important; }
-
-.kid-guide-nav.solo-next .kid-guide-nav-btn.primary { flex: 1; width: 100%; }
-
-.kid-guide-nav-btn.primary {
-  flex: 1;
-  background: var(--kg-primary);
-  border-color: var(--kg-primary);
-  color: #fff;
-  box-shadow: 0 6px 0 var(--kg-primary-dark);
-}
-
-.kid-guide-nav-btn.primary:active:not(:disabled) {
+.kid-guide-next-btn:active {
   transform: translateY(3px);
-  box-shadow: 0 3px 0 var(--kg-primary-dark);
+  box-shadow: 0 3px 0 #16406f;
 }
 
-.kid-guide-nav-btn:disabled {
-  opacity: 0.5;
+.kid-guide-next-btn:disabled {
+  opacity: 0.45;
   cursor: default;
   box-shadow: none;
 }
 
-.kid-guide-nav-btn.primary.arrive-btn {
+.kid-guide-next-btn.arrive-btn {
   background: var(--kg-orange);
-  border-color: var(--kg-orange);
   box-shadow: 0 6px 0 #b86a1a;
 }
 
-.kid-guide-footer {
-  flex: 0 0 auto;
-  text-align: center;
-  padding: 2px 8px 0;
-}
-
-.kid-guide-footer p {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--kg-muted);
-}
-
 @media (min-width: 768px) {
-  body.kid-guide-page {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 100dvh;
-    padding: 20px;
-  }
-
   .kid-guide-shell {
-    min-height: auto;
-    max-height: min(92vh, 860px);
-    border-radius: 32px;
-    background: rgba(255, 255, 255, 0.22);
-    backdrop-filter: blur(8px);
-    padding: 20px;
-  }
-
-  .kid-guide-card-full {
-    min-height: 320px;
-    max-height: 420px;
+    max-width: 440px;
+    margin: 0 auto;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .kid-guide-spinner { animation: none; }
   .kid-guide-stage.slide-next,
   .kid-guide-stage.slide-prev,
   .kid-guide-icon { animation: none !important; }

@@ -6,50 +6,53 @@
   <meta name="theme-color" content="#fff6d8">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="description" content="엄마·아빠가 보낸 안전한 길 안내">
+  <meta name="description" content="링크를 누르면 길 안내 카드가 바로 열려요!">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="👶 오늘의 안전 길">
-  <meta property="og:description" content="링크를 누르면 아이용 길 안내 카드가 바로 열려요!">
-  <title>👶 오늘의 안전 길</title>
+  <meta property="og:site_name" content="AI 어린이 안심 길찾기">
+  <meta property="og:title" id="og-title" content="👶 오늘의 안전 길">
+  <meta property="og:description" id="og-description" content="링크를 누르면 길 안내 카드가 바로 열려요!">
+  <meta property="og:url" id="og-url" content="">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" id="twitter-title" content="👶 오늘의 안전 길">
+  <meta name="twitter:description" id="twitter-description" content="링크를 누르면 길 안내 카드가 바로 열려요!">
+  <title id="page-title">👶 오늘의 안전 길</title>
   <link rel="stylesheet" href="kid-guide.css">
   <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
   <script src="kid-guide-share.js"></script>
   <script>
     (function preloadGuide() {
-      var inline = typeof readInlineGuidePayload === "function" ? readInlineGuidePayload() : null;
-      if (inline && inline.steps && inline.steps.length) {
-        window.__KID_GUIDE_PRELOAD__ = inline;
-        document.documentElement.classList.add("has-preload");
-      }
+      var title = "👶 오늘의 안전 길";
+      var description = "링크를 누르면 길 안내 카드가 바로 열려요!";
+      try {
+        var inline = typeof readInlineGuidePayload === "function" ? readInlineGuidePayload() : null;
+        if (inline && inline.title) title = "👶 " + inline.title;
+        if (inline && inline.steps && inline.steps.length) {
+          window.__KID_GUIDE_PRELOAD__ = inline;
+          document.documentElement.classList.add("has-preload");
+        }
+        function setMeta(id, value) {
+          var el = document.getElementById(id);
+          if (el) el.setAttribute("content", value);
+        }
+        setMeta("og-title", title);
+        setMeta("og-description", description);
+        setMeta("twitter-title", title);
+        setMeta("twitter-description", description);
+        setMeta("og-url", location.href);
+        var pageTitle = document.getElementById("page-title");
+        if (pageTitle) pageTitle.textContent = title;
+      } catch (e) { /* ignore */ }
     })();
   </script>
 </head>
 <body class="kid-guide-page">
-  <div id="kid-guide-loading" class="kid-guide-loading">
-    <div class="kid-guide-status-card">
-      <span class="kid-guide-status-emoji" aria-hidden="true">🧒🛡️</span>
-      <p class="kid-guide-status-title">안전 길 안내 여는 중</p>
-      <p class="kid-guide-status-sub">잠시만 기다려 주세요…</p>
-      <div class="kid-guide-spinner" aria-hidden="true"></div>
-    </div>
-  </div>
+  <div id="kid-guide-loading" class="kid-guide-loading">길 안내를 여는 중…</div>
 
   <div id="kid-guide-error" class="kid-guide-error" hidden>
-    <div class="kid-guide-status-card is-error">
-      <span class="kid-guide-status-emoji" aria-hidden="true">😢</span>
-      <p class="kid-guide-status-title">길 안내를 열 수 없어요</p>
-      <p id="kid-guide-error-text" class="kid-guide-status-sub">링크를 찾을 수 없어요.</p>
-    </div>
+    <p id="kid-guide-error-text">링크를 찾을 수 없어요.</p>
   </div>
 
   <div id="kid-guide-app" class="kid-guide-shell" hidden>
-    <header class="kid-guide-header">
-      <p class="kid-guide-badge">🛡️ 엄마·아빠가 보낸 안전 길</p>
-      <h1 id="kid-guide-title" class="kid-guide-title">오늘의 안전 길</h1>
-      <p id="kid-guide-meta" class="kid-guide-meta" hidden></p>
-      <p id="kid-guide-step-count" class="kid-guide-step-count">1 / 1</p>
-    </header>
-
     <div id="kid-guide-story-bar" class="kid-guide-story-bar" aria-hidden="true"></div>
 
     <main id="kid-guide-card" class="kid-guide-card-full">
@@ -57,20 +60,13 @@
       <div id="kid-guide-tap-next" class="kid-guide-tap-right" aria-label="다음"></div>
       <div id="kid-guide-stage" class="kid-guide-stage">
         <div id="kid-guide-icon" class="kid-guide-icon" aria-hidden="true">↑</div>
-        <h2 id="kid-guide-text" class="kid-guide-keyword">직진</h2>
+        <h1 id="kid-guide-text" class="kid-guide-keyword">직진</h1>
         <p id="kid-guide-friendly" class="kid-guide-friendly"></p>
         <p id="kid-guide-landmark" class="kid-guide-landmark"></p>
       </div>
     </main>
 
-    <div class="kid-guide-nav" id="kid-guide-nav">
-      <button type="button" id="kid-guide-prev" class="kid-guide-nav-btn ghost" hidden aria-label="이전">←</button>
-      <button type="button" id="kid-guide-next-btn" class="kid-guide-nav-btn primary">다음 →</button>
-    </div>
-
-    <footer class="kid-guide-footer">
-      <p>천천히 걸어요 · 횡단보도는 신호 확인 🚸</p>
-    </footer>
+    <button type="button" id="kid-guide-next-btn" class="kid-guide-next-btn">다음 →</button>
   </div>
 
   <script src="kid-guide.js"></script>
