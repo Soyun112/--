@@ -2151,7 +2151,7 @@ async function confirmDocumentQueue() {
     const errHint = errors.length ? ` · 일부 실패 ${errors.length}건` : "";
     if (totalCreated > 0) {
       setDocUploadStatus(
-        `①텍스트추출 → ②Solar주소변환 → ③핀 ${totalCreated}개 표시 완료${errHint}. 「안전 경로 찾기」하면 ④문서 위험 우회까지 반영돼요.`,
+        `이전 핀 지운 뒤 ①텍스트추출 → ②Solar/규칙 주소변환 → ③핀 ${totalCreated}개 표시${errHint}. 「안전 경로 찾기」하면 ④문서 위험 우회까지 반영돼요.`,
         "ok"
       );
     } else if (allPending.length > 0) {

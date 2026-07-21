@@ -241,6 +241,92 @@ def _resolve_plot_coordinates(
     return lat, lng, "검색 실패 → 경로 지역 근처에 추정 표시", 0.25
 
 
+def _region_prefix(region_hint: str) -> str:
+    hint = (region_hint or "").strip()
+    if "강남" in hint or "역삼" in hint or "도곡" in hint or "대치" in hint or "선릉" in hint:
+        return "서울 강남구"
+    if "서울" in hint:
+        return "서울"
+    return "서울 강남구"
+
+
+def _to_map_query(road_addr: str, region_hint: str = "") -> str:
+    """지도(Tmap 지오코딩/POI)가 읽기 쉬운 검색어로 정리."""
+    q = re.sub(r"\s+", " ", (road_addr or "").strip())
+    q = q.replace("～", "~").replace("〜", "~")
+    if not q:
+        return ""
+    if q.startswith("서울"):
+        return q
+    prefix = _region_prefix(region_hint)
+    if q.startswith(prefix):
+        return q
+    return f"{prefix} {q}"
+
+
+def risk_points_from_location_map_text(
+    text: str,
+    *,
+    region_hint: str = "",
+) -> list[dict[str, Any]]:
+    """위치도 형식 구간 추출. 예) ① 선릉로 … 역삼로314 ~ 선릉로305"""
+    raw = text or ""
+    if not raw.strip():
+        return []
+
+    points: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    section_re = re.compile(
+        r"[①②③④⑤⑥⑦⑧⑨⑩]?\s*"
+        r"([가-힣A-Za-z0-9]+(?:로|길|대로))"
+        r"(?:\s*\(([^)]*)\))?"
+        r"[^\n①②③④⑤⑥⑦⑧⑨⑩]{0,120}?"
+        r"([가-힣A-Za-z0-9]+(?:로|길|대로)\s*\d+)"
+        r"\s*[~～〜\-–—]\s*"
+        r"([가-힣A-Za-z0-9]+(?:로|길|대로)\s*\d+)",
+        re.MULTILINE,
+    )
+    for match in section_re.finditer(raw):
+        road_title = match.group(1).strip()
+        dong = (match.group(2) or "").strip()
+        start_addr = re.sub(r"\s+", " ", match.group(3).strip())
+        end_addr = re.sub(r"\s+", " ", match.group(4).strip())
+        preferred = end_addr if road_title in end_addr else start_addr
+        if preferred in seen:
+            continue
+        seen.add(preferred)
+        loc = f"{road_title}"
+        if dong:
+            loc += f"({dong})"
+        loc += f" {start_addr}~{end_addr}"
+        points.append(
+            {
+                "location_text": loc,
+                "geocode_query": _to_map_query(preferred, region_hint),
+                "confidence": 0.85,
+                "normalize_note": "위치도 구간 규칙 추출",
+                "risk_type": "공사/정비 구간",
+                "is_risk": True,
+                "snippet": match.group(0).strip()[:200],
+                "recommendation": "공사 구간 통행 시 주의",
+            }
+        )
+    return points
+
+
+def _merge_risk_points(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in group or []:
+            key = re.sub(r"\s+", "", (item.get("geocode_query") or item.get("location_text") or "").strip().lower())
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+    return merged
+
+
 def solar_extract_map_points_from_text(
     markdown: str,
     *,
@@ -258,27 +344,39 @@ def solar_extract_map_points_from_text(
         return []
 
     system = (
-        "당신은 한국 통학로·도로 공사/안전 문서 텍스트를 읽어 "
-        "지도(카카오/네이버/Tmap 지오코딩)에 찍을 지점을 만드는 도우미입니다. "
-        "추측으로 없는 주소를 만들지 마세요. JSON만 출력하세요."
+        "당신은 한국 도로 공사·위치도·통학로 문서에서 "
+        "지도(Tmap 지오코딩/POI)에 핀을 찍을 주소를 만드는 도우미입니다. "
+        "원문에 없는 주소·가상 학교명(OO초등학교 등)을 만들지 마세요. JSON만 출력하세요."
     )
     user = (
         f"문서명: {filename}\n"
-        f"지역 힌트(출발·도착 근처): {region_hint or '(없음)'}\n\n"
-        "단계:\n"
-        "A) 본문에서 위험·공사·안전조치 위치를 목록으로 뽑으세요.\n"
-        "B) 각 위치를 지도가 인식할 수 있는 검색어로 바꾸세요.\n"
-        "   location_text = 원문에 가까운 표현\n"
-        "   geocode_query = 지도 검색용 (예: '서울 강남구 선릉로 305', '선릉로 305', "
-        "'도성초등학교')\n"
-        "   - 이미 도로명+번지/구·동+도로명이면 location_text를 geocode_query에 그대로 복사\n"
-        "   - '서측 골목', '정문 앞'처럼 모호하면 지역 힌트·학교명·도로명을 붙여 검색 가능하게\n"
-        "C) confidence(0~1), risk_type, is_risk, snippet, recommendation\n"
+        f"지역 힌트: {region_hint or '(없음)'}\n\n"
+        "할 일:\n"
+        "1) 본문/위치도에서 공사·위험 구간을 모두 뽑으세요 (①②③④ 등).\n"
+        "2) location_text: 원문 표현에 가깝게\n"
+        "3) geocode_query: 지도가 바로 검색할 수 있는 형식만\n\n"
+        "【geocode_query 좋은 예시 — 이 형식을 따르세요】\n"
+        '- "서울 강남구 선릉로 305"\n'
+        '- "서울 강남구 논현로76길 21"\n'
+        '- "서울 강남구 도곡로 168"\n'
+        '- "서울 강남구 테헤란로108길 42"\n'
+        '- "서울 강남구 역삼로 314"\n\n'
+        "【위치도 원문 → 변환 예시】\n"
+        '원문: "① 선릉로 (역삼2동) 역삼로314 ~ 선릉로305"\n'
+        '→ location_text: "선릉로(역삼2동) 역삼로314~선릉로305"\n'
+        '→ geocode_query: "서울 강남구 선릉로 305"\n\n'
+        '원문: "② 논현로76길 (역삼2동) 논현로412 ~ 논현로76길21"\n'
+        '→ geocode_query: "서울 강남구 논현로76길 21"\n\n'
+        "【나쁜 예 — 쓰지 마세요】\n"
+        '- "OO초등학교 서측 골목" / "정문 앞"만 단독 / 샘플·가상 지명\n\n'
+        "구간(A ~ B)이면 지도 검색되는 도로명+번지 하나를 geocode_query로 넣으세요.\n"
+        "구·동이 없으면 '서울 강남구'를 앞에 붙이세요.\n"
+        "confidence, risk_type, is_risk=true(공사/위험), snippet, recommendation\n"
         "위치가 없으면 risk_points=[]\n"
         "출력 JSON만:\n"
         '{"risk_points":[{"location_text":"...","geocode_query":"...","confidence":0.0,'
         '"risk_type":"...","is_risk":true,"snippet":"...","recommendation":"..."}]}\n\n'
-        f"본문:\n{text[:4500]}"
+        f"본문:\n{text[:8000]}"
     )
 
     try:
@@ -292,9 +390,9 @@ def solar_extract_map_points_from_text(
                     {"role": "user", "content": user},
                 ],
                 "temperature": 0.1,
-                "max_tokens": 1400,
+                "max_tokens": 2000,
             },
-            timeout=60,
+            timeout=90,
         )
         resp.raise_for_status()
         content = resp.json()["choices"][0]["message"]["content"]
@@ -312,6 +410,9 @@ def solar_extract_map_points_from_text(
                 loc = query
             if not query:
                 query = loc
+            if "OO초등" in loc or "OO초등" in query or "샘플" in loc:
+                continue
+            query = _to_map_query(query, region_hint)
             try:
                 conf = float(raw.get("confidence", 0.6))
             except (TypeError, ValueError):
@@ -322,8 +423,8 @@ def solar_extract_map_points_from_text(
                     "location_text": loc,
                     "geocode_query": query,
                     "confidence": conf,
-                    "normalize_note": "Document Parse → Solar",
-                    "risk_type": str(raw.get("risk_type") or "문서 위험지점"),
+                    "normalize_note": "Document Parse → Solar 주소화",
+                    "risk_type": str(raw.get("risk_type") or "공사/정비 구간"),
                     "is_risk": bool(raw.get("is_risk", True)),
                     "snippet": str(raw.get("snippet") or "")[:300],
                     "recommendation": str(raw.get("recommendation") or ""),
@@ -332,7 +433,8 @@ def solar_extract_map_points_from_text(
                 }
             )
         return out
-    except Exception:
+    except Exception as exc:
+        safe_print(f"[문서] Solar 주소화 실패: {exc}")
         return []
 
 
@@ -341,9 +443,16 @@ def ingest_document(
     filename: str,
     *,
     region_hint: str = "",
+    replace_existing: bool = True,
 ) -> dict[str, Any]:
-    """1) 텍스트 추출 → 2) Solar 주소화 → 3) 핀 → (4는 안전경로 찾기에서 반영)."""
+    """1) 텍스트 추출 → 2) Solar/규칙 주소화 → 3) 핀 → (4는 안전경로 찾기에서 반영)."""
     stages: list[dict[str, str]] = []
+
+    if replace_existing:
+        db.init_db()
+        db.clear_doc_risk_points()
+        safe_print("[문서] 기존 문서 위험 핀 삭제 후 재분석")
+        stages.append(_pipeline_stage("0_clear_old_pins", "ok", "이전 핀 삭제"))
 
     # --- 1) Document Parse ---
     parsed = parse_document(file_bytes, filename)
@@ -357,7 +466,7 @@ def ingest_document(
     )
     safe_print(f"[문서] 1) 텍스트 추출: {len(markdown)}자 ({filename})")
 
-    # --- 2) Solar → 지도용 주소 ---
+    # --- 2) Solar + 위치도 규칙 → 지도용 주소 ---
     if settings.upstage_mock:
         sample = _load_sample_extract()
         normalized = []
@@ -377,28 +486,30 @@ def ingest_document(
             _pipeline_stage("2_solar_address", "ok", f"MOCK Solar 주소화 · {len(normalized)}곳")
         )
     else:
-        normalized = solar_extract_map_points_from_text(
+        from_solar = solar_extract_map_points_from_text(
             markdown,
             filename=filename,
             region_hint=region_hint,
         )
-        source = "document-parse+solar"
-        if normalized:
-            stages.append(
-                _pipeline_stage(
-                    "2_solar_address",
-                    "ok",
-                    f"Solar 주소 변환 · {len(normalized)}곳",
-                )
-            )
-        else:
+        from_rules = risk_points_from_location_map_text(markdown, region_hint=region_hint)
+        normalized = _merge_risk_points(from_solar, from_rules)
+        source = "document-parse+solar+rules"
+        if not normalized:
             normalized = risk_points_from_filename(filename)
             source = "filename" if normalized else "empty"
             stages.append(
                 _pipeline_stage(
                     "2_solar_address",
                     "fallback" if normalized else "empty",
-                    "Solar 결과 없음 → 파일명 폴백" if normalized else "주소화할 지점 없음",
+                    "Solar/규칙 없음 → 파일명 폴백" if normalized else "주소화할 지점 없음",
+                )
+            )
+        else:
+            stages.append(
+                _pipeline_stage(
+                    "2_solar_address",
+                    "ok",
+                    f"Solar {len(from_solar)} + 규칙 {len(from_rules)} → 합 {len(normalized)}곳",
                 )
             )
         extracted = {
@@ -408,7 +519,7 @@ def ingest_document(
             "extract_source": source,
         }
     safe_print(
-        f"[문서] 2) Solar 주소화: {len(normalized)}곳 "
+        f"[문서] 2) 주소화: {len(normalized)}곳 "
         f"(source={extracted.get('extract_source')})"
     )
 

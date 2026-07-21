@@ -138,6 +138,11 @@ def clear_table(table: str) -> None:
         conn.execute(f"DELETE FROM {table}")
 
 
+def clear_doc_risk_points() -> None:
+    """문서 재분석 전에 이전(샘플 포함) 핀을 모두 지운다."""
+    clear_table("doc_risk_points")
+
+
 def insert_child_zone(conn: sqlite3.Connection, *, name, lat, lng, cctv_count, managing_org, police_office, source):
     conn.execute(
         "INSERT INTO child_zones (name, lat, lng, cctv_count, managing_org, police_office, source) "
