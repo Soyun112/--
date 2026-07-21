@@ -1946,6 +1946,11 @@ async function handleSubmit(event) {
     renderReports(routeData);
     renderMap(routeData, publicData);
 
+    const scores = (routeData.candidates || []).map((c) => `${c.id}:${c.safety_score}`);
+    console.log(
+      `[경로] scoring=${routeData.used_mock?.scoring || "unknown"} · 점수 [${scores.join(", ")}]`
+    );
+
     if (routeData.used_mock && routeData.used_mock.routing) {
       console.warn("[경로] MOCK 모드 — Tmap 보행자 API 미사용");
     } else {
