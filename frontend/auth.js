@@ -62,8 +62,11 @@ function authHeaders() {
 
 function resolveFrontendUrl() {
   const host = window.location.hostname.toLowerCase();
-  // Render 백엔드 URL로 앱을 열면 OAuth 후에도 Render에 남음 → Vercel로 고정
+  // Render·Vercel preview URL로 앱을 열면 OAuth/공유 링크가 깨짐 → production 고정
   if (host.endsWith(".onrender.com")) {
+    return "https://kids-abcd.vercel.app";
+  }
+  if (host.endsWith(".vercel.app") && host !== "kids-abcd.vercel.app") {
     return "https://kids-abcd.vercel.app";
   }
   if (window.location.protocol === "file:") {

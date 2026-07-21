@@ -128,16 +128,21 @@ function readShareIdFromLocation() {
   return null;
 }
 
+const PRODUCTION_APP_URL = "https://kids-abcd.vercel.app";
+
 function resolveKidGuideFrontendBase() {
-  if (typeof resolveFrontendUrl === "function") {
-    return resolveFrontendUrl();
-  }
   const host = window.location.hostname.toLowerCase();
   if (host.endsWith(".onrender.com")) {
-    return "https://kids-abcd.vercel.app";
+    return PRODUCTION_APP_URL;
+  }
+  if (host.endsWith(".vercel.app") && host !== "kids-abcd.vercel.app") {
+    return PRODUCTION_APP_URL;
   }
   if (window.location.protocol === "file:") {
     return "http://127.0.0.1:5500";
+  }
+  if (!host || host === "localhost" || host === "127.0.0.1") {
+    return window.location.origin;
   }
   return window.location.origin;
 }
