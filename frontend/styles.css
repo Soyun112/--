@@ -619,6 +619,7 @@ body.theme-dark #tmap { filter: brightness(0.78) contrast(0.92) saturate(0.85); 
 }
 
 .kid-progress-stamp {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -647,6 +648,33 @@ body.theme-dark #tmap { filter: brightness(0.78) contrast(0.92) saturate(0.85); 
   border-color: #f0b429;
   background: #fff8e6;
   transform: scale(1.04);
+}
+
+.kid-progress-stamp.just-unlocked {
+  animation: kidStampPop 0.7s cubic-bezier(0.2, 0.9, 0.2, 1);
+  box-shadow: 0 0 0 0 rgba(240, 180, 41, 0.55);
+}
+
+.kid-progress-stamp.just-unlocked::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 16px;
+  pointer-events: none;
+  box-shadow: 0 0 0 0 rgba(240, 180, 41, 0.45);
+  animation: kidStampRing 0.7s ease-out;
+}
+
+@keyframes kidStampPop {
+  0% { transform: scale(0.55) rotate(-8deg); }
+  45% { transform: scale(1.22) rotate(4deg); }
+  70% { transform: scale(0.95) rotate(-2deg); }
+  100% { transform: scale(1.04) rotate(0deg); }
+}
+
+@keyframes kidStampRing {
+  0% { box-shadow: 0 0 0 0 rgba(240, 180, 41, 0.5); opacity: 1; }
+  100% { box-shadow: 0 0 0 14px rgba(240, 180, 41, 0); opacity: 0; }
 }
 
 .kid-progress-stamp.arrive.unlocked {
@@ -797,6 +825,8 @@ body.theme-dark #tmap { filter: brightness(0.78) contrast(0.92) saturate(0.85); 
   color: #5a6b7a;
   background: #f3f6f9;
 }
+.kid-card-nav-btn.ghost[hidden] { display: none !important; }
+.kid-card-nav.solo-next .kid-card-nav-btn.primary { flex: 1; width: 100%; }
 .kid-card-nav-btn.primary {
   flex: 1;
   background: var(--primary);
@@ -992,7 +1022,8 @@ body.theme-dark .kid-card.arrived { background: linear-gradient(160deg, #3a3010,
 
 @media (prefers-reduced-motion: reduce) {
   .kid-card-overlay, .kid-card, .kid-card-stage.slide-next, .kid-card-stage.slide-prev,
-  .kid-card-icon, .kid-card.arrived .kid-card-icon, .kid-card-cheer.pop { animation: none; }
+  .kid-card-icon, .kid-card.arrived .kid-card-icon, .kid-card-cheer.pop,
+  .kid-progress-stamp.just-unlocked, .kid-progress-stamp.just-unlocked::after { animation: none; }
 }
 
 .safety-facility-icon {

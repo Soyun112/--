@@ -360,13 +360,21 @@ function resetProgressStamps() {
   hideKidCardCheer();
 }
 
-function renderProgressStampSlots() {
+function renderProgressStampSlots(justUnlockedIds = []) {
   const root = document.getElementById("kid-progress-stamps");
   if (!root) return;
   PROGRESS_STAMP_DEFS.forEach((def) => {
     const el = root.querySelector(`[data-stamp="${def.id}"]`);
     if (!el) return;
-    el.classList.toggle("unlocked", Boolean(state.progressStamps[def.id]));
+    const unlocked = Boolean(state.progressStamps[def.id]);
+    el.classList.toggle("unlocked", unlocked);
+    if (justUnlockedIds.includes(def.id)) {
+      el.classList.remove("just-unlocked");
+      void el.offsetWidth;
+      el.classList.add("just-unlocked");
+      clearTimeout(el._stampAnimTimer);
+      el._stampAnimTimer = setTimeout(() => el.classList.remove("just-unlocked"), 900);
+    }
   });
 }
 
@@ -395,14 +403,16 @@ function showKidCardCheer(message) {
 
 /** 진행률에 맞춰 구간 스탬프 unlock (뒤로 가도 잠그지 않음) */
 function updateProgressStamps(ratio, { announce = true } = {}) {
+  const justUnlocked = [];
   let cheer = "";
   PROGRESS_STAMP_DEFS.forEach((def) => {
     if (ratio + 1e-9 >= def.at && !state.progressStamps[def.id]) {
       state.progressStamps[def.id] = true;
+      justUnlocked.push(def.id);
       cheer = def.cheer;
     }
   });
-  renderProgressStampSlots();
+  renderProgressStampSlots(justUnlocked);
   if (announce && cheer) showKidCardCheer(cheer);
   return cheer;
 }
@@ -965,10 +975,15 @@ function renderKidCard(direction = 0) {
   }
   document.getElementById("kid-card-landmark").textContent =
     isArrive || !landmark ? "" : `📍 ${landmark}`;
-  document.getElementById("kid-card-prev").disabled = index === 0;
+  const prevBtn = document.getElementById("kid-card-prev");
+  if (prevBtn) {
+    prevBtn.hidden = index === 0;
+    prevBtn.disabled = index === 0;
+  }
   const nextBtn = document.getElementById("kid-card-next");
   nextBtn.hidden = isArrive;
   nextBtn.textContent = index >= total - 2 ? "도착! →" : "다음 →";
+  document.querySelector(".kid-card-nav")?.classList.toggle("solo-next", index === 0 && !isArrive);
 
   // 공유는 부모용 → 도착 카드에만
   const shareRow = document.getElementById("kid-card-share-row");
