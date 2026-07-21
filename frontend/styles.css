@@ -203,6 +203,70 @@ button {
 .secondary:hover { background: #dfe6ee; }
 
 .hint { font-size: 12px; color: var(--muted); margin-top: 10px; }
+
+.doc-upload-panel {
+  margin-top: 16px;
+  padding: 14px 14px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #f7fbff, #f3f7fb);
+}
+
+.doc-upload-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--primary-dark, #1f5a9c);
+}
+
+.doc-upload-hint { margin-top: 0; margin-bottom: 10px; }
+
+.doc-upload-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.doc-upload-btn {
+  flex: 1;
+  padding: 11px 14px;
+  border-radius: 12px;
+  border: 1px solid #9bb8d6;
+  background: #fff;
+  color: #1f5a9c;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.doc-upload-btn:hover:not(:disabled) {
+  background: #e8f3ff;
+}
+.doc-upload-btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.doc-upload-status {
+  margin: 10px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #3a556e;
+  line-height: 1.4;
+  min-height: 1.2em;
+}
+.doc-upload-status.is-error { color: #b3261e; }
+.doc-upload-status.is-ok { color: #1c7c3b; }
+
+body.theme-dark .doc-upload-panel {
+  background: linear-gradient(180deg, #1a2430, #16202a);
+  border-color: #2f4054;
+}
+body.theme-dark .doc-upload-btn {
+  background: #202b36;
+  border-color: #3a5168;
+  color: #9bc9fb;
+}
+body.theme-dark .doc-upload-status { color: #c5d3e0; }
 .demo-controls {
   margin-top: 18px;
   padding-top: 14px;

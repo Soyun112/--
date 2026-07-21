@@ -90,6 +90,24 @@
         </div>
       </form>
       <p class="hint">출발지와 목적지를 입력한 뒤 안전한 길을 찾아보세요.</p>
+
+      <section class="doc-upload-panel" aria-label="안전 문서 업로드">
+        <h3 class="doc-upload-title">📄 안전 문서 반영</h3>
+        <p class="hint doc-upload-hint">
+          통학로·안전진단 보고서(PDF·이미지)를 올리면 위험 지점을 추출해 지도에 표시합니다.
+        </p>
+        <div class="doc-upload-actions">
+          <input
+            type="file"
+            id="doc-upload-input"
+            accept=".pdf,.png,.jpg,.jpeg,.webp,.hwp,.hwpx,.md,.txt,application/pdf,image/*"
+            hidden
+          />
+          <button type="button" id="doc-upload-btn" class="doc-upload-btn">문서 선택·업로드</button>
+        </div>
+        <p id="doc-upload-status" class="doc-upload-status" role="status" aria-live="polite"></p>
+      </section>
+
       <details class="demo-controls">
         <summary>발표용 시나리오 선택</summary>
         <label>데모 시나리오

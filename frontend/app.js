@@ -1633,6 +1633,146 @@ async function handleSubmit(event) {
   }
 }
 
+function setDocUploadStatus(message, kind = "") {
+  const el = document.getElementById("doc-upload-status");
+  if (!el) return;
+  el.textContent = message || "";
+  el.classList.toggle("is-error", kind === "error");
+  el.classList.toggle("is-ok", kind === "ok");
+}
+
+async function refreshPublicDataAndMap({ focusDocRisk = false } = {}) {
+  const publicData = await fetchJson("/api/public-data");
+  state.publicData = publicData;
+  if (focusDocRisk) state.activePublicLayer = "doc-risk";
+  if (state.lastResult) {
+    renderMap(state.lastResult, publicData, false);
+  }
+  return publicData;
+}
+
+async function maybeRerunRouteAfterDocument() {
+  const originQuery = document.getElementById("origin-query")?.value?.trim();
+  const destQuery = document.getElementById("dest-query")?.value?.trim();
+  if (!originQuery || !destQuery || !state.lastResult) return false;
+
+  const payload = {
+    origin: { query: originQuery, name: originQuery },
+    destination: { query: destQuery, name: destQuery },
+  };
+  const [routeData, publicData] = await Promise.all([
+    fetchJson("/api/route", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+    fetchJson("/api/public-data"),
+  ]);
+  state.lastResult = routeData;
+  state.publicData = publicData;
+  state.activePublicLayer = "doc-risk";
+  renderWeather(routeData.weather);
+  if (typeof renderTimeContext === "function") renderTimeContext(routeData);
+  renderParentReport(routeData);
+  renderCandidates(routeData);
+  renderReports(routeData);
+  renderMap(routeData, publicData);
+  return true;
+}
+
+async function uploadSafetyDocument(file) {
+  const btn = document.getElementById("doc-upload-btn");
+  const input = document.getElementById("doc-upload-input");
+  if (!file) return;
+
+  if (file.size > 15 * 1024 * 1024) {
+    setDocUploadStatus("파일이 너무 큽니다. 15MB 이하로 올려 주세요.", "error");
+    return;
+  }
+
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "파싱 중…";
+    }
+    setDocUploadStatus("문서를 읽고 위험 지점을 추출하는 중이에요. 잠시만 기다려 주세요…");
+
+    const form = new FormData();
+    form.append("file", file);
+
+    const res = await fetch(`${API_BASE}/api/documents/ingest`, {
+      method: "POST",
+      headers: { ...authHeaders() },
+      body: form,
+    });
+    const raw = await res.text();
+    let data = null;
+    try {
+      data = raw ? JSON.parse(raw) : null;
+    } catch {
+      data = null;
+    }
+    if (!res.ok) {
+      const detail =
+        (data && (data.detail || data.message)) ||
+        raw ||
+        `업로드 실패 (${res.status})`;
+      throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    }
+
+    const created = data?.risk_points_created ?? 0;
+    const mockNote = data?.used_mock ? " (샘플/MOCK 파싱)" : "";
+    if (created <= 0) {
+      setDocUploadStatus(
+        `「${data?.document_name || file.name}」 처리는 됐지만, 지도에 찍을 위치를 찾지 못했어요. 주소·지명이 들어 있는 문서인지 확인해 주세요.${mockNote}`,
+        "error"
+      );
+      await refreshPublicDataAndMap({ focusDocRisk: true });
+      return;
+    }
+
+    const reran = await maybeRerunRouteAfterDocument();
+    if (!reran) {
+      await refreshPublicDataAndMap({ focusDocRisk: true });
+    }
+
+    setDocUploadStatus(
+      `「${data.document_name}」에서 위험/안전 지점 ${created}곳을 반영했어요. 지도 범례 「문서 기반 위험지역」에 커서를 올리면 확인할 수 있어요.${mockNote}`,
+      "ok"
+    );
+  } catch (err) {
+    console.error(err);
+    setDocUploadStatus(err.message || "문서 업로드에 실패했습니다.", "error");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "문서 선택·업로드";
+    }
+    if (input) input.value = "";
+  }
+}
+
+function bindDocumentUpload() {
+  const btn = document.getElementById("doc-upload-btn");
+  const input = document.getElementById("doc-upload-input");
+  if (!btn || !input) return;
+
+  btn.addEventListener("click", () => {
+    if (state.config && state.config.document_ingest_enabled === false) {
+      setDocUploadStatus(
+        "서버에서 문서 업로드가 꺼져 있어요. DOCUMENT_INGEST_ENABLED를 확인해 주세요.",
+        "error"
+      );
+      return;
+    }
+    input.click();
+  });
+  input.addEventListener("change", () => {
+    const file = input.files && input.files[0];
+    if (file) uploadSafetyDocument(file);
+  });
+}
+
 function renderWeather(weather) {
   const el = document.getElementById("weather-badge");
   if (!el) return;
@@ -1692,6 +1832,7 @@ function bindAppUi() {
   document.getElementById("demo-scenario-select")?.addEventListener("change", fillDemoCoordinates);
   document.getElementById("swap-locations")?.addEventListener("click", swapLocations);
   document.getElementById("route-form")?.addEventListener("submit", handleSubmit);
+  bindDocumentUpload();
   document.querySelectorAll(".mode-button").forEach((button) => {
     button.addEventListener("click", () => setMode(button.dataset.mode));
   });

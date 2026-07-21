@@ -92,6 +92,7 @@ def get_public_config() -> dict:
     return {
         "demo_center": {"lat": settings.demo_center_lat, "lng": settings.demo_center_lng},
         "tmap_web_key": settings.tmap_app_key,
+        "document_ingest_enabled": settings.document_ingest_enabled,
         "mock": {
             "routing": settings.routing_mock,
             "public_data": settings.public_data_mock,
