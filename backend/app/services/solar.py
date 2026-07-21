@@ -191,6 +191,70 @@ def _mock_parent_report(
     )
 
 
+def _parent_report_v2_two_groups(
+    candidate: RouteCandidate,
+    other_candidates: list[RouteCandidate] | None = None,
+    weather: Optional[dict[str, Any]] = None,
+    time_context: Optional[dict[str, Any]] = None,
+) -> str:
+    """비교용 설명2: 좋은 점 4개 + 우회할 곳 2개만 사용."""
+    f = candidate.features
+    tc = time_context or {}
+    child_zone_cctv = f.cctv_count  # 어린이보호구역 CCTV (보호구역 매칭 기반)
+    good_ansim_cctv = f.safety_facility_cctv_count
+    good_ansim_light = f.safety_facility_streetlight_count
+    good_guardian = f.guardian_house_count
+    avoid_hotspot = f.accident_hotspot_count
+    avoid_doc = f.doc_risk_count
+
+    good_total = good_ansim_cctv + good_ansim_light + child_zone_cctv + good_guardian
+    avoid_total = avoid_hotspot + avoid_doc
+
+    risk_docs = [d for d in f.matched_documents if d.is_risk]
+    doc_detail = ""
+    if risk_docs:
+        first = risk_docs[0]
+        doc_detail = (
+            f" 문서 '{first.source_doc}'에서 '{first.risk_type}'이(가) "
+            f"지적된 지점이 경로 근처 {first.distance_m:.0f}m에 있습니다."
+        )
+
+    slower = []
+    if other_candidates:
+        slower = [c for c in other_candidates if c.distance_m < candidate.distance_m]
+    time_note = ""
+    if slower:
+        fastest = min(other_candidates, key=lambda c: c.distance_m)
+        delta_min = round((candidate.duration_s - fastest.duration_s) / 60, 1)
+        if delta_min > 0:
+            time_note = f"최단 경로보다 약 {delta_min}분 더 걸릴 수 있지만, "
+
+    if avoid_total == 0 and good_total > 0:
+        verdict = f"{time_note}좋은 안전시설이 많고 우회할 위험 지점이 거의 없어 추천합니다."
+    elif avoid_total > 0 and good_total > avoid_total:
+        verdict = f"{time_note}위험 지점은 있으나 주변 안전시설이 더 많아 상대적으로 안전한 길입니다."
+    elif avoid_total > good_total:
+        verdict = f"{time_note}우회가 필요한 위험 지점이 있어 주의가 필요합니다."
+    else:
+        verdict = f"{time_note}좋은 점과 우회할 곳을 함께 보고 고른 경로입니다."
+
+    period = tc.get("recommendation_message") or "시간대 맞춤 추천"
+    return (
+        f"### ✅ 한줄 결론\n{period}. {verdict}\n\n"
+        f"### 👍 좋은 점 (가점·선호)\n"
+        f"- 안심귀갓길 CCTV: {good_ansim_cctv}대\n"
+        f"- 안심귀갓길 보안등: {good_ansim_light}개\n"
+        f"- 어린이보호구역 CCTV: {child_zone_cctv}대\n"
+        f"- 아동안전지킴이집: {good_guardian}곳\n\n"
+        f"### ⛔ 우회할 곳 (감점·회피)\n"
+        f"- 교통사고다발지역: {avoid_hotspot}곳\n"
+        f"- 문서 기반 위험지역: {avoid_doc}곳.{doc_detail}\n\n"
+        f"### 📌 참고\n"
+        f"이 설명은 위 6가지만 봅니다. (기존 설명의 범죄지수·단속카메라 등은 넣지 않음)"
+        f"{_weather_parent_note(weather)}"
+    )
+
+
 def _mock_kid_report(
     candidate: RouteCandidate,
     audience_age: int,
@@ -228,9 +292,13 @@ def generate_reports(
     weather: Optional[dict[str, Any]] = None,
     time_context: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
+    # 설명2는 항상 2그룹 템플릿 (비교용). 기존 설명1은 삭제하지 않음.
+    parent_v2 = _parent_report_v2_two_groups(candidate, other_candidates, weather, time_context)
+
     if settings.upstage_mock:
         return {
             "parent_report": _mock_parent_report(candidate, other_candidates, weather, time_context),
+            "parent_report_v2": parent_v2,
             "kid_report": _mock_kid_report(candidate, audience_age, weather, time_context),
             "used_mock": True,
         }
@@ -239,11 +307,17 @@ def generate_reports(
     try:
         parent_report = _call_solar(prompts["parent_system"], prompts["shared_facts"], max_tokens=1100)
         kid_report = _call_solar(prompts["kid_system"], prompts["shared_facts"], max_tokens=700)
-        return {"parent_report": parent_report, "kid_report": kid_report, "used_mock": False}
+        return {
+            "parent_report": parent_report,
+            "parent_report_v2": parent_v2,
+            "kid_report": kid_report,
+            "used_mock": False,
+        }
     except Exception as exc:  # 데모 안정성을 위해 API 실패 시 MOCK으로 폴백
         fallback = {
             "parent_report": _mock_parent_report(candidate, other_candidates, weather, time_context)
             + f"\n\n(Solar 호출 실패로 템플릿 대체: {exc})",
+            "parent_report_v2": parent_v2,
             "kid_report": _mock_kid_report(candidate, audience_age, weather, time_context),
             "used_mock": True,
         }

@@ -121,6 +121,7 @@ class RouteResponse(BaseModel):
     candidates: List[RouteCandidate]
     recommended_id: str
     parent_report: str
+    parent_report_v2: str = ""  # 비교용: 좋은점·우회 2그룹만 반영
     kid_report: str
     used_mock: dict
     weather: Optional[dict] = None

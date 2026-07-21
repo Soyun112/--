@@ -743,15 +743,25 @@ function renderParentReport(routeData) {
   const el = document.getElementById("parent-report");
   if (!el) return;
   const selected = activeRoute(routeData);
-  const text = selected
+  // 설명1: 기존(선택 경로별 설명 또는 Solar 리포트)
+  const text1 = selected
     ? buildSelectedRouteSafetyText(selected, routeData)
     : routeData && routeData.parent_report;
-  if (!text) {
+  // 설명2: 좋은점·우회 2그룹만 반영 (비교용)
+  const text2 = routeData && routeData.parent_report_v2;
+  if (!text1 && !text2) {
     el.textContent = "경로를 찾으면 시간대 맞춤 안전 리포트가 표시됩니다.";
     el.classList.add("placeholder");
     return;
   }
-  el.textContent = text;
+  const parts = [];
+  if (text1) {
+    parts.push(`【설명1 (기존)】\n${text1}`);
+  }
+  if (text2) {
+    parts.push(`【설명2 (좋은점·우회 2그룹 반영)】\n${text2}`);
+  }
+  el.textContent = parts.join("\n\n──────────────\n\n");
   el.classList.remove("placeholder");
 }
 

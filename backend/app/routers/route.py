@@ -230,6 +230,7 @@ def compute_route(req: RouteRequest) -> RouteResponse:
         candidates=candidates,
         recommended_id=recommended.id,
         parent_report=reports["parent_report"],
+        parent_report_v2=reports.get("parent_report_v2") or "",
         kid_report=reports["kid_report"],
         used_mock={
             "routing": settings.routing_mock if req.mock is None else req.mock,
