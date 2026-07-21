@@ -1,13 +1,12 @@
 import LZString from "lz-string";
 
 const PRODUCTION_APP_URL = "https://kids-abcd.vercel.app";
-const OG_IMAGE_URL = `${PRODUCTION_APP_URL}/og-guide.svg`;
 const DEFAULT_TITLE = "👶 오늘의 안전 길";
 const DEFAULT_DESCRIPTION = "링크를 누르면 길 안내 카드가 바로 열려요!";
 const BACKEND = "https://kids-safe-route-api.onrender.com";
 
-const PREVIEW_BOTS =
-  /kakaotalk-scrap|kakaotalk|facebookexternalhit|twitterbot|slackbot|discordbot|whatsapp|linkedinbot|telegrambot|bot|crawler|preview/i;
+// 카카오 미리보기 수집기만 (인앱 브라우저 KAKAOTALK UA는 제외)
+const PREVIEW_BOTS = /kakaotalk-scrap|facebookexternalhit|Twitterbot|Slackbot|Discordbot|WhatsApp|LinkedInBot|TelegramBot/i;
 
 function escapeHtml(value) {
   return String(value)
@@ -17,7 +16,7 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
-function readEncoded(searchParams) {
+function readEncoded(searchParams, pathname) {
   let encoded = searchParams.get("d");
   if (encoded) return encoded;
 
@@ -27,11 +26,15 @@ function readEncoded(searchParams) {
     if (part === null) break;
     parts.push(part);
   }
-  return parts.length ? parts.join("") : null;
+  if (parts.length) return parts.join("");
+
+  const match = pathname.match(/^\/g\/(.+)/i);
+  if (match) return match[1].replace(/\//g, "");
+
+  return null;
 }
 
-function decodeGuideTitle(searchParams) {
-  const encoded = readEncoded(searchParams);
+function decodeTitleFromEncoded(encoded) {
   if (!encoded) return null;
   try {
     let raw = encoded;
@@ -57,7 +60,6 @@ function previewHtml({ title, description, canonical }) {
   const safeTitle = escapeHtml(title);
   const safeDescription = escapeHtml(description);
   const safeCanonical = escapeHtml(canonical);
-  const safeImage = escapeHtml(OG_IMAGE_URL);
   return `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -66,28 +68,25 @@ function previewHtml({ title, description, canonical }) {
 <meta property="og:title" content="${safeTitle}">
 <meta property="og:description" content="${safeDescription}">
 <meta property="og:url" content="${safeCanonical}">
-<meta property="og:image" content="${safeImage}">
-<meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="${safeTitle}">
-<meta name="twitter:description" content="${safeDescription}">
-<meta name="twitter:image" content="${safeImage}">
-<meta http-equiv="refresh" content="0;url=${safeCanonical}">
 <title>${safeTitle}</title>
 </head>
-<body>${safeDescription}</body>
+<body>
+<p>${safeDescription}</p>
+<p><a href="${safeCanonical}">${safeCanonical}</a></p>
+</body>
 </html>`;
 }
 
 export default async function middleware(request) {
   const url = new URL(request.url);
-  if (url.pathname !== "/guide" && !url.pathname.endsWith("/kid-guide.html")) {
-    return;
-  }
+  const isGuidePath =
+    url.pathname === "/guide" ||
+    url.pathname.startsWith("/g/") ||
+    url.pathname.endsWith("/kid-guide.html");
+  if (!isGuidePath) return;
 
   const ua = request.headers.get("user-agent") || "";
-  if (!PREVIEW_BOTS.test(ua)) {
-    return;
-  }
+  if (!PREVIEW_BOTS.test(ua)) return;
 
   let title = DEFAULT_TITLE;
   const description = DEFAULT_DESCRIPTION;
@@ -106,16 +105,16 @@ export default async function middleware(request) {
       /* keep default */
     }
   } else {
-    const decodedTitle = decodeGuideTitle(url.searchParams);
+    const encoded = readEncoded(url.searchParams, url.pathname);
+    const decodedTitle = decodeTitleFromEncoded(encoded);
     if (decodedTitle) title = `👶 ${decodedTitle}`;
   }
 
-  return new Response(
-    previewHtml({ title, description, canonical: productionGuideUrl(url) }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
+  return new Response(previewHtml({ title, description, canonical: productionGuideUrl(url) }), {
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
 }
 
 export const config = {
-  matcher: ["/guide", "/kid-guide.html"],
+  matcher: ["/guide", "/g/:path*", "/kid-guide.html"],
 };

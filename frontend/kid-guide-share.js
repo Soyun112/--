@@ -151,6 +151,11 @@ function buildKidGuideShareUrl(payload) {
   const encoded = encodeKidGuidePayload(payload);
   const base = resolveKidGuideFrontendBase();
 
+  // /g/ 짧은 URL — 카톡에서 ?d= 긴 주소가 잘리는 문제 완화
+  if (encoded.length <= 1800) {
+    return `${base}/g/${encoded}`;
+  }
+
   if (encoded.length <= 1200) {
     return `${base}/guide?d=${encoded}`;
   }
