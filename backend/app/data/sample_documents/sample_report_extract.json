@@ -3,6 +3,7 @@
   "risk_points": [
     {
       "location_text": "OO초등학교 서측 골목 교차로",
+      "geocode_query": "서울 강남구 OO초등학교",
       "lat": 37.502,
       "lng": 127.0399,
       "risk_type": "무단횡단 위험",
@@ -14,6 +15,7 @@
     },
     {
       "location_text": "OO초등학교 동측 통학로",
+      "geocode_query": "서울 강남구 OO초등학교 동측",
       "lat": 37.5012,
       "lng": 127.041,
       "risk_type": "CCTV 추가설치 완료",

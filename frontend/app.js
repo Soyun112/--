@@ -2243,12 +2243,12 @@ async function confirmDocumentQueue() {
     const errHint = errors.length ? ` · 일부 실패 ${errors.length}건` : "";
     if (totalCreated > 0) {
       setDocUploadStatus(
-        `문서 분석 완료: 위험 지점 ${totalCreated}곳을 지도에 빨간 길로 표시했어요${errHint}. 「안전 경로 찾기」를 누르면 우회 경로까지 반영돼요.`,
+        `①텍스트추출 → ②Solar주소변환 → ③핀 ${totalCreated}개 표시 완료${errHint}. 「안전 경로 찾기」하면 ④문서 위험 우회까지 반영돼요.`,
         "ok"
       );
     } else if (allPending.length > 0) {
       setDocUploadStatus(
-        `문서에서 위치를 읽었지만 바로 못 찍은 곳이 있어요. 아래 목록을 확인하면 지도에 빨간 길로 올라가요.${errHint}`,
+        `①~②까지는 됐지만 ③핀을 바로 못 찍은 곳이 있어요. 아래 검색어를 확인하면 지도에 올라가요.${errHint}`,
         ""
       );
     } else {

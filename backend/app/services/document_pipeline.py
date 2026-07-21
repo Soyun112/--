@@ -1,11 +1,11 @@
-"""Upstage Document Parse + Solar 파이프라인.
+"""Upstage Document Parse + Solar 주소화 파이프라인.
 
-흐름: 문서(PDF/HWP/이미지) 업로드
-      -> Document Parse(/v1/document-digitization)로 구조화 텍스트 확보
-      -> Solar LLM으로 본문에서 위험/공사 지점을 뽑고
-         지도 검색용 주소(geocode_query)로 변환(이미 검색 가능하면 그대로 통과)
-      -> 검색어를 위경도로 지오코딩 후 지도에 표시
-      -> (비어 있으면) 파일명에서 도로명 폴백
+사용자가 원한 흐름:
+  1) Document Parse로 텍스트 추출
+  2) Solar로 지도가 인식할 수 있는 주소(geocode_query)로 변환
+  3) 지오코딩 후 지도에 핀
+  4) 안전경로 찾기 때 문서 위험 핀을 우회 고려사항으로 반영
+     (routing._append_avoid_point_detours)
 
 UPSTAGE_API_KEY가 없으면 sample_documents 샘플로 동일 다운스트림을 시연한다.
 """
@@ -19,6 +19,7 @@ import requests
 
 from .. import db
 from ..config import settings
+from ..console_safe import safe_print
 
 DOCUMENT_DIGITIZATION_URL = "https://api.upstage.ai/v1/document-digitization"
 CHAT_COMPLETIONS_URL = "https://api.upstage.ai/v1/chat/completions"
@@ -27,6 +28,10 @@ CHAT_COMPLETIONS_URL = "https://api.upstage.ai/v1/chat/completions"
 # 이 값 미만으로 찍힌 지점만 "추정" 마커로 표시하고,
 # 지오코딩이 실패해도 지역 힌트/데모 중심으로라도 일단 찍는다.
 ESTIMATED_CONFIDENCE_THRESHOLD = 0.85
+
+
+def _pipeline_stage(name: str, status: str, detail: str = "") -> dict[str, str]:
+    return {"name": name, "status": status, "detail": detail}
 
 
 def _pending_point_payload(rp: dict[str, Any], *, filename: str, reason: str) -> dict[str, Any]:
@@ -254,23 +259,23 @@ def solar_extract_map_points_from_text(
 
     system = (
         "당신은 한국 통학로·도로 공사/안전 문서 텍스트를 읽어 "
-        "지도(카카오/네이버/Tmap)에 찍을 지점을 만드는 도우미입니다. "
+        "지도(카카오/네이버/Tmap 지오코딩)에 찍을 지점을 만드는 도우미입니다. "
         "추측으로 없는 주소를 만들지 마세요. JSON만 출력하세요."
     )
     user = (
         f"문서명: {filename}\n"
-        f"지역 힌트: {region_hint or '(없음)'}\n\n"
-        "할 일:\n"
-        "1) 본문에서 위험·공사·안전조치 위치가 보이면 목록으로 뽑으세요.\n"
-        "2) location_text: 원문에 가까운 위치 표현\n"
-        "3) geocode_query: 지도 검색에 넣을 한국어 주소/도로명+번지/학교·건물명\n"
-        "   - 이미 검색 가능한 형태(예: '서울 강남구 선릉로 305', '선릉로 305')면 "
-        "location_text를 그대로 geocode_query에 넣으세요(변환하지 말 것).\n"
-        "   - '서측 골목', '정문 앞'처럼 모호하면 지역 힌트를 붙여 검색 가능한 형태로 바꾸세요.\n"
-        "4) confidence: 0~1\n"
-        "5) risk_type, is_risk, snippet, recommendation\n"
-        "위치가 없으면 risk_points를 빈 배열로 두세요.\n"
-        "출력 JSON:\n"
+        f"지역 힌트(출발·도착 근처): {region_hint or '(없음)'}\n\n"
+        "단계:\n"
+        "A) 본문에서 위험·공사·안전조치 위치를 목록으로 뽑으세요.\n"
+        "B) 각 위치를 지도가 인식할 수 있는 검색어로 바꾸세요.\n"
+        "   location_text = 원문에 가까운 표현\n"
+        "   geocode_query = 지도 검색용 (예: '서울 강남구 선릉로 305', '선릉로 305', "
+        "'도성초등학교')\n"
+        "   - 이미 도로명+번지/구·동+도로명이면 location_text를 geocode_query에 그대로 복사\n"
+        "   - '서측 골목', '정문 앞'처럼 모호하면 지역 힌트·학교명·도로명을 붙여 검색 가능하게\n"
+        "C) confidence(0~1), risk_type, is_risk, snippet, recommendation\n"
+        "위치가 없으면 risk_points=[]\n"
+        "출력 JSON만:\n"
         '{"risk_points":[{"location_text":"...","geocode_query":"...","confidence":0.0,'
         '"risk_type":"...","is_risk":true,"snippet":"...","recommendation":"..."}]}\n\n'
         f"본문:\n{text[:4500]}"
@@ -337,10 +342,22 @@ def ingest_document(
     *,
     region_hint: str = "",
 ) -> dict[str, Any]:
-    """Document Parse → Solar(주소 변환) → 지오코딩 → 지도 표시."""
+    """1) 텍스트 추출 → 2) Solar 주소화 → 3) 핀 → (4는 안전경로 찾기에서 반영)."""
+    stages: list[dict[str, str]] = []
+
+    # --- 1) Document Parse ---
     parsed = parse_document(file_bytes, filename)
     markdown = parsed.get("markdown", "") or ""
+    stages.append(
+        _pipeline_stage(
+            "1_text_extract",
+            "ok" if markdown.strip() else "empty",
+            f"Document Parse · {len(markdown)}자" + (" (MOCK)" if parsed.get("mock") else ""),
+        )
+    )
+    safe_print(f"[문서] 1) 텍스트 추출: {len(markdown)}자 ({filename})")
 
+    # --- 2) Solar → 지도용 주소 ---
     if settings.upstage_mock:
         sample = _load_sample_extract()
         normalized = []
@@ -348,7 +365,7 @@ def ingest_document(
             item = dict(rp)
             item.setdefault("geocode_query", rp.get("location_text") or "")
             item.setdefault("confidence", 1.0)
-            item.setdefault("normalize_note", "MOCK 샘플")
+            item.setdefault("normalize_note", "MOCK 샘플 · Solar 주소화 시연")
             normalized.append(item)
         extracted: dict[str, Any] = {
             "risk_points": normalized,
@@ -356,6 +373,9 @@ def ingest_document(
             "already_geocoded": True,
             "extract_source": "mock-sample",
         }
+        stages.append(
+            _pipeline_stage("2_solar_address", "ok", f"MOCK Solar 주소화 · {len(normalized)}곳")
+        )
     else:
         normalized = solar_extract_map_points_from_text(
             markdown,
@@ -363,16 +383,36 @@ def ingest_document(
             region_hint=region_hint,
         )
         source = "document-parse+solar"
-        if not normalized:
+        if normalized:
+            stages.append(
+                _pipeline_stage(
+                    "2_solar_address",
+                    "ok",
+                    f"Solar 주소 변환 · {len(normalized)}곳",
+                )
+            )
+        else:
             normalized = risk_points_from_filename(filename)
             source = "filename" if normalized else "empty"
+            stages.append(
+                _pipeline_stage(
+                    "2_solar_address",
+                    "fallback" if normalized else "empty",
+                    "Solar 결과 없음 → 파일명 폴백" if normalized else "주소화할 지점 없음",
+                )
+            )
         extracted = {
             "risk_points": normalized,
             "mock": False,
             "already_geocoded": False,
             "extract_source": source,
         }
+    safe_print(
+        f"[문서] 2) Solar 주소화: {len(normalized)}곳 "
+        f"(source={extracted.get('extract_source')})"
+    )
 
+    # --- 3) 지오코딩 → DB 핀 ---
     db.init_db()
     created = 0
     created_points: list[dict[str, Any]] = []
@@ -438,10 +478,27 @@ def ingest_document(
                 pending["lng"] = lng
                 skipped_points.append(pending)
 
+    stages.append(
+        _pipeline_stage(
+            "3_map_pins",
+            "ok" if created else "empty",
+            f"지도 핀 {created}개 · 추정/보류 {len(skipped_points)}개",
+        )
+    )
+    stages.append(
+        _pipeline_stage(
+            "4_route_avoid",
+            "ready",
+            "「안전 경로 찾기」 시 사고다발·문서위험 우회 후보에 반영",
+        )
+    )
+    safe_print(f"[문서] 3) 핀: {created}개 (추정 {len(skipped_points)}) → 4) 경로 우회 대기")
+
     extracted = dict(extracted)
     extracted["risk_points"] = normalized
     extracted["created_points"] = created_points
     extracted["skipped_points"] = skipped_points
+    extracted["pipeline_stages"] = stages
 
     return {
         "document_name": filename,
@@ -450,6 +507,7 @@ def ingest_document(
         "risk_points_skipped": len(skipped_points),
         "used_mock": settings.upstage_mock,
         "parsed_preview": markdown[:500],
+        "pipeline_stages": stages,
     }
 
 
