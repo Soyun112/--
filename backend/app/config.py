@@ -190,11 +190,25 @@ class Settings:
     safety_facility_buffer_m: float = float(os.getenv("SAFETY_FACILITY_BUFFER_M", "40"))
     resample_interval_m: float = 20.0
 
-    # 문서 위험지점 근처면 경유지 우회 후보를 추가로 요청
-    doc_avoid_enabled: bool = _bool_env("DOC_AVOID_ENABLED", True)
-    doc_avoid_trigger_m: float = float(os.getenv("DOC_AVOID_TRIGGER_M", "90"))
-    doc_avoid_offset_m: float = float(os.getenv("DOC_AVOID_OFFSET_M", "140"))
-    doc_avoid_max_points: int = int(os.getenv("DOC_AVOID_MAX_POINTS", "2"))
+    # 사고다발·문서위험 근처면 Tmap 경유지 우회 후보 추가
+    avoid_detour_enabled: bool = _bool_env(
+        "AVOID_DETOUR_ENABLED",
+        _bool_env("DOC_AVOID_ENABLED", True),
+    )
+    avoid_detour_trigger_m: float = float(
+        os.getenv("AVOID_DETOUR_TRIGGER_M") or os.getenv("DOC_AVOID_TRIGGER_M", "90")
+    )
+    avoid_detour_offset_m: float = float(
+        os.getenv("AVOID_DETOUR_OFFSET_M") or os.getenv("DOC_AVOID_OFFSET_M", "140")
+    )
+    avoid_detour_max_points: int = int(
+        os.getenv("AVOID_DETOUR_MAX_POINTS") or os.getenv("DOC_AVOID_MAX_POINTS", "2")
+    )
+    # 레거시 별칭 (기존 코드/테스트 호환)
+    doc_avoid_enabled: bool = avoid_detour_enabled
+    doc_avoid_trigger_m: float = avoid_detour_trigger_m
+    doc_avoid_offset_m: float = avoid_detour_offset_m
+    doc_avoid_max_points: int = avoid_detour_max_points
 
 
 settings = Settings()

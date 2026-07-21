@@ -187,7 +187,8 @@ function buildSelectedRouteSafetyText(candidate, routeData) {
 }
 
 function routeDisplayName(routeId) {
-  if (routeId.includes("doc-avoid")) return "문서 위험 우회 경로";
+  if (routeId.includes("avoid-hotspot") || routeId.includes("hotspot-avoid")) return "사고다발 우회 경로";
+  if (routeId.includes("doc-avoid") || routeId.includes("avoid-doc")) return "문서 위험 우회 경로";
   if (routeId.includes("pedestrian-main") || routeId.includes("direct")) return "보행자 큰길 경로";
   if (routeId.includes("pedestrian-alt")) return "보행자 대안 경로";
   if (routeId.endsWith("-a") || routeId.includes("grid-a")) return "우회 경로 A";
@@ -198,7 +199,8 @@ function routeDisplayName(routeId) {
 function routeDisplaySortKey(routeId) {
   if (routeId.includes("pedestrian-main") || routeId.includes("direct")) return 0;
   if (routeId.includes("pedestrian-alt")) return 1;
-  if (routeId.includes("doc-avoid")) return 2;
+  if (routeId.includes("avoid-hotspot") || routeId.includes("hotspot-avoid")) return 2;
+  if (routeId.includes("doc-avoid") || routeId.includes("avoid-doc")) return 3;
   if (routeId.endsWith("-a") || routeId.includes("grid-a")) return 3;
   if (routeId.endsWith("-b") || routeId.includes("grid-b")) return 4;
   return 5;
