@@ -307,6 +307,20 @@ function landmarkPhrase(step) {
   return step && step.landmark ? `${step.landmark} 쪽으로` : "";
 }
 
+function tipForNavigationStep(step) {
+  if (!step) return "";
+  const keyword = navigationKeywordPlain(step);
+  if (keyword === "도착") return "";
+  const { steps: stepCount } = kidStepText(step.distance_m || 0);
+  return buildKidSafetyTip({
+    keyword,
+    landmarkLabel: step.landmark || "",
+    stepCount,
+    description: step.description || "",
+    turn_type: step.turn_type,
+  });
+}
+
 // API navigation_steps가 비어 있을 때(구버전 백엔드 등) 경로 좌표로 턴바이턴을 합성한다.
 const SYNTH_CHUNK_PATTERN = [58, 84, 43, 71, 96, 52];
 
@@ -698,7 +712,7 @@ function buildKidGuideSharePayload() {
         icon: isArrive ? "🎉" : icon,
         keyword: isArrive ? "도착! 잘했어요" : navigationKeywordPlain(step),
         friendly: isArrive || !stepText ? "" : `👣 ${stepText} 걸어가요`,
-        tip: isArrive ? "" : tipForKeyword(navigationKeywordPlain(step), false),
+        tip: isArrive ? "" : tipForNavigationStep(step),
         distance_m: isArrive ? 0 : step.distance_m || 0,
         landmark: isArrive || !landmark ? "" : `📍 ${landmark}`,
         is_arrive: isArrive,
@@ -815,10 +829,8 @@ function renderKidCard(direction = 0) {
   document.getElementById("kid-card").classList.toggle("arrived", isArrive);
   document.getElementById("kid-card-icon").textContent = isArrive ? "🎉" : icon;
   document.getElementById("kid-card-text").textContent = isArrive ? "도착! 잘했어요" : navigationKeywordPlain(step);
-  document.getElementById("kid-card-tip").textContent = isArrive
-    ? ""
-    : tipForKeyword(navigationKeywordPlain(step), false);
   document.getElementById("kid-card-friendly").textContent = isArrive || !stepText ? "" : `👣 ${stepText} 걸어가요`;
+  document.getElementById("kid-card-tip").textContent = isArrive ? "" : tipForNavigationStep(step);
   document.getElementById("kid-card-distance").textContent = !isArrive && step.distance_m > 0 ? `${Math.round(step.distance_m)}m` : "";
   document.getElementById("kid-card-landmark").textContent = isArrive || !landmark ? "" : `📍 ${landmark}`;
   document.getElementById("kid-card-prev").disabled = index === 0;

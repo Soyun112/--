@@ -67,9 +67,8 @@ function renderCard(direction = 0) {
   card.classList.toggle("arrived", isArrive);
   document.getElementById("kid-guide-icon").textContent = step.icon || (isArrive ? "🎉" : "↑");
   document.getElementById("kid-guide-text").textContent = step.keyword || "";
-  document.getElementById("kid-guide-tip").textContent =
-    step.tip || tipForKeyword(step.keyword, isArrive);
   document.getElementById("kid-guide-friendly").textContent = step.friendly || "";
+  document.getElementById("kid-guide-tip").textContent = step.tip || tipForShareStep(step);
   document.getElementById("kid-guide-landmark").textContent = step.landmark || "";
 
   const nextBtn = document.getElementById("kid-guide-next-btn");
