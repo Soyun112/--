@@ -1862,10 +1862,17 @@ async function uploadSafetyDocument(file) {
     renderDocReviewPanel(skippedList);
 
     if (created <= 0) {
-      setDocUploadStatus(
-        `「${data?.document_name || file.name}」에서 위치를 읽었지만 바로 찍지 못했어요. 아래 목록에서 검색어를 확인하고 지도에 올려 주세요.${mockNote}`,
-        skipped > 0 ? "" : "error"
-      );
+      if (skippedList.length > 0) {
+        setDocUploadStatus(
+          `「${data?.document_name || file.name}」에서 위치를 읽었지만 바로 찍지 못했어요. 아래 목록에서 검색어를 확인하고 지도에 올려 주세요.${mockNote}`,
+          ""
+        );
+      } else {
+        setDocUploadStatus(
+          `「${data?.document_name || file.name}」에서 찍을 위험 지점을 찾지 못했어요. 도로명·주소가 보이는 문서인지 확인해 주세요.${mockNote}`,
+          "error"
+        );
+      }
       await refreshPublicDataAndMap({ focusDocRisk: true });
       return;
     }

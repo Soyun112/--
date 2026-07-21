@@ -186,6 +186,169 @@ def extract_risk_points(file_bytes: bytes, filename: str) -> dict[str, Any]:
     return {"risk_points": parsed.get("risk_points", []), "mock": False, "already_geocoded": False}
 
 
+def risk_points_from_filename(filename: str) -> list[dict[str, Any]]:
+    """위치도·공사 안내처럼 IE가 비어도 파일명에서 도로명·번지를 건진다."""
+    from pathlib import Path
+
+    stem = Path(filename or "").stem
+    if not stem:
+        return []
+
+    # 괄호 안(예: 선릉로 305 외 3개소)을 우선 검색 — '도로정비'의 '도로' 오탐 방지
+    paren = re.search(r"\(([^)]+)\)", stem)
+    search_blobs = []
+    if paren:
+        search_blobs.append(paren.group(1))
+    search_blobs.append(stem)
+
+    points: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    false_positives = {"도로", "길", "대로", "위치도", "공사"}
+
+    for blob in search_blobs:
+        for match in re.finditer(r"([가-힣A-Za-z0-9]+(?:로|길|대로))\s*(\d+)?", blob):
+            road = match.group(1)
+            num = match.group(2)
+            if road in false_positives:
+                continue
+            loc = f"{road} {num}".strip() if num else road
+            if loc in seen:
+                continue
+            # 번지 없는 짧은 도로명만 있고 괄호 안 매칭이 있으면 건너뜀
+            if not num and paren and blob == stem:
+                continue
+            seen.add(loc)
+            points.append(
+                {
+                    "location_text": loc,
+                    "risk_type": "공사/정비 구간",
+                    "is_risk": True,
+                    "snippet": f"파일명에서 위치를 읽음: {stem}",
+                    "recommendation": "통행 시 주의",
+                }
+            )
+        if points:
+            break
+
+    extra = re.search(r"외\s*(\d+)\s*개소", stem)
+    if extra and points:
+        try:
+            n_extra = min(int(extra.group(1)), 3)
+        except ValueError:
+            n_extra = 0
+        base = points[0]["location_text"]
+        for i in range(1, n_extra + 1):
+            loc = f"{base} 인근 {i}"
+            if loc in seen:
+                continue
+            seen.add(loc)
+            points.append(
+                {
+                    "location_text": loc,
+                    "risk_type": "공사/정비 구간(인근)",
+                    "is_risk": True,
+                    "snippet": f"파일명 '외 {n_extra}개소' 표시에 따른 추정 지점",
+                    "recommendation": "통행 시 주의",
+                }
+            )
+
+    if not points and any(k in stem for k in ("공사", "위치도", "정비", "통학", "안전")):
+        points.append(
+            {
+                "location_text": paren.group(1).strip() if paren else stem,
+                "risk_type": "문서 위험/공사 구간",
+                "is_risk": True,
+                "snippet": f"파일명 전체를 위치 단서로 사용: {stem}",
+                "recommendation": "검색어를 다듬어 주세요",
+            }
+        )
+    return points
+
+
+def extract_risk_points_from_markdown(markdown: str, filename: str) -> list[dict[str, Any]]:
+    """Document Parse 텍스트에서 Solar로 위험 지점을 다시 뽑는다."""
+    text = (markdown or "").strip()
+    if not text or settings.upstage_mock or not settings.upstage_api_key:
+        return []
+
+    system = (
+        "당신은 한국 도로·통학로 안전/공사 문서에서 지도에 찍을 위치 목록을 뽑습니다. "
+        "도로명·번지·학교·교차로·건물명이 있으면 location_text에 넣으세요. "
+        "없으면 빈 배열을 반환하세요. JSON만 출력하세요."
+    )
+    user = (
+        f"문서명: {filename}\n"
+        "출력: "
+        '{"risk_points":[{"location_text":"...","risk_type":"...","is_risk":true,'
+        '"snippet":"...","recommendation":"..."}]}\n\n'
+        f"본문(일부):\n{text[:3500]}"
+    )
+    try:
+        resp = requests.post(
+            CHAT_COMPLETIONS_URL,
+            headers={"Authorization": f"Bearer {settings.upstage_api_key}", "Content-Type": "application/json"},
+            json={
+                "model": "solar-pro",
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "temperature": 0.1,
+                "max_tokens": 1200,
+            },
+            timeout=45,
+        )
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"]
+        parsed = _extract_json_object(content) or {}
+        items = parsed.get("risk_points") if isinstance(parsed.get("risk_points"), list) else []
+        out: list[dict[str, Any]] = []
+        for raw in items:
+            if not isinstance(raw, dict):
+                continue
+            loc = str(raw.get("location_text") or "").strip()
+            if not loc:
+                continue
+            out.append(
+                {
+                    "location_text": loc,
+                    "risk_type": str(raw.get("risk_type") or "문서 위험지점"),
+                    "is_risk": bool(raw.get("is_risk", True)),
+                    "snippet": str(raw.get("snippet") or "")[:300],
+                    "recommendation": str(raw.get("recommendation") or ""),
+                }
+            )
+        return out
+    except Exception:
+        return []
+
+
+def ensure_risk_points(
+    extracted: dict[str, Any],
+    *,
+    parsed_markdown: str,
+    filename: str,
+) -> dict[str, Any]:
+    """IE 결과가 비면 Parse→Solar, 그래도 없으면 파일명에서 위치를 채운다."""
+    result = dict(extracted)
+    points = list(result.get("risk_points") or [])
+    source = "information-extract"
+
+    if not points:
+        points = extract_risk_points_from_markdown(parsed_markdown, filename)
+        if points:
+            source = "document-parse+solar"
+
+    if not points:
+        points = risk_points_from_filename(filename)
+        if points:
+            source = "filename"
+
+    result["risk_points"] = points
+    result["extract_source"] = source
+    return result
+
+
 _MANUAL_GEOCODE_FALLBACK = {
     "OO초등학교 서측 골목 교차로": (37.502, 127.0399),
     "OO초등학교 동측 통학로": (37.5012, 127.0410),
@@ -344,6 +507,11 @@ def ingest_document(
 ) -> dict[str, Any]:
     parsed = parse_document(file_bytes, filename)
     extracted = extract_risk_points(file_bytes, filename)
+    extracted = ensure_risk_points(
+        extracted,
+        parsed_markdown=parsed.get("markdown", "") or "",
+        filename=filename,
+    )
     normalized = normalize_locations_with_solar(
         extracted.get("risk_points") or [],
         document_name=filename,
