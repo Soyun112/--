@@ -28,9 +28,8 @@ DOCUMENT_DIGITIZATION_URL = "https://api.upstage.ai/v1/document-digitization"
 INFORMATION_EXTRACTION_URL = "https://api.upstage.ai/v1/information-extraction"
 CHAT_COMPLETIONS_URL = "https://api.upstage.ai/v1/chat/completions"
 
-# 이 값 미만이면 지도에 자동 표시하지 않고 skipped 로 남긴다.
-MIN_GEOCODE_CONFIDENCE = 0.45
-# 이 값 미만으로 자동 표시된 지점은 "추정" 마커로 표시한다.
+# 확신도는 자동 표시를 막지 않는다(MVP: 결과가 보여야 함).
+# 이 값 미만으로 찍힌 지점만 "추정" 마커로 표시하고, 지오코딩 실패분만 확인 UI로 보낸다.
 ESTIMATED_CONFIDENCE_THRESHOLD = 0.85
 
 
@@ -204,7 +203,8 @@ def normalize_locations_with_solar(
     for rp in risk_points:
         item = dict(rp)
         item["geocode_query"] = (rp.get("location_text") or "").strip()
-        item["confidence"] = 0.4
+        # 원문 그대로 쓸 때도 지오코딩은 시도한다(이전 0.4는 자동표시 임계값에 걸려 전부 보류됨).
+        item["confidence"] = 0.55
         item["normalize_note"] = "원문 위치 표현을 그대로 사용"
         fallback.append(item)
 
@@ -275,9 +275,9 @@ def normalize_locations_with_solar(
             raw = by_index.get(idx, {})
             query = str(raw.get("geocode_query") or rp.get("location_text") or "").strip()
             try:
-                conf = float(raw.get("confidence", 0.4))
+                conf = float(raw.get("confidence", 0.55))
             except (TypeError, ValueError):
-                conf = 0.4
+                conf = 0.55
             conf = max(0.0, min(1.0, conf))
             item["geocode_query"] = query
             item["confidence"] = conf
@@ -319,29 +319,30 @@ def ingest_document(
                 lat, lng = rp["lat"], rp["lng"]
                 confidence = max(confidence, 0.9)
             else:
-                if confidence < MIN_GEOCODE_CONFIDENCE:
+                if not geocode_query and not location_text:
                     skipped_points.append(
                         _pending_point_payload(
                             rp,
                             filename=filename,
-                            reason="위치 확신이 낮아 자동 표시하지 않음",
+                            reason="위치 문구가 비어 있음",
                         )
                     )
                     continue
 
-                geocoded = geocode_location_text(geocode_query)
-                if geocoded is None and geocode_query != location_text:
+                geocoded = geocode_location_text(geocode_query) if geocode_query else None
+                if geocoded is None and location_text and location_text != geocode_query:
                     geocoded = geocode_location_text(location_text)
                 if geocoded is None:
                     skipped_points.append(
                         _pending_point_payload(
                             rp,
                             filename=filename,
-                            reason="지오코딩 실패(검색 결과 없음)",
+                            reason="지오코딩 실패(검색 결과 없음) — 검색어를 고쳐 다시 올려 주세요",
                         )
                     )
                     continue
                 lat, lng = geocoded
+                # 확신도가 낮아도 지도에는 올린다(추정 마커).
 
             is_estimated = confidence < ESTIMATED_CONFIDENCE_THRESHOLD
             db.insert_doc_risk_point(
