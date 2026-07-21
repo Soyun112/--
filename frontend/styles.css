@@ -613,19 +613,19 @@ body.theme-dark #tmap { filter: brightness(0.78) contrast(0.92) saturate(0.85); 
 .kid-progress-stamps {
   display: flex;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  margin: 2px 0 4px;
+  margin: 0 0 2px;
 }
 
 .kid-progress-stamp {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  min-width: 58px;
-  padding: 8px 6px 6px;
-  border-radius: 14px;
+  gap: 1px;
+  min-width: 48px;
+  padding: 6px 4px 4px;
+  border-radius: 12px;
   border: 2px dashed #c5d0db;
   background: #f3f6f9;
   opacity: 0.45;
@@ -633,9 +633,9 @@ body.theme-dark #tmap { filter: brightness(0.78) contrast(0.92) saturate(0.85); 
   transition: transform 0.25s ease, opacity 0.25s ease, filter 0.25s ease, border-color 0.25s ease, background 0.25s ease;
 }
 
-.kid-progress-stamp-emoji { font-size: 22px; line-height: 1; }
+.kid-progress-stamp-emoji { font-size: 18px; line-height: 1; }
 .kid-progress-stamp-label {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
   color: #5a6b7a;
 }
@@ -724,7 +724,29 @@ body.theme-dark #tmap { filter: brightness(0.78) contrast(0.92) saturate(0.85); 
   letter-spacing: -0.5px;
 }
 
-/* 걸음 수 = 미터 개념 대체 히어로. 가장 눈에 띄게 강조한다. */
+/* 걸음 또는 안전 tip — 둘 중 하나만 */
+.kid-card-support {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.35;
+  max-width: 100%;
+  text-align: center;
+  padding: 10px 16px;
+  border-radius: 16px;
+}
+.kid-card-support:empty { display: none; }
+.kid-card-support.is-steps {
+  color: #b8611a;
+  background: linear-gradient(180deg, #fff6e2, #ffe9c2);
+  border: 3px solid #ffcf88;
+}
+.kid-card-support.is-tip {
+  font-size: 17px;
+  color: #1c5f8a;
+  background: #e7f5ff;
+  border: 2px solid #9fd0f0;
+}
+
 .kid-card-friendly {
   font-size: 24px;
   font-weight: 900;
@@ -737,33 +759,28 @@ body.theme-dark #tmap { filter: brightness(0.78) contrast(0.92) saturate(0.85); 
 }
 .kid-card-friendly:empty { display: none; }
 
-.kid-card-distance {
-  font-size: 22px;
-  font-weight: 800;
-  color: var(--accent-green);
-}
-.kid-card-distance:empty { display: none; }
+.kid-card-distance { display: none; }
 
 .kid-card-landmark {
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 700;
   color: #c2557e;
   background: #fdeaf1;
   border-radius: 999px;
-  padding: 6px 16px;
+  padding: 5px 12px;
 }
 .kid-card-landmark:empty { display: none; }
 
 .kid-card-nav {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  margin-top: 14px;
+  margin-top: 10px;
+  align-items: stretch;
 }
 
 .kid-card-nav-btn {
-  flex: 1;
-  padding: 18px 10px;
+  padding: 16px 10px;
   font-size: 19px;
   font-weight: 900;
   border-radius: 20px;
@@ -773,18 +790,30 @@ body.theme-dark #tmap { filter: brightness(0.78) contrast(0.92) saturate(0.85); 
   cursor: pointer;
   transition: transform 0.12s ease, background 0.15s ease;
 }
+.kid-card-nav-btn.ghost {
+  flex: 0 0 56px;
+  font-size: 22px;
+  padding: 16px 0;
+  color: #5a6b7a;
+  background: #f3f6f9;
+}
+.kid-card-nav-btn.primary {
+  flex: 1;
+  background: var(--primary);
+  border-color: var(--primary);
+  color: white;
+}
 .kid-card-nav-btn:hover:not(:disabled) { transform: translateY(-2px); }
 .kid-card-nav-btn:active:not(:disabled) { transform: translateY(1px) scale(0.98); }
 .kid-card-nav-btn:disabled { opacity: 0.35; cursor: default; }
-.kid-card-nav-btn.primary { background: var(--primary); border-color: var(--primary); color: white; }
 .kid-card-nav-btn.primary:hover:not(:disabled) { background: var(--primary-dark); }
 
 .kid-card-close {
-  margin-top: 8px;
-  padding: 10px 18px;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--muted);
+  margin-top: 6px;
+  padding: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #8a97a5;
   background: none;
   border: none;
   text-decoration: underline;
@@ -799,6 +828,7 @@ body.theme-dark #tmap { filter: brightness(0.78) contrast(0.92) saturate(0.85); 
   width: 100%;
   margin-top: 8px;
 }
+.kid-card-share-row[hidden] { display: none !important; }
 
 .kid-card-share-btn {
   flex: 1 1 140px;
@@ -941,6 +971,8 @@ body.theme-dark .kid-card { background: #18212b; box-shadow: 0 20px 50px rgba(0,
 body.theme-dark .kid-card-overlay { background: linear-gradient(160deg, #2a2410, #2a1620 45%, #10222c); }
 body.theme-dark .kid-card-progress { background: #263b50; color: #9bc9fb; }
 body.theme-dark .kid-card-friendly { color: #ffd79a; background: linear-gradient(180deg, #3a2a12, #2f2110); border-color: #6b4a1c; box-shadow: 0 6px 0 rgba(107, 74, 28, 0.4); }
+body.theme-dark .kid-card-support.is-steps { color: #ffd79a; background: linear-gradient(180deg, #3a2a12, #2f2110); border-color: #6b4a1c; }
+body.theme-dark .kid-card-support.is-tip,
 body.theme-dark .kid-card-tip { color: #9fd6ff; background: #1a3044; border-color: #3a5f7a; }
 body.theme-dark .kid-progress-stamp { background: #243040; border-color: #3a4a5a; }
 body.theme-dark .kid-progress-stamp.unlocked { background: #3a3018; border-color: #f0b429; }
@@ -954,6 +986,8 @@ body.theme-dark .kid-card.arrived { background: linear-gradient(160deg, #3a3010,
   .kid-card-icon { font-size: 82px; width: 132px; height: 132px; }
   .kid-card-text { font-size: 28px; }
   .kid-card-friendly { font-size: 20px; }
+  .kid-card-support { font-size: 17px; }
+  .kid-card-support.is-tip { font-size: 15px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
