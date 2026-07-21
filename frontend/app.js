@@ -698,6 +698,7 @@ function buildKidGuideSharePayload() {
         icon: isArrive ? "🎉" : icon,
         keyword: isArrive ? "도착! 잘했어요" : navigationKeywordPlain(step),
         friendly: isArrive || !stepText ? "" : `👣 ${stepText} 걸어가요`,
+        tip: isArrive ? "" : tipForKeyword(navigationKeywordPlain(step), false),
         distance_m: isArrive ? 0 : step.distance_m || 0,
         landmark: isArrive || !landmark ? "" : `📍 ${landmark}`,
         is_arrive: isArrive,
@@ -814,6 +815,9 @@ function renderKidCard(direction = 0) {
   document.getElementById("kid-card").classList.toggle("arrived", isArrive);
   document.getElementById("kid-card-icon").textContent = isArrive ? "🎉" : icon;
   document.getElementById("kid-card-text").textContent = isArrive ? "도착! 잘했어요" : navigationKeywordPlain(step);
+  document.getElementById("kid-card-tip").textContent = isArrive
+    ? ""
+    : tipForKeyword(navigationKeywordPlain(step), false);
   document.getElementById("kid-card-friendly").textContent = isArrive || !stepText ? "" : `👣 ${stepText} 걸어가요`;
   document.getElementById("kid-card-distance").textContent = !isArrive && step.distance_m > 0 ? `${Math.round(step.distance_m)}m` : "";
   document.getElementById("kid-card-landmark").textContent = isArrive || !landmark ? "" : `📍 ${landmark}`;

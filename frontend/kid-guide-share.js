@@ -7,6 +7,7 @@ function ultraCompactPayload(payload) {
       step.friendly || "",
       step.landmark || "",
       step.is_arrive ? 1 : 0,
+      step.tip || "",
     ]),
   };
 }
@@ -17,19 +18,28 @@ function expandKidGuidePayload(data) {
   if (!Array.isArray(data.s) || !data.s.length) return null;
   return normalizeSteps({
     title: data.t || "오늘의 안전 길",
-    steps: data.s.map(([keyword, friendly, landmark, is_arrive]) => ({
-      keyword,
-      friendly,
-      landmark,
-      is_arrive: !!is_arrive,
-      icon: iconForKeyword(keyword, !!is_arrive),
-    })),
+    steps: data.s.map((row) => {
+      const keyword = row[0] || "";
+      const friendly = row[1] || "";
+      const landmark = row[2] || "";
+      const isArrive = !!row[3];
+      const tip = row[4] || tipForKeyword(keyword, isArrive);
+      return {
+        keyword,
+        friendly,
+        landmark,
+        is_arrive: isArrive,
+        tip,
+        icon: iconForKeyword(keyword, isArrive),
+      };
+    }),
   });
 }
 
 function normalizeSteps(data) {
   const steps = (data.steps || []).map((step) => ({
     ...step,
+    tip: step.tip || tipForKeyword(step.keyword, step.is_arrive),
     icon: step.icon || iconForKeyword(step.keyword, step.is_arrive),
   }));
   return { ...data, steps };
@@ -42,6 +52,20 @@ function iconForKeyword(keyword, isArrive) {
   if (k.includes("오른쪽")) return "↱";
   if (k.includes("횡단") || k.includes("육교")) return "🚸";
   return "↑";
+}
+
+function tipForKeyword(keyword, isArrive) {
+  if (isArrive) return "";
+  const k = keyword || "";
+  if (k.includes("도착")) return "";
+  if (k.includes("왼쪽") || k.includes("오른쪽")) {
+    return "모퉁이에선 천천히, 나오는 차 조심해요";
+  }
+  if (k.includes("횡단") || k.includes("육교")) {
+    return "초록불일 때만 건너요, 좌우를 꼭 살펴요";
+  }
+  if (k.includes("직진")) return "보도 안쪽으로 천천히 걸어요";
+  return "";
 }
 
 function encodeKidGuidePayload(payload) {

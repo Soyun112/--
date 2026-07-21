@@ -178,6 +178,21 @@ html.has-preload .kid-guide-loading {
   color: #a75a12;
 }
 
+.kid-guide-tip {
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: #e8f4ff;
+  border: 2px solid #b8d9f5;
+  font-size: clamp(15px, 4.5vw, 17px);
+  font-weight: 700;
+  color: #1f5a9c;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.kid-guide-tip:empty { display: none; }
+
 .kid-guide-friendly {
   margin: 0;
   padding: 14px 20px;
