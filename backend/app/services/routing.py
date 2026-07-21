@@ -18,7 +18,7 @@ from ..config import settings
 from .tmap_geo import match_coords_to_roads
 from .tmap_quota import cached_api_call, make_key
 from ..console_safe import console_safe as _console_safe, safe_print
-from .geo import haversine_m, min_distance_to_route, route_length_m
+from .geo import haversine_m, min_distance_to_route, nearest_route_index, offset_point, route_length_m, resample_route
 from .landmarks import landmark_for
 
 TMAP_PEDESTRIAN_URL = "https://apis.openapi.sk.com/tmap/routes/pedestrian"
@@ -983,6 +983,114 @@ def _deduplicate_candidates(candidates: List[RouteCandidateRaw]) -> List[RouteCa
     return unique
 
 
+def _detour_via_for_risk(
+    route_coords: List[Tuple[float, float]],
+    risk: Tuple[float, float],
+    *,
+    side: float,
+    offset_m: float,
+) -> Tuple[float, float] | None:
+    """경로상 위험지점 근처에서 수직 방향으로 벗어난 경유 좌표를 만든다."""
+    if len(route_coords) < 2:
+        return None
+    idx = nearest_route_index(route_coords, risk)
+    # 진행 방향 방위
+    if idx <= 0:
+        a, b = route_coords[0], route_coords[1]
+    elif idx >= len(route_coords) - 1:
+        a, b = route_coords[-2], route_coords[-1]
+    else:
+        a, b = route_coords[idx - 1], route_coords[idx + 1]
+    heading = _bearing(a, b)
+    # 위험점에서 수직으로 오프셋 (좌/우)
+    via = offset_point(risk[0], risk[1], (heading + 90.0 * side) % 360.0, offset_m)
+    # 출발/도착과 너무 가까우면 무의미
+    if haversine_m(np.array([via[0]]), np.array([via[1]]), np.array([route_coords[0][0]]), np.array([route_coords[0][1]]))[0] < 40:
+        return None
+    if haversine_m(np.array([via[0]]), np.array([via[1]]), np.array([route_coords[-1][0]]), np.array([route_coords[-1][1]]))[0] < 40:
+        return None
+    return via
+
+
+def _append_document_risk_detours(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+    candidates: List[RouteCandidateRaw],
+    *,
+    search_option: str,
+) -> List[RouteCandidateRaw]:
+    """기본 경로가 문서 위험지점 근처를 지나면 Tmap 경유지 우회 후보를 추가한다."""
+    if not settings.doc_avoid_enabled or not candidates:
+        return candidates
+
+    from . import public_data
+
+    risks = [
+        d
+        for d in public_data.get_doc_risk_points()
+        if bool(d.get("is_risk")) and d.get("lat") is not None and d.get("lng") is not None
+    ]
+    if not risks:
+        return candidates
+
+    base = candidates[0]
+    resampled = resample_route(base.coordinates, interval_m=settings.resample_interval_m)
+    trigger = settings.doc_avoid_trigger_m
+    near: list[tuple[float, dict]] = []
+    for d in risks:
+        dist = min_distance_to_route(resampled, (float(d["lat"]), float(d["lng"])))
+        if dist <= trigger:
+            near.append((dist, d))
+    near.sort(key=lambda x: x[0])
+    if not near:
+        print("[경로] 문서 위험지점이 기본 경로 근처에 없어 우회 후보를 만들지 않음")
+        return candidates
+
+    print(f"[경로] 문서 위험지점 {len(near)}곳이 기본 경로 {trigger:.0f}m 이내 → 우회 후보 요청")
+    out = list(candidates)
+    max_pts = max(1, settings.doc_avoid_max_points)
+    for i, (dist0, d) in enumerate(near[:max_pts]):
+        risk_pt = (float(d["lat"]), float(d["lng"]))
+        placed = False
+        for side in (1.0, -1.0):
+            via = _detour_via_for_risk(
+                base.coordinates,
+                risk_pt,
+                side=side,
+                offset_m=settings.doc_avoid_offset_m,
+            )
+            if via is None:
+                continue
+            detour = _call_tmap(
+                origin,
+                destination,
+                pass_point=via,
+                search_option=search_option,
+                route_suffix=f"doc-avoid-{i + 1}",
+            )
+            if not detour:
+                continue
+            new_dist = min_distance_to_route(detour.coordinates, risk_pt)
+            if new_dist <= max(settings.buffer_radius_m, dist0):
+                print(
+                    f"[경로] 우회 후보 기각: 위험지점까지 {new_dist:.0f}m "
+                    f"(기존 {dist0:.0f}m) · {d.get('risk_type') or d.get('snippet') or ''}"
+                )
+                continue
+            risk_label = (d.get("risk_type") or "문서 위험구간").strip()
+            detour.label = f"문서 위험 우회 · {risk_label}"
+            out.append(detour)
+            print(
+                f"[경로] 우회 후보 추가: {detour.id} "
+                f"(위험까지 {dist0:.0f}m → {new_dist:.0f}m, via={via[0]:.5f},{via[1]:.5f})"
+            )
+            placed = True
+            break
+        if not placed:
+            print(f"[경로] 우회 후보 생성 실패: {d.get('source_doc')} / {d.get('risk_type')}")
+    return out
+
+
 def get_route_candidates(
     origin: Tuple[float, float],
     destination: Tuple[float, float],
@@ -1001,7 +1109,7 @@ def get_route_candidates(
 
     candidates: List[RouteCandidateRaw] = []
 
-    # Tmap 보행자 API만 사용: 대로 우선(4) + 최단 보행(10). 임의 경유지 우회는 제거.
+    # Tmap 보행자: 대로 우선(기본) + 선택적 alt + 문서 위험지점 우회 후보
     primary_option = settings.tmap_pedestrian_search_option
     direct = _call_tmap(
         origin,
@@ -1023,9 +1131,15 @@ def get_route_candidates(
         if alt:
             candidates.append(alt)
 
+    candidates = _append_document_risk_detours(
+        origin,
+        destination,
+        candidates,
+        search_option=primary_option,
+    )
+
     if not candidates:
         print("[경로] Tmap 보행자 API 전부 실패 - MOCK 폴백 없이 빈 결과 반환")
         return []
-    alt_label = "alt 포함" if settings.tmap_pedestrian_alt_enabled else "alt 생략"
-    print(f"[경로] === Tmap 보행자 API 성공: 후보 {len(candidates)}개 ({alt_label}) ===")
+    print(f"[경로] === Tmap 보행자 API 성공: 후보 {len(candidates)}개 ===")
     return _finalize_candidates(_deduplicate_candidates(candidates))

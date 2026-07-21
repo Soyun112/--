@@ -82,3 +82,37 @@ def min_distance_to_route(route_points: Sequence[Tuple[float, float]], point: Tu
     dlat, dlng = point
     dists = haversine_m(route_lat, route_lng, np.full_like(route_lat, dlat), np.full_like(route_lng, dlng))
     return float(np.min(dists))
+
+
+def nearest_route_index(route_points: Sequence[Tuple[float, float]], point: Tuple[float, float]) -> int:
+    if not route_points:
+        return 0
+    route_lat = np.array([p[0] for p in route_points])
+    route_lng = np.array([p[1] for p in route_points])
+    dlat, dlng = point
+    dists = haversine_m(route_lat, route_lng, np.full_like(route_lat, dlat), np.full_like(route_lng, dlng))
+    return int(np.argmin(dists))
+
+
+def bearing_deg(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """두 점 사이 초기 방위각(도, 0=북)."""
+    phi1, phi2 = np.radians(lat1), np.radians(lat2)
+    dlon = np.radians(lng2 - lng1)
+    x = np.sin(dlon) * np.cos(phi2)
+    y = np.cos(phi1) * np.sin(phi2) - np.sin(phi1) * np.cos(phi2) * np.cos(dlon)
+    return float((np.degrees(np.arctan2(x, y)) + 360.0) % 360.0)
+
+
+def offset_point(lat: float, lng: float, bearing: float, distance_m: float) -> Tuple[float, float]:
+    """(lat,lng)에서 bearing 방향으로 distance_m 이동한 좌표."""
+    r = EARTH_RADIUS_M
+    br = np.radians(bearing)
+    lat1 = np.radians(lat)
+    lng1 = np.radians(lng)
+    ang = distance_m / r
+    lat2 = np.arcsin(np.sin(lat1) * np.cos(ang) + np.cos(lat1) * np.sin(ang) * np.cos(br))
+    lng2 = lng1 + np.arctan2(
+        np.sin(br) * np.sin(ang) * np.cos(lat1),
+        np.cos(ang) - np.sin(lat1) * np.sin(lat2),
+    )
+    return float(np.degrees(lat2)), float((np.degrees(lng2) + 540.0) % 360.0 - 180.0)

@@ -177,7 +177,7 @@ class Settings:
         "speed_camera": 6.0,
         "accident_hotspot": 22.0,
         "crime_risk": 12.0,
-        "doc_risk": 15.0,
+        "doc_risk": 28.0,
         # 안심귀갓길 CSV 시설물 (CCTV·보안등 가점 크게)
         "safety_facility_cctv": 22.0,
         "safety_facility_streetlight": 14.0,
@@ -189,6 +189,12 @@ class Settings:
     # 안심귀갓길 시설물 매칭 반경 (30~50m 권장, 기본 40m)
     safety_facility_buffer_m: float = float(os.getenv("SAFETY_FACILITY_BUFFER_M", "40"))
     resample_interval_m: float = 20.0
+
+    # 문서 위험지점 근처면 경유지 우회 후보를 추가로 요청
+    doc_avoid_enabled: bool = _bool_env("DOC_AVOID_ENABLED", True)
+    doc_avoid_trigger_m: float = float(os.getenv("DOC_AVOID_TRIGGER_M", "90"))
+    doc_avoid_offset_m: float = float(os.getenv("DOC_AVOID_OFFSET_M", "140"))
+    doc_avoid_max_points: int = int(os.getenv("DOC_AVOID_MAX_POINTS", "2"))
 
 
 settings = Settings()
