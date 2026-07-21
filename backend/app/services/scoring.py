@@ -191,6 +191,24 @@ def _normalize(values: List[float]) -> List[float]:
     return [(v - lo) / (hi - lo) for v in values]
 
 
+def _finalize_display_scores(raw_scores: List[float]) -> List[float]:
+    """원시 가감점 합을 화면용 0~100으로 변환하되, 전부 100으로 붙지 않게 한다.
+
+    - 후보 간 차이가 있으면: 상대 순위를 40~96 구간에 펼침
+    - 차이가 거의 없으면: 원시값 기준으로 중간 대역(약 55~88)에 두어 만점 포화를 피함
+    """
+    if not raw_scores:
+        return []
+    lo, hi = min(raw_scores), max(raw_scores)
+    # 원시 점수 차이가 작으면(가중치 노이즈 수준) 만점 경쟁으로 펼치지 않음
+    if hi - lo < 2.5:
+        return [round(float(np.clip(52.0 + (r - 50.0) * 0.4, 48.0, 88.0)), 1) for r in raw_scores]
+    spread = [
+        round(float(np.clip(42.0 + 54.0 * (r - lo) / (hi - lo), 40.0, 96.0)), 1) for r in raw_scores
+    ]
+    return spread
+
+
 def score_candidates(raw_candidates: List[RouteCandidateRaw], is_night: bool | None = None) -> List[ScoredRoute]:
     if is_night is None:
         is_night = is_nighttime()
@@ -213,6 +231,7 @@ def score_candidates(raw_candidates: List[RouteCandidateRaw], is_night: bool | N
     sf_bell_norm = _normalize([s.features.safety_bell_count for s in scored])
     sf_112_norm = _normalize([s.features.emergency112_count for s in scored])
 
+    raw_scores: List[float] = []
     for i, s in enumerate(scored):
         score = 50.0
         score += w["cctv_density"] * cctv_norm[i]
@@ -228,7 +247,11 @@ def score_candidates(raw_candidates: List[RouteCandidateRaw], is_night: bool | N
         score += w["safety_facility_streetlight"] * sf_light_norm[i]
         score += w["safety_bell"] * sf_bell_norm[i]
         score += w["emergency112"] * sf_112_norm[i]
-        s.safety_score = round(float(np.clip(score, 0, 100)), 1)
+        raw_scores.append(score)
+
+    display_scores = _finalize_display_scores(raw_scores)
+    for s, display in zip(scored, display_scores):
+        s.safety_score = display
 
     # 동점이면 큰길(대로·로) 구간이 더 긴 경로를 우선하고, 다시 동점이면 짧은 길을 고른다.
     best_idx = (
@@ -250,11 +273,11 @@ def score_candidates(raw_candidates: List[RouteCandidateRaw], is_night: bool | N
     buf = settings.safety_facility_buffer_m
     mode_tag = "밤" if is_night else "낮"
     safe_print(f"\n=== {period} ({mode_tag}) - 안심귀갓길 시설물 기반 안전점수 (경로 주변 {buf:.0f}m) ===")
-    for s in scored:
+    for s, raw in zip(scored, raw_scores):
         f = s.features
         tag = "★추천" if s.is_recommended else "  "
         safe_print(
-            f"{tag} [{s.raw.id}] 안전점수 {s.safety_score}점 | "
+            f"{tag} [{s.raw.id}] 안전점수 {s.safety_score}점 (원시 {raw:.1f}) | "
             f"CCTV {f.safety_facility_cctv_count} · 보안등 {f.safety_facility_streetlight_count} · "
             f"안심벨 {f.safety_bell_count} · 112 {f.emergency112_count} | "
             f"거리 {f.distance_km:.2f}km"

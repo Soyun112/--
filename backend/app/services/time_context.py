@@ -93,35 +93,39 @@ def scoring_context_label(is_night: bool) -> str:
 
 
 def apply_time_weights(base_weights: dict[str, float], is_night: bool) -> dict[str, float]:
-    """낮/밤에 따라 가중치 배율 적용."""
+    """낮/밤에 따라 가중치 배율 적용.
+
+    배수를 과도하게 키우면 상대 정규화 점수가 쉽게 100에 붙어
+    후보 간 차이가 사라지므로, 방향성만 유지하고 배율은 완만하게 둔다.
+    """
     w = dict(base_weights)
     if is_night:
-        # 밤: 보안등·CCTV·안심벨·112 가점 크게
+        # 밤: 보안등·CCTV·안심벨·112 가점 강화 (기존 2.0배는 천장 포화 유발)
         multipliers = {
-            "safety_facility_cctv": 2.0,
-            "safety_facility_streetlight": 2.0,
-            "safety_bell": 1.6,
-            "emergency112": 1.4,
-            "streetlight_density": 1.5,
-            "cctv_density": 1.3,
-            "guardian_house": 1.2,
-            "crime_risk": 1.3,
-            "accident_hotspot": 0.75,
-            "speed_camera": 0.85,
-            "doc_risk": 0.9,
+            "safety_facility_cctv": 1.35,
+            "safety_facility_streetlight": 1.35,
+            "safety_bell": 1.2,
+            "emergency112": 1.15,
+            "streetlight_density": 1.2,
+            "cctv_density": 1.15,
+            "guardian_house": 1.1,
+            "crime_risk": 1.2,
+            "accident_hotspot": 0.9,
+            "speed_camera": 0.9,
+            "doc_risk": 0.95,
         }
     else:
-        # 낮: 사고다발·교통(단속카메라)·범죄·문서 위험 회피 강조
+        # 낮: 사고다발·교통·범죄·문서 위험 회피 강조
         multipliers = {
-            "accident_hotspot": 1.7,
-            "crime_risk": 1.4,
-            "speed_camera": 1.5,
-            "doc_risk": 1.3,
-            "child_zone_coverage": 1.15,
-            "safety_facility_cctv": 0.9,
-            "safety_facility_streetlight": 0.85,
-            "safety_bell": 0.9,
-            "streetlight_density": 0.85,
+            "accident_hotspot": 1.35,
+            "crime_risk": 1.2,
+            "speed_camera": 1.2,
+            "doc_risk": 1.2,
+            "child_zone_coverage": 1.1,
+            "safety_facility_cctv": 0.95,
+            "safety_facility_streetlight": 0.9,
+            "safety_bell": 0.95,
+            "streetlight_density": 0.9,
         }
     for key, mult in multipliers.items():
         if key in w:
