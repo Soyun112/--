@@ -236,6 +236,7 @@ def compute_route(req: RouteRequest) -> RouteResponse:
             "routing": settings.routing_mock if req.mock is None else req.mock,
             "public_data": settings.public_data_mock,
             "upstage": reports["used_mock"],
+            "scoring": "absolute_v2",
         },
         weather=current_weather,
         time_context=time_context,
