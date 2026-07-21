@@ -142,10 +142,18 @@ body {
 
 .panel h2 { margin-top: 0; font-size: 16px; color: var(--primary-dark); }
 
-/* 왼쪽 위: 문서 / 왼쪽 아래: 경로+시나리오 / 가운데 위: 지도 / 오른쪽: 비교 */
-.doc-panel {
+/* 왼쪽: 문서 바로 아래 경로(지도 높이와 무관하게 붙임) / 가운데 위: 지도 / 오른쪽: 비교 */
+.left-stack {
   grid-column: 1;
-  grid-row: 1;
+  grid-row: 1 / span 2;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-self: start;
+  min-width: 0;
+}
+
+.doc-panel {
   background: linear-gradient(180deg, #f7fbff, #ffffff);
 }
 
@@ -163,11 +171,6 @@ body {
   border-top: none;
   max-height: calc(100vh - 120px);
   overflow: auto;
-}
-
-.route-panel {
-  grid-column: 1;
-  grid-row: 2 / span 2;
 }
 
 .ai-panel {
@@ -874,8 +877,7 @@ body.theme-dark #tmap { filter: brightness(0.78) contrast(0.92) saturate(0.85); 
     grid-template-columns: 1fr;
     grid-template-rows: none;
   }
-  .doc-panel,
-  .route-panel,
+  .left-stack,
   .map-panel,
   .results-panel,
   .ai-panel {
