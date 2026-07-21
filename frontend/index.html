@@ -146,10 +146,26 @@
   <div id="kid-card-overlay" class="kid-card-overlay" hidden>
     <div id="kid-card" class="kid-card">
       <div id="kid-card-progress" class="kid-card-progress">1 / 1</div>
+      <div id="kid-progress-stamps" class="kid-progress-stamps" aria-label="길 따라가기 스탬프">
+        <div class="kid-progress-stamp" data-stamp="third" title="1/3 지점">
+          <span class="kid-progress-stamp-emoji">⭐</span>
+          <span class="kid-progress-stamp-label">1/3</span>
+        </div>
+        <div class="kid-progress-stamp" data-stamp="twoThirds" title="2/3 지점">
+          <span class="kid-progress-stamp-emoji">🌟</span>
+          <span class="kid-progress-stamp-label">2/3</span>
+        </div>
+        <div class="kid-progress-stamp arrive" data-stamp="arrive" title="도착">
+          <span class="kid-progress-stamp-emoji">👑</span>
+          <span class="kid-progress-stamp-label">도착</span>
+        </div>
+      </div>
+      <div id="kid-card-cheer" class="kid-card-cheer" hidden role="status"></div>
       <div class="kid-card-stage">
         <div id="kid-card-icon" class="kid-card-icon" aria-hidden="true">↑</div>
         <div id="kid-card-text" class="kid-card-text">직진</div>
         <div id="kid-card-friendly" class="kid-card-friendly"></div>
+        <div id="kid-card-tip" class="kid-card-tip"></div>
         <div id="kid-card-distance" class="kid-card-distance"></div>
         <div id="kid-card-landmark" class="kid-card-landmark"></div>
       </div>

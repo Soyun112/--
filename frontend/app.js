@@ -52,8 +52,16 @@ const state = {
   activePublicLayer: null,
   kidCardSteps: [],
   kidCardIndex: 0,
+  // 구간 진행 스탬프 (안전 스탬프와 별개, 세션 단위)
+  progressStamps: { third: false, twoThirds: false, arrive: false },
   clockTimer: null,
 };
+
+const PROGRESS_STAMP_DEFS = [
+  { id: "third", at: 1 / 3, cheer: "잘했어! 1/3 왔어요 ⭐" },
+  { id: "twoThirds", at: 2 / 3, cheer: "멋져요! 거의 다 왔어요 🌟" },
+  { id: "arrive", at: 1, cheer: "도착! 오늘도 안전하게 와줘서 고마워요 👑" },
+];
 
 async function fetchJson(path, options = {}) {
   const url = `${API_BASE}${path}`;
@@ -305,6 +313,103 @@ function navigationSentence(step) {
 
 function landmarkPhrase(step) {
   return step && step.landmark ? `${step.landmark} 쪽으로` : "";
+}
+
+/** 아이 카드용 상황별 안전 한마디 (본문 행동 안내와 별도 1줄) */
+function kidSafetyTip(step, { isArrive = false, weather = null } = {}) {
+  if (isArrive) return "도착! 오늘도 안전하게 와줘서 고마워요";
+
+  const desc = `${step?.description || ""} ${navigationKeywordPlain(step) || ""}`;
+  const tt = step?.turn_type;
+  const raining = Boolean(weather?.is_rain);
+
+  if (desc.includes("횡단") || desc.includes("육교") || (tt >= 211 && tt <= 217)) {
+    if (desc.includes("신호") || desc.includes("초록")) return "초록불일 때 함께 건너요";
+    return raining ? "미끄러울 수 있어요, 뛰지 말고 천천히" : "👀 왼쪽·오른쪽 보고 천천히 건너요";
+  }
+  if (desc.includes("좌회전") || desc.includes("우회전") || desc.includes("왼쪽") || desc.includes("오른쪽") || tt === 12 || tt === 13 || tt === 16 || tt === 17) {
+    return "모퉁이에선 천천히, 나오는 차 조심해요";
+  }
+  if (desc.includes("골목") || desc.includes("이면")) {
+    return "조용한 길이어도 좌우 살피요";
+  }
+  if (raining) return "길이 미끄러울 수 있어요, 천천히";
+  if (desc.includes("대로") || desc.includes("큰길")) return "차와 멀리, 인도로 걸어요";
+  return "휴대폰 보지 말고 앞을 봐요";
+}
+
+function totalStepDistanceM(steps) {
+  return (steps || []).reduce((sum, s) => sum + (Number(s.distance_m) || 0), 0);
+}
+
+/** 현재 카드까지 진행률 (0~1). 마지막 카드는 항상 1 */
+function kidProgressRatio(steps, index) {
+  const list = steps || [];
+  if (!list.length) return 0;
+  if (index >= list.length - 1) return 1;
+  const total = totalStepDistanceM(list);
+  if (total <= 0) return (index + 1) / list.length;
+  let walked = 0;
+  for (let i = 0; i <= index; i += 1) walked += Number(list[i].distance_m) || 0;
+  return Math.min(1, walked / total);
+}
+
+function resetProgressStamps() {
+  state.progressStamps = { third: false, twoThirds: false, arrive: false };
+  renderProgressStampSlots();
+  hideKidCardCheer();
+}
+
+function renderProgressStampSlots() {
+  const root = document.getElementById("kid-progress-stamps");
+  if (!root) return;
+  PROGRESS_STAMP_DEFS.forEach((def) => {
+    const el = root.querySelector(`[data-stamp="${def.id}"]`);
+    if (!el) return;
+    el.classList.toggle("unlocked", Boolean(state.progressStamps[def.id]));
+  });
+}
+
+function hideKidCardCheer() {
+  const el = document.getElementById("kid-card-cheer");
+  if (!el) return;
+  el.hidden = true;
+  el.textContent = "";
+  el.classList.remove("pop");
+}
+
+function showKidCardCheer(message) {
+  const el = document.getElementById("kid-card-cheer");
+  if (!el || !message) return;
+  el.textContent = message;
+  el.hidden = false;
+  el.classList.remove("pop");
+  void el.offsetWidth;
+  el.classList.add("pop");
+  clearTimeout(showKidCardCheer._timer);
+  showKidCardCheer._timer = setTimeout(() => {
+    el.classList.remove("pop");
+    el.hidden = true;
+  }, 1600);
+}
+
+/** 진행률에 맞춰 구간 스탬프 unlock (뒤로 가도 잠그지 않음) */
+function updateProgressStamps(ratio, { announce = true } = {}) {
+  let cheer = "";
+  PROGRESS_STAMP_DEFS.forEach((def) => {
+    if (ratio + 1e-9 >= def.at && !state.progressStamps[def.id]) {
+      state.progressStamps[def.id] = true;
+      cheer = def.cheer;
+    }
+  });
+  renderProgressStampSlots();
+  if (announce && cheer) showKidCardCheer(cheer);
+  return cheer;
+}
+
+function progressStampSummaryText() {
+  const n = PROGRESS_STAMP_DEFS.filter((d) => state.progressStamps[d.id]).length;
+  return `🚶 길 스탬프 ${n}/3`;
 }
 
 // API navigation_steps가 비어 있을 때(구버전 백엔드 등) 경로 좌표로 턴바이턴을 합성한다.
@@ -635,11 +740,12 @@ function renderReports(data) {
   document.getElementById("kid-card-mode-btn").addEventListener("click", openKidCardMode);
 
   if (!recommended.stamps || recommended.stamps.length === 0) {
-    board.innerHTML = "";
+    board.innerHTML = `<div class="kid-progress-summary">🚶 길 스탬프는 「아이가 보기 쉽게」에서 받아요</div>`;
     return;
   }
   const stars = "⭐".repeat(recommended.star_rating);
   board.innerHTML = `
+    <div class="kid-progress-summary">🚶 길 스탬프는 「아이가 보기 쉽게」에서 받아요</div>
     <div class="stamp-board-title">🎉 오늘의 안전 스탬프 ${stars}</div>
     <div class="stamps-row">
       ${recommended.stamps
@@ -664,12 +770,32 @@ function openKidCardMode() {
   }
   state.kidCardSteps = steps;
   state.kidCardIndex = 0;
+  resetProgressStamps();
   document.getElementById("kid-card-overlay").hidden = false;
   renderKidCard(0);
 }
 
 function closeKidCardMode() {
   document.getElementById("kid-card-overlay").hidden = true;
+  hideKidCardCheer();
+  updateKidProgressSummaryOnBoard();
+}
+
+function updateKidProgressSummaryOnBoard() {
+  const board = document.getElementById("kid-stamp-board");
+  if (!board) return;
+  let line = board.querySelector(".kid-progress-summary");
+  const unlocked = PROGRESS_STAMP_DEFS.filter((d) => state.progressStamps[d.id]).length;
+  if (unlocked === 0 && !line) return;
+  if (!line) {
+    line = document.createElement("div");
+    line.className = "kid-progress-summary";
+    board.prepend(line);
+  }
+  line.textContent =
+    unlocked >= 3
+      ? "🚶 오늘 길 스탬프 3/3 · 안전하게 도착했어요!"
+      : `${progressStampSummaryText()} · 「아이가 보기 쉽게」에서 받아요`;
 }
 
 let cachedKidGuideShareUrl = null;
@@ -694,10 +820,12 @@ function buildKidGuideSharePayload() {
       const [icon] = navigationIcon(step);
       const { text: stepText } = kidStepText(step.distance_m);
       const landmark = landmarkPhrase(step);
+      const weather = state.lastResult?.weather || null;
       return {
         icon: isArrive ? "🎉" : icon,
         keyword: isArrive ? "도착! 잘했어요" : navigationKeywordPlain(step),
         friendly: isArrive || !stepText ? "" : `👣 ${stepText} 걸어가요`,
+        tip: kidSafetyTip(step, { isArrive, weather }),
         distance_m: isArrive ? 0 : step.distance_m || 0,
         landmark: isArrive || !landmark ? "" : `📍 ${landmark}`,
         is_arrive: isArrive,
@@ -809,17 +937,23 @@ function renderKidCard(direction = 0) {
   const [icon] = navigationIcon(step);
   const { text: stepText } = kidStepText(step.distance_m);
   const landmark = landmarkPhrase(step);
+  const weather = state.lastResult?.weather || null;
+  const tip = kidSafetyTip(step, { isArrive, weather });
+  const ratio = kidProgressRatio(steps, index);
 
   document.getElementById("kid-card-progress").textContent = `${index + 1} / ${total}`;
   document.getElementById("kid-card").classList.toggle("arrived", isArrive);
   document.getElementById("kid-card-icon").textContent = isArrive ? "🎉" : icon;
   document.getElementById("kid-card-text").textContent = isArrive ? "도착! 잘했어요" : navigationKeywordPlain(step);
   document.getElementById("kid-card-friendly").textContent = isArrive || !stepText ? "" : `👣 ${stepText} 걸어가요`;
+  const tipEl = document.getElementById("kid-card-tip");
+  if (tipEl) tipEl.textContent = tip || "";
   document.getElementById("kid-card-distance").textContent = !isArrive && step.distance_m > 0 ? `${Math.round(step.distance_m)}m` : "";
   document.getElementById("kid-card-landmark").textContent = isArrive || !landmark ? "" : `📍 ${landmark}`;
   document.getElementById("kid-card-prev").disabled = index === 0;
   document.getElementById("kid-card-next").hidden = isArrive;
 
+  updateProgressStamps(ratio, { announce: direction !== 0 || index === 0 });
   animateKidCard(direction);
 }
 
