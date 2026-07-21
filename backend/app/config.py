@@ -65,7 +65,7 @@ class Settings:
     tmap_road_match_min_coords: int = int(os.getenv("TMAP_ROAD_MATCH_MIN_COORDS", "30"))
     tmap_road_match_enabled: bool = _bool_env("TMAP_ROAD_MATCH_ENABLED", True)
     # 대안 보행 경로(추가 API 1회) — 한도 절약을 위해 기본 off
-    tmap_pedestrian_alt_enabled: bool = _bool_env("TMAP_PEDESTRIAN_ALT_ENABLED", False)
+    tmap_pedestrian_alt_enabled: bool = _bool_env("TMAP_PEDESTRIAN_ALT_ENABLED", True)
     document_ingest_enabled: bool = _bool_env("DOCUMENT_INGEST_ENABLED", True)
     enable_openapi_docs: bool = _bool_env("ENABLE_OPENAPI_DOCS", False)
 

@@ -120,23 +120,74 @@ function scoreColor(score) {
   return "#d64545";
 }
 
-function scoreExplanation(candidate) {
-  const features = candidate.features;
+function scoreExplanation(candidate, routeData = null) {
+  const features = candidate.features || {};
   const safetyFacilities =
     (features.safety_facility_cctv_count || 0) +
     (features.safety_facility_streetlight_count || 0) +
     (features.safety_bell_count || 0) +
     (features.emergency112_count || 0);
+  const riskDocs = (features.matched_documents || []).filter((d) => d.is_risk);
+  const safeDocs = (features.matched_documents || []).filter((d) => !d.is_risk);
+  const isRecommended = routeData && candidate.id === routeData.recommended_id;
+  const parts = [];
+
+  if (isRecommended) {
+    parts.push(`이 길은 종합 안전점수 ${candidate.safety_score}점으로 가장 안전한 추천 경로예요.`);
+  } else {
+    parts.push(`이 길은 종합 안전점수 ${candidate.safety_score}점이에요.`);
+  }
+
+  if (candidate.id.includes("doc-avoid")) {
+    parts.push("문서에 나온 위험·공사 구간을 피해 가도록 만든 우회 경로예요.");
+  }
+
+  parts.push(
+    `안심시설 ${safetyFacilities}곳, 보호구역 통과 ${features.child_zone_coverage_pct ?? 0}%, 사고다발 ${features.accident_hotspot_count || 0}곳을 반영했어요.`
+  );
+
+  if (riskDocs.length) {
+    parts.push(
+      `문서 주의: ${riskDocs
+        .slice(0, 2)
+        .map((d) => d.risk_type || "위험구간")
+        .join(", ")}.`
+    );
+  } else if (safeDocs.length) {
+    parts.push(`문서상 안전조치가 확인된 구간이 있어요.`);
+  }
+
   if (candidate.safety_score >= 70) {
-    return `안전시설 ${safetyFacilities}곳과 보호구역 정보를 반영해 안전한 길로 평가했어요.`;
+    parts.push("전반적으로 안심하고 걸을 수 있는 편이에요.");
+  } else if ((features.accident_hotspot_count || 0) > 0 || riskDocs.length) {
+    parts.push("주의 구간이 있으니 다른 경로와 비교해 보세요.");
   }
-  if (features.accident_hotspot_count > 0 || features.doc_risk_count > 0) {
-    return `사고다발지역 또는 주의 구간이 있어, 다른 경로와 함께 비교해 보세요.`;
+
+  return parts.join(" ");
+}
+
+function buildSelectedRouteSafetyText(candidate, routeData) {
+  if (!candidate) return "";
+  if (candidate.id === routeData.recommended_id && routeData.parent_report) {
+    return routeData.parent_report;
   }
-  return `주변 안전시설과 도로 정보를 종합해 계산한 안전 점수예요.`;
+  const features = candidate.features || {};
+  const docs = (features.matched_documents || [])
+    .slice(0, 3)
+    .map((d) => `- ${d.is_risk ? "주의" : "양호"} ${d.risk_type} (${d.source_doc})`)
+    .join("\n");
+  return [
+    scoreExplanation(candidate, routeData),
+    "",
+    `거리 ${(candidate.distance_m / 1000).toFixed(2)}km · 약 ${Math.round(candidate.duration_s / 60)}분 · 안전등급 ${"⭐".repeat(candidate.star_rating || 0)}`,
+    docs ? `\n문서 근거\n${docs}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function routeDisplayName(routeId) {
+  if (routeId.includes("doc-avoid")) return "문서 위험 우회 경로";
   if (routeId.includes("pedestrian-main") || routeId.includes("direct")) return "보행자 큰길 경로";
   if (routeId.includes("pedestrian-alt")) return "보행자 대안 경로";
   if (routeId.endsWith("-a") || routeId.includes("grid-a")) return "우회 경로 A";
@@ -147,9 +198,10 @@ function routeDisplayName(routeId) {
 function routeDisplaySortKey(routeId) {
   if (routeId.includes("pedestrian-main") || routeId.includes("direct")) return 0;
   if (routeId.includes("pedestrian-alt")) return 1;
-  if (routeId.endsWith("-a") || routeId.includes("grid-a")) return 2;
-  if (routeId.endsWith("-b") || routeId.includes("grid-b")) return 3;
-  return 4;
+  if (routeId.includes("doc-avoid")) return 2;
+  if (routeId.endsWith("-a") || routeId.includes("grid-a")) return 3;
+  if (routeId.endsWith("-b") || routeId.includes("grid-b")) return 4;
+  return 5;
 }
 
 function isDuplicateRouteCard(first, second) {
@@ -172,10 +224,7 @@ function candidatesForDisplay(routeData) {
   if (!recommended) return [];
 
   const alternatives = uniqueCandidates
-    .filter(
-      (candidate) =>
-        candidate.id !== recommended.id && candidate.safety_score < recommended.safety_score
-    )
+    .filter((candidate) => candidate.id !== recommended.id)
     .sort(
       (first, second) =>
         second.safety_score - first.safety_score ||
@@ -693,7 +742,10 @@ function renderTimeContext(routeData) {
 function renderParentReport(routeData) {
   const el = document.getElementById("parent-report");
   if (!el) return;
-  const text = routeData && routeData.parent_report;
+  const selected = activeRoute(routeData);
+  const text = selected
+    ? buildSelectedRouteSafetyText(selected, routeData)
+    : routeData && routeData.parent_report;
   if (!text) {
     el.textContent = "경로를 찾으면 시간대 맞춤 안전 리포트가 표시됩니다.";
     el.classList.add("placeholder");
@@ -717,7 +769,7 @@ function renderCandidates(data) {
       const isRecommended = c.id === displayCandidates[0]?.id;
       const isActive = c.id === activeRouteId(data);
       const routeName = isRecommended ? "추천 경로" : routeDisplayName(c.id);
-      const docsHtml = c.features.matched_documents
+      const docsHtml = (c.features.matched_documents || [])
         .map(
           (d) =>
             `<div class="doc-evidence">${d.is_risk ? "⚠️" : "✅"} <strong>${d.risk_type}</strong> (${d.source_doc}, 경로에서 ${Math.round(d.distance_m)}m) — "${d.snippet}"</div>`
@@ -730,6 +782,7 @@ function renderCandidates(data) {
             `<span class="stamp-chip" title="${s.description}">${s.emoji} ${s.label}${s.count > 1 ? ` x${s.count}` : ""}</span>`
         )
         .join("");
+      const explain = scoreExplanation(c, data);
       return `
         <div class="candidate-card ${isRecommended ? "recommended" : ""} ${isActive ? "selected" : ""}" data-route-id="${c.id}" role="button" tabindex="0" aria-pressed="${isActive}">
           <h4>
@@ -744,8 +797,11 @@ function renderCandidates(data) {
           </div>
           ${stampsHtml ? `<div class="stamps-row">${stampsHtml}</div>` : ""}
           <details class="candidate-details">
-            <summary>안전 점수 자세히 보기</summary>
-            <p class="score-explanation">💬 ${scoreExplanation(c)}</p>
+            <summary>상세보기 · 안전 설명</summary>
+            <div class="safety-explain-block">
+              <p class="safety-explain-label">안전 설명</p>
+              <p class="score-explanation">💬 ${explain}</p>
+            </div>
             <div class="candidate-meta detail-meta">
               <span>안심귀갓길 CCTV: ${c.features.safety_facility_cctv_count || 0}대</span>
               <span>안심귀갓길 보안등: ${c.features.safety_facility_streetlight_count || 0}개</span>
@@ -756,6 +812,7 @@ function renderCandidates(data) {
               <span>안전지킴이집: ${c.features.guardian_house_count}곳</span>
               <span>보안등: 1km당 ${c.features.streetlight_density}개</span>
               <span>단속카메라: ${c.features.speed_camera_count}곳</span>
+              <span>문서 위험 지점: ${c.features.doc_risk_count || 0}곳</span>
             </div>
             ${docsHtml}
           </details>
@@ -1728,10 +1785,18 @@ function renderMap(routeData, publicData, refreshLegend = true) {
   if (refreshLegend) renderLegend();
 }
 
-function selectRoute(routeId) {
+function selectRoute(routeId, { preserveDetails = false } = {}) {
   if (!state.lastResult || !state.publicData) return;
   state.selectedRouteId = routeId;
-  renderCandidates(state.lastResult);
+  if (preserveDetails) {
+    document.querySelectorAll("#candidates-list .candidate-card").forEach((card) => {
+      const selected = card.dataset.routeId === routeId;
+      card.classList.toggle("selected", selected);
+      card.setAttribute("aria-pressed", String(selected));
+    });
+  } else {
+    renderCandidates(state.lastResult);
+  }
   renderReports(state.lastResult);
   renderParentReport(state.lastResult);
   renderTimeContext(state.lastResult);
@@ -2284,6 +2349,12 @@ function bindAppUi() {
     setTheme(document.body.classList.contains("theme-dark") ? "light" : "dark");
   });
   document.getElementById("candidates-list")?.addEventListener("click", (event) => {
+    // 상세보기 토글은 카드 재렌더로 닫히지 않게 처리
+    if (event.target.closest(".candidate-details")) {
+      const card = event.target.closest(".candidate-card[data-route-id]");
+      if (card) selectRoute(card.dataset.routeId, { preserveDetails: true });
+      return;
+    }
     const card = event.target.closest(".candidate-card[data-route-id]");
     if (card) selectRoute(card.dataset.routeId);
   });
