@@ -712,10 +712,6 @@ function buildKidGuideShareText() {
   return `👶 ${title}\n링크를 누르면 길 안내 카드가 바로 열려요!`;
 }
 
-function buildKidGuideShareClipboardText(url) {
-  return `${buildKidGuideShareText()}\n${url}`;
-}
-
 async function ensureKidGuideShareUrl() {
   cachedKidGuideShareUrl = buildKidGuideShareUrl(buildKidGuideSharePayload());
   return cachedKidGuideShareUrl;
@@ -770,7 +766,6 @@ async function shareKidGuide(mode = "kakao") {
 
     resetKidGuideShareCache();
     const payload = buildKidGuideSharePayload();
-    const text = buildKidGuideShareText();
     const url = await ensureKidGuideShareUrl();
     const shareTitle = `👶 ${payload.title || "오늘의 안전 길"}`;
 
@@ -778,21 +773,20 @@ async function shareKidGuide(mode = "kakao") {
       try {
         await navigator.share({
           title: shareTitle,
-          text,
+          text: buildKidGuideShareText(),
           url,
         });
         return;
       } catch (shareErr) {
         if (shareErr?.name === "AbortError") return;
-        // share 실패 시 복사로 폴백
       }
     }
 
-    await copyTextToClipboard(buildKidGuideShareClipboardText(url));
+    await copyTextToClipboard(url);
     showKidShareToast(
       mode === "kakao"
-        ? "카톡에 붙여넣기 하세요. 제목·설명과 링크가 함께 복사됐어요."
-        : "제목·설명과 링크가 함께 복사됐어요!"
+        ? "링크가 복사됐어요. 카톡에 붙여넣기 하세요."
+        : "링크가 복사됐어요!"
     );
   } catch (err) {
     if (err?.name !== "AbortError") {

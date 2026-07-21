@@ -1,5 +1,7 @@
 import LZString from "lz-string";
 
+const PRODUCTION_APP_URL = "https://kids-abcd.vercel.app";
+const OG_IMAGE_URL = `${PRODUCTION_APP_URL}/og-guide.svg`;
 const DEFAULT_TITLE = "👶 오늘의 안전 길";
 const DEFAULT_DESCRIPTION = "링크를 누르면 길 안내 카드가 바로 열려요!";
 const BACKEND = "https://kids-safe-route-api.onrender.com";
@@ -47,22 +49,28 @@ function decodeGuideTitle(searchParams) {
   }
 }
 
+function productionGuideUrl(url) {
+  return `${PRODUCTION_APP_URL}${url.pathname}${url.search}`;
+}
+
 function previewHtml({ title, description, canonical }) {
   const safeTitle = escapeHtml(title);
   const safeDescription = escapeHtml(description);
   const safeCanonical = escapeHtml(canonical);
+  const safeImage = escapeHtml(OG_IMAGE_URL);
   return `<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="AI 어린이 안심 길찾기">
 <meta property="og:title" content="${safeTitle}">
 <meta property="og:description" content="${safeDescription}">
 <meta property="og:url" content="${safeCanonical}">
+<meta property="og:image" content="${safeImage}">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="${safeTitle}">
 <meta name="twitter:description" content="${safeDescription}">
+<meta name="twitter:image" content="${safeImage}">
 <meta http-equiv="refresh" content="0;url=${safeCanonical}">
 <title>${safeTitle}</title>
 </head>
@@ -103,7 +111,7 @@ export default async function middleware(request) {
   }
 
   return new Response(
-    previewHtml({ title, description, canonical: url.href }),
+    previewHtml({ title, description, canonical: productionGuideUrl(url) }),
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
