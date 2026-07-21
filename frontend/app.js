@@ -2,9 +2,9 @@
 
 const CATEGORY_COLORS = {
   cctv: "#2f7dd1",
-  hotspot: "#d64545",
-  docRisk: "#1a9f5c",
-  docRiskEstimated: "#3d9b6a",
+  hotspot: "#c45c26",
+  docRisk: "#d64545",
+  docRiskEstimated: "#e07070",
   guardian: "#8e44ad",
   safetyCctv: "#1a6fbf",
   safetyStreetlight: "#f5b800",
@@ -1090,11 +1090,141 @@ function renderLegend() {
 function setActivePublicLayer(layer) {
   if (state.activePublicLayer === layer) return;
   state.activePublicLayer = layer;
-  if (state.lastResult && state.publicData) renderMap(state.lastResult, state.publicData, false);
+  if (state.lastResult && state.publicData) {
+    renderMap(state.lastResult, state.publicData, false);
+  } else if (state.publicData && state.docMode === "analyzed") {
+    renderDocRiskOnlyMap(state.publicData);
+  }
 }
 
 function shouldShowPublicLayer(layer) {
+  // 문서 분석 후에는 범례에 올리지 않아도 문서 위험이 항상 보이게
+  if (layer === "doc-risk" && state.docMode === "analyzed") return true;
   return state.activePublicLayer === layer;
+}
+
+function documentRiskPointsForMap(publicData, routeData) {
+  const all = (publicData?.doc_risk_points || []).filter((d) => d.is_risk);
+  if (!all.length) return [];
+  // 문서 반영 직후면 경로 검색 전에도 전부 표시
+  if (state.docMode === "analyzed" || !routeData || !activeRoute(routeData)) return all;
+  const near = pointsNearRecommendedRoute(all, routeData, 220);
+  return near.length ? near : all;
+}
+
+/** 문서 위험지점을 빨간 '길' 형태로 그림 (짧은 십자 + 지점 연결선). */
+function drawDocRiskRedPathsTmap(track, boundsRef, points) {
+  if (!state.tmap || !points?.length) return false;
+  const stub = 0.00038; // ~40m
+  let hasPoint = false;
+
+  points.forEach((d) => {
+    const color = d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk;
+    const hPath = [
+      new Tmapv2.LatLng(d.lat, d.lng - stub),
+      new Tmapv2.LatLng(d.lat, d.lng + stub),
+    ];
+    const vPath = [
+      new Tmapv2.LatLng(d.lat - stub, d.lng),
+      new Tmapv2.LatLng(d.lat + stub, d.lng),
+    ];
+    hPath.forEach((ll) => boundsRef.extend(ll));
+    vPath.forEach((ll) => boundsRef.extend(ll));
+    hasPoint = true;
+    track(
+      new Tmapv2.Polyline({
+        path: hPath,
+        strokeColor: color,
+        strokeWeight: 9,
+        strokeStyle: "solid",
+        strokeOpacity: 0.92,
+        map: state.tmap,
+      })
+    );
+    track(
+      new Tmapv2.Polyline({
+        path: vPath,
+        strokeColor: color,
+        strokeWeight: 9,
+        strokeStyle: "solid",
+        strokeOpacity: 0.92,
+        map: state.tmap,
+      })
+    );
+  });
+
+  if (points.length >= 2) {
+    const ordered = [...points].sort((a, b) => a.lng - b.lng || a.lat - b.lat);
+    const path = ordered.map((p) => {
+      const ll = new Tmapv2.LatLng(p.lat, p.lng);
+      boundsRef.extend(ll);
+      return ll;
+    });
+    track(
+      new Tmapv2.Polyline({
+        path,
+        strokeColor: CATEGORY_COLORS.docRisk,
+        strokeWeight: 5,
+        strokeStyle: "solid",
+        strokeOpacity: 0.7,
+        map: state.tmap,
+      })
+    );
+    hasPoint = true;
+  }
+  return hasPoint;
+}
+
+function renderDocRiskOnlyMap(publicData) {
+  if (!state.tmapReady || !state.tmap) {
+    setMapStatus("지도를 준비한 뒤 문서 위험이 표시됩니다.", false);
+    return;
+  }
+  setMapStatus("", false);
+  document.getElementById("tmap").style.display = "block";
+  document.getElementById("svg-map").style.display = "none";
+  clearTmapOverlays();
+
+  const points = documentRiskPointsForMap(publicData, null);
+  if (!points.length) {
+    setMapStatus("표시할 문서 위험 지점이 아직 없어요.", false);
+    return;
+  }
+
+  const bounds = new Tmapv2.LatLngBounds();
+  const track = (overlay) => {
+    state.tmapOverlays.push(overlay);
+    return overlay;
+  };
+
+  drawDocRiskRedPathsTmap(track, bounds, points);
+  points.forEach((d) => {
+    const latlng = new Tmapv2.LatLng(d.lat, d.lng);
+    bounds.extend(latlng);
+    const color = d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk;
+    const title = `${d.is_estimated ? "[추정] " : ""}[문서근거] ${d.risk_type || "위험"} (${d.source_doc || ""})`;
+    const m = track(
+      new Tmapv2.Marker({
+        position: latlng,
+        icon: tmapDotIcon(color),
+        iconSize: new Tmapv2.Size(18, 18),
+        map: state.tmap,
+      })
+    );
+    m.addListener("click", () => {
+      if (state.infoWindow) state.infoWindow.setMap(null);
+      state.infoWindow = new Tmapv2.InfoWindow({
+        position: latlng,
+        content: `<div style="padding:6px 8px;font-size:12px;max-width:220px">${title}</div>`,
+        type: 2,
+        border: "1px solid #888",
+        map: state.tmap,
+      });
+    });
+  });
+
+  state.tmap.fitBounds(bounds);
+  renderLegend();
 }
 
 // ---------- SVG 스키매틱 지도 (Leaflet/OSM 로드 실패 시 오프라인 폴백) ----------
@@ -1149,7 +1279,7 @@ function renderSvgMap(routeData, publicData) {
   const accidentHotspots = pointsNearRecommendedRoute(publicData.accident_hotspots || [], routeData);
   const guardianHouses = pointsNearRecommendedRoute(publicData.guardian_houses || [], routeData);
   const sf = safetyFacilitiesNearRoute(publicData, routeData);
-  const documentPoints = pointsNearRecommendedRoute(publicData.doc_risk_points || [], routeData);
+  const documentPoints = documentRiskPointsForMap(publicData, routeData);
   const allPoints = [];
   const active = activeRoute(routeData);
   routeData.candidates.forEach((c) => {
@@ -1233,14 +1363,44 @@ function renderSvgMap(routeData, publicData) {
   if (shouldShowPublicLayer("guardian")) guardianHouses.forEach((g) =>
     drawMarker(g, CATEGORY_COLORS.guardian, "diamond", `🏪 ${g.name || "아동안전지킴이집"}`)
   );
-  if (shouldShowPublicLayer("doc-risk")) documentPoints.filter((d) => d.is_risk).forEach((d) =>
-    drawMarker(
-      d,
-      d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk,
-      "square",
-      `${d.is_estimated ? "[추정] " : ""}[문서근거] ${d.risk_type} (${d.source_doc})`
-    )
-  );
+  if (shouldShowPublicLayer("doc-risk")) {
+    documentPoints.forEach((d) => {
+      const color = d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk;
+      const p = project(d, bounds, size, padding);
+      const stub = 10;
+      [["M", p.x - stub, p.y, "L", p.x + stub, p.y], ["M", p.x, p.y - stub, "L", p.x, p.y + stub]].forEach((parts) => {
+        const line = document.createElementNS(ns, "path");
+        line.setAttribute("d", `${parts[0]} ${parts[1]} ${parts[2]} ${parts[3]} ${parts[4]} ${parts[5]}`);
+        line.setAttribute("stroke", color);
+        line.setAttribute("stroke-width", "5");
+        line.setAttribute("stroke-linecap", "round");
+        line.setAttribute("fill", "none");
+        svg.appendChild(line);
+      });
+      drawMarker(
+        d,
+        color,
+        "square",
+        `${d.is_estimated ? "[추정] " : ""}[문서근거] ${d.risk_type} (${d.source_doc})`
+      );
+    });
+    if (documentPoints.length >= 2) {
+      const ordered = [...documentPoints].sort((a, b) => a.lng - b.lng || a.lat - b.lat);
+      const line = document.createElementNS(ns, "polyline");
+      line.setAttribute(
+        "points",
+        ordered.map((pt) => {
+          const p = project(pt, bounds, size, padding);
+          return `${p.x},${p.y}`;
+        }).join(" ")
+      );
+      line.setAttribute("fill", "none");
+      line.setAttribute("stroke", CATEGORY_COLORS.docRisk);
+      line.setAttribute("stroke-width", "3");
+      line.setAttribute("stroke-opacity", "0.75");
+      svg.appendChild(line);
+    }
+  }
 
   // 출발/목적지 라벨
   [routeData.origin, routeData.destination].forEach((wp, idx) => {
@@ -1466,7 +1626,7 @@ function renderTmapRoutes(routeData, publicData) {
   const accidentHotspots = pointsNearRecommendedRoute(publicData.accident_hotspots || [], routeData);
   const guardianHouses = pointsNearRecommendedRoute(publicData.guardian_houses || [], routeData);
   const sf = safetyFacilitiesNearRoute(publicData, routeData);
-  const documentPoints = pointsNearRecommendedRoute(publicData.doc_risk_points || [], routeData);
+  const documentPoints = documentRiskPointsForMap(publicData, routeData);
 
   const active = activeRoute(routeData);
   if (active && active.coordinates.length >= 2) {
@@ -1532,13 +1692,16 @@ function renderTmapRoutes(routeData, publicData) {
   if (shouldShowPublicLayer("guardian")) guardianHouses.forEach((g) =>
     marker(g, CATEGORY_COLORS.guardian, `🏪 ${g.name || "아동안전지킴이집"}`)
   );
-  if (shouldShowPublicLayer("doc-risk")) documentPoints.filter((d) => d.is_risk).forEach((d) =>
-    marker(
-      d,
-      d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk,
-      `${d.is_estimated ? "[추정] " : ""}[문서근거] ${d.risk_type} (${d.source_doc})`
-    )
-  );
+  if (shouldShowPublicLayer("doc-risk")) {
+    if (drawDocRiskRedPathsTmap(track, bounds, documentPoints)) hasPoint = true;
+    documentPoints.forEach((d) =>
+      marker(
+        d,
+        d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk,
+        `${d.is_estimated ? "[추정] " : ""}[문서근거] ${d.risk_type} (${d.source_doc})`
+      )
+    );
+  }
 
   const originName = routeData.origin.name || "출발";
   const destName = routeData.destination.name || "목적지";
@@ -1756,7 +1919,7 @@ async function confirmPendingDocPoint(pt, inputEl, btn, itemEl) {
 
     const reran = await maybeRerunRouteAfterDocument();
     if (!reran) await refreshPublicDataAndMap({ focusDocRisk: true });
-    setDocUploadStatus(`「${query}」위치를 지도에 올렸어요. 범례 「문서 기반 위험지역」에서 확인하세요.`, "ok");
+    setDocUploadStatus(`「${query}」위치를 지도에 빨간 길로 올렸어요.`, "ok");
   } catch (err) {
     console.error(err);
     setDocUploadStatus(err.message || "위치 확인에 실패했습니다.", "error");
@@ -1772,7 +1935,9 @@ async function refreshPublicDataAndMap({ focusDocRisk = false } = {}) {
   state.publicData = publicData;
   if (focusDocRisk) state.activePublicLayer = "doc-risk";
   if (state.lastResult) {
-    renderMap(state.lastResult, publicData, false);
+    renderMap(state.lastResult, publicData, true);
+  } else if (focusDocRisk || state.docMode === "analyzed") {
+    renderDocRiskOnlyMap(publicData);
   }
   return publicData;
 }
@@ -2001,12 +2166,12 @@ async function confirmDocumentQueue() {
     const errHint = errors.length ? ` · 일부 실패 ${errors.length}건` : "";
     if (totalCreated > 0) {
       setDocUploadStatus(
-        `문서 분석 완료: 위험 지점 ${totalCreated}곳을 준비했어요${errHint}. 이제 「안전 경로 찾기」를 누르면 지도·경로에 반영돼요.`,
+        `문서 분석 완료: 위험 지점 ${totalCreated}곳을 지도에 빨간 길로 표시했어요${errHint}. 「안전 경로 찾기」를 누르면 우회 경로까지 반영돼요.`,
         "ok"
       );
     } else if (allPending.length > 0) {
       setDocUploadStatus(
-        `문서에서 위치를 읽었지만 바로 못 찍은 곳이 있어요. 아래 목록을 확인한 뒤 「안전 경로 찾기」를 눌러 주세요.${errHint}`,
+        `문서에서 위치를 읽었지만 바로 못 찍은 곳이 있어요. 아래 목록을 확인하면 지도에 빨간 길로 올라가요.${errHint}`,
         ""
       );
     } else {
