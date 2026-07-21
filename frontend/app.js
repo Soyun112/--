@@ -1758,13 +1758,6 @@ function bindDocumentUpload() {
   if (!btn || !input) return;
 
   btn.addEventListener("click", () => {
-    if (state.config && state.config.document_ingest_enabled === false) {
-      setDocUploadStatus(
-        "서버에서 문서 업로드가 꺼져 있어요. DOCUMENT_INGEST_ENABLED를 확인해 주세요.",
-        "error"
-      );
-      return;
-    }
     input.click();
   });
   input.addEventListener("change", () => {

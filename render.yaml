@@ -13,6 +13,8 @@ services:
         value: "3.12.0"
       - key: PUBLIC_DATA_MOCK
         value: "true"
+      - key: DOCUMENT_INGEST_ENABLED
+        value: "true"
       # 아래는 Render 대시보드에서 값을 직접 입력 (sync: false)
       - key: GOOGLE_CLIENT_ID
         sync: false
