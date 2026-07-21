@@ -12,6 +12,18 @@
   <meta property="og:description" id="og-description" content="링크를 누르면 길 안내 카드가 바로 열려요!">
   <meta property="og:url" id="og-url" content="">
   <title id="page-title">👶 오늘의 안전 길</title>
+  <script>
+    (function normalizeGuideUrl() {
+      try {
+        var params = new URLSearchParams(location.search);
+        if (params.has("d") || params.has("id") || params.has("p0")) return;
+        var path = location.pathname.replace(/\/+$/, "") || "/";
+        var match = path.match(/^\/g\/(.+)$/i);
+        if (!match) return;
+        history.replaceState(null, "", "/guide?d=" + encodeURIComponent(match[1]));
+      } catch (e) { /* ignore */ }
+    })();
+  </script>
   <link rel="stylesheet" href="/kid-guide.css">
   <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
   <script src="/kid-guide-share.js"></script>
@@ -62,9 +74,8 @@
       <div id="kid-guide-stage" class="kid-guide-stage">
         <div id="kid-guide-icon" class="kid-guide-icon" aria-hidden="true">↑</div>
         <h1 id="kid-guide-text" class="kid-guide-keyword">직진</h1>
-        <p id="kid-guide-tip" class="kid-guide-tip"></p>
         <p id="kid-guide-friendly" class="kid-guide-friendly"></p>
-        <p id="kid-guide-tip" class="kid-card-tip"></p>
+        <p id="kid-guide-tip" class="kid-guide-tip"></p>
         <p id="kid-guide-landmark" class="kid-guide-landmark"></p>
       </div>
     </main>

@@ -128,11 +128,14 @@ function renderCard(direction = 0) {
   card.classList.toggle("arrived", isArrive);
   document.getElementById("kid-guide-icon").textContent = step.icon || (isArrive ? "🎉" : "↑");
   document.getElementById("kid-guide-text").textContent = step.keyword || "";
-  document.getElementById("kid-guide-tip").textContent =
-    step.tip || tipForKeyword(step.keyword, isArrive);
   document.getElementById("kid-guide-friendly").textContent = step.friendly || "";
   const tipEl = document.getElementById("kid-guide-tip");
-  if (tipEl) tipEl.textContent = step.tip || (isArrive ? "도착! 오늘도 안전하게 와줘서 고마워요" : "");
+  if (tipEl) {
+    tipEl.textContent =
+      step.tip ||
+      (typeof tipForShareStep === "function" ? tipForShareStep(step) : "") ||
+      (isArrive ? "도착! 오늘도 안전하게 와줘서 고마워요" : "");
+  }
   document.getElementById("kid-guide-landmark").textContent = step.landmark || "";
 
   const nextBtn = document.getElementById("kid-guide-next-btn");
@@ -217,7 +220,7 @@ async function loadGuide() {
     try {
       const data = await fetchShareById(shareId);
       if (data?.steps?.length) {
-        showApp(data);
+        showApp(typeof normalizeSteps === "function" ? normalizeSteps(data) : data);
         return;
       }
     } catch {

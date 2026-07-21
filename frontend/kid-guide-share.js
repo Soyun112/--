@@ -1,13 +1,31 @@
 /** 아이용 길 안내 공유 — LZ 압축 + ?d= (카톡은 # 해시를 제거함) */
+function compactFriendly(value) {
+  return (value || "").replace(/^👣\s*/, "");
+}
+
+function compactLandmark(value) {
+  return (value || "").replace(/^📍\s*/, "").replace(/\s*쪽으로$/, "").trim();
+}
+
+function expandFriendly(value) {
+  if (!value) return "";
+  return value.startsWith("👣") ? value : `👣 ${value}`;
+}
+
+function expandLandmark(value) {
+  if (!value) return "";
+  if (value.startsWith("📍")) return value;
+  return `📍 ${value} 쪽으로`;
+}
+
 function ultraCompactPayload(payload) {
   return {
     t: payload.title || "",
     s: (payload.steps || []).map((step) => [
       step.keyword || "",
-      step.friendly || "",
-      step.landmark || "",
+      compactFriendly(step.friendly || ""),
+      compactLandmark(step.landmark || ""),
       step.is_arrive ? 1 : 0,
-      step.tip || "",
     ]),
   };
 }
@@ -20,16 +38,15 @@ function expandKidGuidePayload(data) {
     title: data.t || "오늘의 안전 길",
     steps: data.s.map((row) => {
       const keyword = row[0] || "";
-      const friendly = row[1] || "";
-      const landmark = row[2] || "";
+      const friendly = expandFriendly(row[1] || "");
+      const landmark = expandLandmark(row[2] || "");
       const isArrive = !!row[3];
-      const tip = row[4] || tipForKeyword(keyword, isArrive);
       return {
         keyword,
         friendly,
         landmark,
         is_arrive: isArrive,
-        tip,
+        tip: tipForShareStep({ keyword, friendly, landmark, is_arrive: isArrive }),
         icon: iconForKeyword(keyword, isArrive),
       };
     }),
@@ -39,7 +56,7 @@ function expandKidGuidePayload(data) {
 function normalizeSteps(data) {
   const steps = (data.steps || []).map((step) => ({
     ...step,
-    tip: step.tip || tipForKeyword(step.keyword, step.is_arrive),
+    tip: step.tip || tipForShareStep(step),
     icon: step.icon || iconForKeyword(step.keyword, step.is_arrive),
   }));
   return { ...data, steps };
@@ -54,17 +71,62 @@ function iconForKeyword(keyword, isArrive) {
   return "↑";
 }
 
-function tipForKeyword(keyword, isArrive) {
-  if (isArrive) return "";
+function tipForShareStep(step) {
+  if (!step || step.is_arrive) return "";
+  if (step.tip) return step.tip;
+  const stepCount = step.distance_m
+    ? Math.max(1, Math.round(step.distance_m / 0.5))
+    : parseStepCountFromFriendly(step.friendly);
+  return buildKidSafetyTip({
+    keyword: step.keyword || "",
+    landmarkLabel: step.landmark || "",
+    stepCount,
+  });
+}
+
+function parseLandmarkLabel(landmark) {
+  return (landmark || "").replace(/^📍\s*/, "").replace(/\s*쪽으로$/, "").trim();
+}
+
+function parseStepCountFromFriendly(friendly) {
+  const match = (friendly || "").match(/(\d+)걸음/);
+  return match ? parseInt(match[1], 10) : 0;
+}
+
+function buildKidSafetyTip({ keyword, landmarkLabel, stepCount, description, turn_type }) {
   const k = keyword || "";
+  const place = parseLandmarkLabel(landmarkLabel);
+  const desc = description || "";
+  const tt = turn_type;
+
   if (k.includes("도착")) return "";
-  if (k.includes("왼쪽") || k.includes("오른쪽")) {
-    return "모퉁이에선 천천히, 나오는 차 조심해요";
+
+  if (k.includes("왼쪽")) {
+    if (place) return `${place} 지나서 천천히 왼쪽으로, 나오는 차 조심해요`;
+    return "모퉁이에서 멈추고, 나오는 차를 먼저 확인해요";
   }
-  if (k.includes("횡단") || k.includes("육교")) {
-    return "초록불일 때만 건너요, 좌우를 꼭 살펴요";
+
+  if (k.includes("오른쪽")) {
+    if (place) return `${place} 앞에서 멈춘 뒤, 오른쪽으로 천천히 돌아요`;
+    return "오른쪽으로 돌기 전, 뒤에서 오는 자전거도 확인해요";
   }
-  if (k.includes("직진")) return "보도 안쪽으로 천천히 걸어요";
+
+  if (k.includes("육교") || desc.includes("육교")) {
+    return "손잡이를 잡고, 한 칸씩 천천히 걸어요";
+  }
+
+  if (k.includes("횡단") || desc.includes("횡단") || (tt >= 211 && tt <= 217)) {
+    if (place) return `${place} 앞 횡단보도, 초록불일 때만 건너요`;
+    return "손을 들고, 차가 멈춘 걸 확인한 뒤 건너요";
+  }
+
+  if (k.includes("직진")) {
+    if (place) return `${place} 보이면 그대로 직진해요`;
+    if (stepCount > 0 && stepCount <= 15) return "조금만 더 가면 돼요, 뛰지 말고 걸어요";
+    if (stepCount >= 200) return "천천히 가도 괜찮아요, 보도 안쪽으로 걸어요";
+    return "차도 쪽으로 나가지 말고, 보도 안쪽으로 걸어요";
+  }
+
   return "";
 }
 
@@ -132,10 +194,18 @@ function readEncodedFromLocation() {
 
   if (!encoded) {
     const match = window.location.pathname.match(/\/g\/(.+)/i);
-    if (match) encoded = match[1].replace(/\//g, "");
+    if (match) encoded = match[1];
   }
 
-  return encoded;
+  if (!encoded) return null;
+
+  encoded = String(encoded).trim();
+  try {
+    encoded = decodeURIComponent(encoded);
+  } catch {
+    /* keep raw */
+  }
+  return encoded.replace(/\//g, "");
 }
 
 function readInlineGuidePayload() {
@@ -175,12 +245,7 @@ function buildKidGuideShareUrl(payload) {
   const encoded = encodeKidGuidePayload(payload);
   const base = resolveKidGuideFrontendBase();
 
-  // /g/ 짧은 URL — 카톡에서 ?d= 긴 주소가 잘리는 문제 완화
   if (encoded.length <= 1800) {
-    return `${base}/g/${encoded}`;
-  }
-
-  if (encoded.length <= 1200) {
     return `${base}/guide?d=${encoded}`;
   }
 
