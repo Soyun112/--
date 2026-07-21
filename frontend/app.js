@@ -1181,69 +1181,6 @@ function documentRiskPointsForMap(publicData, routeData) {
   return near.length ? near : all;
 }
 
-/** 문서 위험지점을 빨간 '길' 형태로 그림 (짧은 십자 + 지점 연결선). */
-function drawDocRiskRedPathsTmap(track, boundsRef, points) {
-  if (!state.tmap || !points?.length) return false;
-  const stub = 0.00038; // ~40m
-  let hasPoint = false;
-
-  points.forEach((d) => {
-    const color = d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk;
-    const hPath = [
-      new Tmapv2.LatLng(d.lat, d.lng - stub),
-      new Tmapv2.LatLng(d.lat, d.lng + stub),
-    ];
-    const vPath = [
-      new Tmapv2.LatLng(d.lat - stub, d.lng),
-      new Tmapv2.LatLng(d.lat + stub, d.lng),
-    ];
-    hPath.forEach((ll) => boundsRef.extend(ll));
-    vPath.forEach((ll) => boundsRef.extend(ll));
-    hasPoint = true;
-    track(
-      new Tmapv2.Polyline({
-        path: hPath,
-        strokeColor: color,
-        strokeWeight: 9,
-        strokeStyle: "solid",
-        strokeOpacity: 0.92,
-        map: state.tmap,
-      })
-    );
-    track(
-      new Tmapv2.Polyline({
-        path: vPath,
-        strokeColor: color,
-        strokeWeight: 9,
-        strokeStyle: "solid",
-        strokeOpacity: 0.92,
-        map: state.tmap,
-      })
-    );
-  });
-
-  if (points.length >= 2) {
-    const ordered = [...points].sort((a, b) => a.lng - b.lng || a.lat - b.lat);
-    const path = ordered.map((p) => {
-      const ll = new Tmapv2.LatLng(p.lat, p.lng);
-      boundsRef.extend(ll);
-      return ll;
-    });
-    track(
-      new Tmapv2.Polyline({
-        path,
-        strokeColor: CATEGORY_COLORS.docRisk,
-        strokeWeight: 5,
-        strokeStyle: "solid",
-        strokeOpacity: 0.7,
-        map: state.tmap,
-      })
-    );
-    hasPoint = true;
-  }
-  return hasPoint;
-}
-
 function renderDocRiskOnlyMap(publicData) {
   if (!state.tmapReady || !state.tmap) {
     setMapStatus("지도를 준비한 뒤 문서 위험이 표시됩니다.", false);
@@ -1266,7 +1203,6 @@ function renderDocRiskOnlyMap(publicData) {
     return overlay;
   };
 
-  drawDocRiskRedPathsTmap(track, bounds, points);
   points.forEach((d) => {
     const latlng = new Tmapv2.LatLng(d.lat, d.lng);
     bounds.extend(latlng);
@@ -1284,15 +1220,15 @@ function renderDocRiskOnlyMap(publicData) {
       if (state.infoWindow) state.infoWindow.setMap(null);
       state.infoWindow = new Tmapv2.InfoWindow({
         position: latlng,
-        content: `<div style="padding:6px 8px;font-size:12px;max-width:220px">${title}</div>`,
+        content: `<div style="padding:6px 8px;font-size:12px;">${title}</div>`,
         type: 2,
-        border: "1px solid #888",
         map: state.tmap,
       });
     });
   });
 
   state.tmap.fitBounds(bounds);
+  setMapStatus(`문서 위험 핀 ${points.length}곳 표시`, false);
   renderLegend();
 }
 
@@ -1435,17 +1371,6 @@ function renderSvgMap(routeData, publicData) {
   if (shouldShowPublicLayer("doc-risk")) {
     documentPoints.forEach((d) => {
       const color = d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk;
-      const p = project(d, bounds, size, padding);
-      const stub = 10;
-      [["M", p.x - stub, p.y, "L", p.x + stub, p.y], ["M", p.x, p.y - stub, "L", p.x, p.y + stub]].forEach((parts) => {
-        const line = document.createElementNS(ns, "path");
-        line.setAttribute("d", `${parts[0]} ${parts[1]} ${parts[2]} ${parts[3]} ${parts[4]} ${parts[5]}`);
-        line.setAttribute("stroke", color);
-        line.setAttribute("stroke-width", "5");
-        line.setAttribute("stroke-linecap", "round");
-        line.setAttribute("fill", "none");
-        svg.appendChild(line);
-      });
       drawMarker(
         d,
         color,
@@ -1453,22 +1378,6 @@ function renderSvgMap(routeData, publicData) {
         `${d.is_estimated ? "[추정] " : ""}[문서근거] ${d.risk_type} (${d.source_doc})`
       );
     });
-    if (documentPoints.length >= 2) {
-      const ordered = [...documentPoints].sort((a, b) => a.lng - b.lng || a.lat - b.lat);
-      const line = document.createElementNS(ns, "polyline");
-      line.setAttribute(
-        "points",
-        ordered.map((pt) => {
-          const p = project(pt, bounds, size, padding);
-          return `${p.x},${p.y}`;
-        }).join(" ")
-      );
-      line.setAttribute("fill", "none");
-      line.setAttribute("stroke", CATEGORY_COLORS.docRisk);
-      line.setAttribute("stroke-width", "3");
-      line.setAttribute("stroke-opacity", "0.75");
-      svg.appendChild(line);
-    }
   }
 
   // 출발/목적지 라벨
@@ -1762,7 +1671,6 @@ function renderTmapRoutes(routeData, publicData) {
     marker(g, CATEGORY_COLORS.guardian, `🏪 ${g.name || "아동안전지킴이집"}`)
   );
   if (shouldShowPublicLayer("doc-risk")) {
-    if (drawDocRiskRedPathsTmap(track, bounds, documentPoints)) hasPoint = true;
     documentPoints.forEach((d) =>
       marker(
         d,
@@ -1996,7 +1904,7 @@ async function confirmPendingDocPoint(pt, inputEl, btn, itemEl) {
 
     const reran = await maybeRerunRouteAfterDocument();
     if (!reran) await refreshPublicDataAndMap({ focusDocRisk: true });
-    setDocUploadStatus(`「${query}」위치를 지도에 빨간 길로 올렸어요.`, "ok");
+    setDocUploadStatus(`「${query}」위치를 지도에 핀으로 올렸어요.`, "ok");
   } catch (err) {
     console.error(err);
     setDocUploadStatus(err.message || "위치 확인에 실패했습니다.", "error");
