@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS doc_risk_points (
     page INTEGER,
     report_date TEXT,
     recommendation TEXT,
+    is_estimated INTEGER DEFAULT 0,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 """
@@ -111,9 +112,16 @@ def session() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+def _ensure_doc_risk_estimated_column(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(doc_risk_points)").fetchall()}
+    if "is_estimated" not in cols:
+        conn.execute("ALTER TABLE doc_risk_points ADD COLUMN is_estimated INTEGER DEFAULT 0")
+
+
 def init_db() -> None:
     with session() as conn:
         conn.executescript(SCHEMA)
+        _ensure_doc_risk_estimated_column(conn)
 
 
 def clear_table(table: str) -> None:
@@ -154,11 +162,36 @@ def insert_crime_grid(conn: sqlite3.Connection, *, grid_key, lat_center, lng_cen
     )
 
 
-def insert_doc_risk_point(conn: sqlite3.Connection, *, lat, lng, risk_type, is_risk, snippet, source_doc, page, report_date, recommendation):
+def insert_doc_risk_point(
+    conn: sqlite3.Connection,
+    *,
+    lat,
+    lng,
+    risk_type,
+    is_risk,
+    snippet,
+    source_doc,
+    page,
+    report_date,
+    recommendation,
+    is_estimated: bool = False,
+):
     conn.execute(
-        "INSERT INTO doc_risk_points (lat, lng, risk_type, is_risk, snippet, source_doc, page, report_date, recommendation) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (lat, lng, risk_type, int(is_risk), snippet, source_doc, page, report_date, recommendation),
+        "INSERT INTO doc_risk_points "
+        "(lat, lng, risk_type, is_risk, snippet, source_doc, page, report_date, recommendation, is_estimated) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            lat,
+            lng,
+            risk_type,
+            int(is_risk),
+            snippet,
+            source_doc,
+            page,
+            report_date,
+            recommendation,
+            int(bool(is_estimated)),
+        ),
     )
 
 

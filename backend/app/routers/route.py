@@ -87,6 +87,7 @@ def get_public_data_layers() -> PublicDataResponse:
                 page=d.get("page"),
                 report_date=d.get("report_date"),
                 recommendation=d.get("recommendation"),
+                is_estimated=bool(d.get("is_estimated")),
             )
             for d in public_data.get_doc_risk_points()
         ],

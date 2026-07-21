@@ -132,6 +132,29 @@ class DocumentIngestResult(BaseModel):
     extracted: dict
     risk_points_created: int
     used_mock: bool
+    risk_points_skipped: int = 0
+
+
+class DocumentPointConfirmRequest(BaseModel):
+    location_text: str = ""
+    geocode_query: str
+    risk_type: str = ""
+    is_risk: bool = True
+    snippet: str = ""
+    source_doc: str = ""
+    page: Optional[int] = None
+    report_date: Optional[str] = None
+    recommendation: Optional[str] = None
+
+
+class DocumentPointConfirmResult(BaseModel):
+    id: int
+    lat: float
+    lng: float
+    risk_type: str
+    is_estimated: bool = False
+    source_doc: str = ""
+    geocode_query: str = ""
 
 
 class ChildZonePoint(BaseModel):
@@ -202,6 +225,7 @@ class DocumentRiskPoint(BaseModel):
     page: Optional[int] = None
     report_date: Optional[str] = None
     recommendation: Optional[str] = None
+    is_estimated: bool = False
 
 
 class PublicDataResponse(BaseModel):

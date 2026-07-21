@@ -4,8 +4,8 @@
       -> Document Parse(/v1/document-digitization, model=document-parse)로 구조화 텍스트 확보
       -> Information Extract(/v1/information-extraction, model=information-extract)로
          {location_text, risk_type, is_risk, report_date, recommendation, snippet} 스키마 추출
-      -> location_text를 실제 위경도로 지오코딩(문서 내부 bbox 좌표는 지면 상 상대좌표일 뿐
-         실세계 GPS가 아니므로 별도 지오코딩이 필요함)
+      -> Solar LLM으로 location_text를 지오코딩용 검색어로 정규화
+      -> 정규화된 검색어를 위경도로 지오코딩
       -> SQLite doc_risk_points 테이블에 출처(source_doc)와 함께 적재
 
 UPSTAGE_API_KEY가 없으면 backend/app/data/sample_documents/의 샘플 파싱·추출 결과를
@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
+import re
 from typing import Any
 
 import requests
@@ -25,6 +26,29 @@ from ..config import settings
 
 DOCUMENT_DIGITIZATION_URL = "https://api.upstage.ai/v1/document-digitization"
 INFORMATION_EXTRACTION_URL = "https://api.upstage.ai/v1/information-extraction"
+CHAT_COMPLETIONS_URL = "https://api.upstage.ai/v1/chat/completions"
+
+# 이 값 미만이면 지도에 자동 표시하지 않고 skipped 로 남긴다.
+MIN_GEOCODE_CONFIDENCE = 0.45
+# 이 값 미만으로 자동 표시된 지점은 "추정" 마커로 표시한다.
+ESTIMATED_CONFIDENCE_THRESHOLD = 0.85
+
+
+def _pending_point_payload(rp: dict[str, Any], *, filename: str, reason: str) -> dict[str, Any]:
+    return {
+        "location_text": (rp.get("location_text") or "").strip(),
+        "geocode_query": (rp.get("geocode_query") or rp.get("location_text") or "").strip(),
+        "confidence": float(rp.get("confidence") or 0),
+        "reason": reason,
+        "note": rp.get("normalize_note"),
+        "risk_type": rp.get("risk_type", ""),
+        "is_risk": bool(rp.get("is_risk", True)),
+        "snippet": rp.get("snippet", ""),
+        "report_date": rp.get("report_date"),
+        "recommendation": rp.get("recommendation"),
+        "page": rp.get("page"),
+        "source_doc": filename,
+    }
 
 RISK_SCHEMA = {
     "type": "json_schema",
@@ -38,9 +62,18 @@ RISK_SCHEMA = {
                     "items": {
                         "type": "object",
                         "properties": {
-                            "location_text": {"type": "string", "description": "위험/안전 지점의 주소 또는 위치 설명 (예: 'OO초등학교 서측 골목 교차로')"},
-                            "risk_type": {"type": "string", "description": "위험 유형 또는 안전조치 유형 (예: '무단횡단 위험', 'CCTV 추가설치 완료')"},
-                            "is_risk": {"type": "boolean", "description": "위험 지적 사항이면 true, 완료된 안전조치/개선사항이면 false"},
+                            "location_text": {
+                                "type": "string",
+                                "description": "위험/안전 지점의 주소 또는 위치 설명 (예: 'OO초등학교 서측 골목 교차로')",
+                            },
+                            "risk_type": {
+                                "type": "string",
+                                "description": "위험 유형 또는 안전조치 유형 (예: '무단횡단 위험', 'CCTV 추가설치 완료')",
+                            },
+                            "is_risk": {
+                                "type": "boolean",
+                                "description": "위험 지적 사항이면 true, 완료된 안전조치/개선사항이면 false",
+                            },
                             "report_date": {"type": "string", "description": "지적/보고 일자 (YYYY-MM-DD)"},
                             "recommendation": {"type": "string", "description": "개선권고사항"},
                             "snippet": {"type": "string", "description": "판단 근거가 되는 원문 문장 1~2개"},
@@ -108,9 +141,6 @@ def extract_risk_points(file_bytes: bytes, filename: str) -> dict[str, Any]:
     return {"risk_points": parsed.get("risk_points", []), "mock": False, "already_geocoded": False}
 
 
-# 실제 서비스에서는 Tmap/카카오 POI·주소 검색 API로 대체할 지오코딩 스텁.
-# 팀이 지오코딩 API 키를 연동하기 전까지는, 문서에서 자주 등장하는 위치 표현을
-# 데모 좌표로 매핑해 파이프라인 전체를 끝까지 시연할 수 있게 한다.
 _MANUAL_GEOCODE_FALLBACK = {
     "OO초등학교 서측 골목 교차로": (37.502, 127.0399),
     "OO초등학교 동측 통학로": (37.5012, 127.0410),
@@ -118,10 +148,11 @@ _MANUAL_GEOCODE_FALLBACK = {
 
 
 def geocode_location_text(location_text: str) -> tuple[float, float] | None:
+    if not location_text:
+        return None
     if location_text in _MANUAL_GEOCODE_FALLBACK:
         return _MANUAL_GEOCODE_FALLBACK[location_text]
 
-    # 통합 지오코딩 서비스(사전 + Kakao/Naver/Tmap)로 위치텍스트를 좌표로 변환
     from .geocoding import geocode
 
     result = geocode(location_text)
@@ -130,22 +161,189 @@ def geocode_location_text(location_text: str) -> tuple[float, float] | None:
     return None
 
 
-def ingest_document(file_bytes: bytes, filename: str) -> dict[str, Any]:
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        data = json.loads(text)
+        return data if isinstance(data, dict) else None
+    except json.JSONDecodeError:
+        pass
+    match = re.search(r"\{[\s\S]*\}", text)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+        return data if isinstance(data, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
+def normalize_locations_with_solar(
+    risk_points: list[dict[str, Any]],
+    *,
+    document_name: str,
+    region_hint: str = "",
+) -> list[dict[str, Any]]:
+    """문서에서 뽑힌 location_text를 지오코딩용 검색어로 정규화한다."""
+    if not risk_points:
+        return []
+
+    if all(rp.get("lat") is not None and rp.get("lng") is not None for rp in risk_points):
+        out = []
+        for rp in risk_points:
+            item = dict(rp)
+            item.setdefault("geocode_query", rp.get("location_text") or "")
+            item.setdefault("confidence", 1.0)
+            item.setdefault("normalize_note", "이미 좌표가 있어 정규화를 건너뜀")
+            out.append(item)
+        return out
+
+    fallback = []
+    for rp in risk_points:
+        item = dict(rp)
+        item["geocode_query"] = (rp.get("location_text") or "").strip()
+        item["confidence"] = 0.4
+        item["normalize_note"] = "원문 위치 표현을 그대로 사용"
+        fallback.append(item)
+
+    if settings.upstage_mock or not settings.upstage_api_key:
+        return fallback
+
+    payload_points = [
+        {
+            "i": idx,
+            "location_text": rp.get("location_text") or "",
+            "risk_type": rp.get("risk_type") or "",
+            "snippet": (rp.get("snippet") or "")[:180],
+        }
+        for idx, rp in enumerate(risk_points)
+    ]
+
+    system = (
+        "당신은 한국 어린이 통학로 안전 문서의 위치 표현을 지도 검색용 질의로 바꾸는 도우미입니다. "
+        "추측으로 존재하지 않는 건물·도로를 만들지 마세요. "
+        "확실하지 않으면 confidence를 낮게 주세요. "
+        "반드시 JSON만 출력하세요."
+    )
+    user = (
+        f"문서명: {document_name}\n"
+        f"지역 힌트: {region_hint or '(없음)'}\n"
+        "아래 위치 표현을 카카오/네이버/Tmap 지오코딩에 넣을 수 있는 한국어 검색어로 바꿔 주세요.\n"
+        "규칙:\n"
+        "1) geocode_query: 시/구/동·학교·건물·교차로 등이 드러나는 짧은 검색어\n"
+        "2) confidence: 0~1 (검색 가능하다고 확신할수록 높게)\n"
+        "3) note: 한 줄 메모\n"
+        "출력 JSON 형식:\n"
+        '{"items":[{"i":0,"geocode_query":"...","confidence":0.0,"note":"..."}]}\n\n'
+        f"입력:\n{json.dumps(payload_points, ensure_ascii=False)}"
+    )
+
+    try:
+        resp = requests.post(
+            CHAT_COMPLETIONS_URL,
+            headers={"Authorization": f"Bearer {settings.upstage_api_key}", "Content-Type": "application/json"},
+            json={
+                "model": "solar-pro",
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "temperature": 0.1,
+                "max_tokens": 900,
+            },
+            timeout=45,
+        )
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"]
+        parsed = _extract_json_object(content) or {}
+        items = parsed.get("items") if isinstance(parsed.get("items"), list) else []
+        by_index: dict[int, dict[str, Any]] = {}
+        for raw in items:
+            if not isinstance(raw, dict):
+                continue
+            try:
+                idx = int(raw.get("i"))
+            except (TypeError, ValueError):
+                continue
+            by_index[idx] = raw
+
+        out = []
+        for idx, rp in enumerate(risk_points):
+            item = dict(rp)
+            raw = by_index.get(idx, {})
+            query = str(raw.get("geocode_query") or rp.get("location_text") or "").strip()
+            try:
+                conf = float(raw.get("confidence", 0.4))
+            except (TypeError, ValueError):
+                conf = 0.4
+            conf = max(0.0, min(1.0, conf))
+            item["geocode_query"] = query
+            item["confidence"] = conf
+            item["normalize_note"] = str(raw.get("note") or "Solar 정규화")
+            out.append(item)
+        return out
+    except Exception as exc:
+        for item in fallback:
+            item["normalize_note"] = f"Solar 정규화 실패 → 원문 사용 ({exc})"
+        return fallback
+
+
+def ingest_document(
+    file_bytes: bytes,
+    filename: str,
+    *,
+    region_hint: str = "",
+) -> dict[str, Any]:
     parsed = parse_document(file_bytes, filename)
     extracted = extract_risk_points(file_bytes, filename)
+    normalized = normalize_locations_with_solar(
+        extracted.get("risk_points") or [],
+        document_name=filename,
+        region_hint=region_hint,
+    )
 
     db.init_db()
     created = 0
+    created_points: list[dict[str, Any]] = []
+    skipped_points: list[dict[str, Any]] = []
+
     with db.session() as conn:
-        for rp in extracted["risk_points"]:
+        for rp in normalized:
+            location_text = (rp.get("location_text") or "").strip()
+            geocode_query = (rp.get("geocode_query") or location_text).strip()
+            confidence = float(rp.get("confidence") or 0)
+
             if extracted.get("already_geocoded") and rp.get("lat") is not None:
                 lat, lng = rp["lat"], rp["lng"]
+                confidence = max(confidence, 0.9)
             else:
-                geocoded = geocode_location_text(rp.get("location_text", ""))
+                if confidence < MIN_GEOCODE_CONFIDENCE:
+                    skipped_points.append(
+                        _pending_point_payload(
+                            rp,
+                            filename=filename,
+                            reason="위치 확신이 낮아 자동 표시하지 않음",
+                        )
+                    )
+                    continue
+
+                geocoded = geocode_location_text(geocode_query)
+                if geocoded is None and geocode_query != location_text:
+                    geocoded = geocode_location_text(location_text)
                 if geocoded is None:
+                    skipped_points.append(
+                        _pending_point_payload(
+                            rp,
+                            filename=filename,
+                            reason="지오코딩 실패(검색 결과 없음)",
+                        )
+                    )
                     continue
                 lat, lng = geocoded
 
+            is_estimated = confidence < ESTIMATED_CONFIDENCE_THRESHOLD
             db.insert_doc_risk_point(
                 conn,
                 lat=lat,
@@ -157,13 +355,86 @@ def ingest_document(file_bytes: bytes, filename: str) -> dict[str, Any]:
                 page=rp.get("page"),
                 report_date=rp.get("report_date"),
                 recommendation=rp.get("recommendation"),
+                is_estimated=is_estimated,
             )
             created += 1
+            created_points.append(
+                {
+                    "location_text": location_text,
+                    "geocode_query": geocode_query,
+                    "confidence": confidence,
+                    "lat": lat,
+                    "lng": lng,
+                    "risk_type": rp.get("risk_type", ""),
+                    "is_risk": bool(rp.get("is_risk", True)),
+                    "is_estimated": is_estimated,
+                    "note": rp.get("normalize_note"),
+                }
+            )
+
+    extracted = dict(extracted)
+    extracted["risk_points"] = normalized
+    extracted["created_points"] = created_points
+    extracted["skipped_points"] = skipped_points
 
     return {
         "document_name": filename,
         "extracted": extracted,
         "risk_points_created": created,
+        "risk_points_skipped": len(skipped_points),
         "used_mock": settings.upstage_mock,
         "parsed_preview": parsed.get("markdown", "")[:500],
+    }
+
+
+def confirm_document_point(
+    *,
+    location_text: str,
+    geocode_query: str,
+    risk_type: str = "",
+    is_risk: bool = True,
+    snippet: str = "",
+    source_doc: str = "",
+    page: int | None = None,
+    report_date: str | None = None,
+    recommendation: str | None = None,
+) -> dict[str, Any]:
+    """사용자가 보류 지점의 검색어를 확인·수정한 뒤 지도에 올린다."""
+    query = (geocode_query or location_text or "").strip()
+    if not query:
+        raise ValueError("검색어(geocode_query)가 비어 있습니다.")
+
+    geocoded = geocode_location_text(query)
+    if geocoded is None and location_text and location_text.strip() != query:
+        geocoded = geocode_location_text(location_text.strip())
+    if geocoded is None:
+        raise ValueError(f"위치를 찾지 못했습니다: {query}")
+
+    lat, lng = geocoded
+    db.init_db()
+    with db.session() as conn:
+        db.insert_doc_risk_point(
+            conn,
+            lat=lat,
+            lng=lng,
+            risk_type=risk_type or "",
+            is_risk=is_risk,
+            snippet=snippet or "",
+            source_doc=source_doc or "manual-confirm",
+            page=page,
+            report_date=report_date,
+            recommendation=recommendation,
+            # 사용자가 검색어를 확인했으므로 추정 배지는 제거
+            is_estimated=False,
+        )
+        row_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+    return {
+        "id": int(row_id),
+        "lat": lat,
+        "lng": lng,
+        "risk_type": risk_type or "",
+        "is_estimated": False,
+        "source_doc": source_doc or "manual-confirm",
+        "geocode_query": query,
     }

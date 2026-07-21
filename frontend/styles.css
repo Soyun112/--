@@ -267,6 +267,123 @@ body.theme-dark .doc-upload-btn {
   color: #9bc9fb;
 }
 body.theme-dark .doc-upload-status { color: #c5d3e0; }
+
+.doc-review-panel {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #d9e2ec;
+  border-radius: 10px;
+  background: #f7fafc;
+}
+
+.doc-review-title {
+  margin: 0 0 4px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #243b53;
+}
+
+.doc-review-hint {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+}
+
+.doc-review-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.doc-review-item {
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.doc-review-item-title {
+  margin: 0 0 4px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #334e68;
+}
+
+.doc-review-item-meta {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  color: #627d98;
+}
+
+.doc-review-item label {
+  display: block;
+  font-size: 0.8rem;
+  color: #486581;
+  margin-bottom: 4px;
+}
+
+.doc-review-query {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #bcccdc;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  margin-bottom: 8px;
+}
+
+.doc-review-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.doc-review-confirm,
+.doc-review-skip {
+  border: none;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.doc-review-confirm {
+  background: #1c7c3b;
+  color: #fff;
+}
+
+.doc-review-confirm:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.doc-review-skip {
+  background: #e2e8f0;
+  color: #486581;
+}
+
+body.theme-dark .doc-review-panel {
+  background: #1b2838;
+  border-color: #334e68;
+}
+
+body.theme-dark .doc-review-title { color: #e2e8f0; }
+body.theme-dark .doc-review-item {
+  background: #243447;
+  border-color: #334e68;
+}
+body.theme-dark .doc-review-item-title { color: #e2e8f0; }
+body.theme-dark .doc-review-query {
+  background: #1b2838;
+  border-color: #486581;
+  color: #e2e8f0;
+}
+body.theme-dark .doc-review-skip {
+  background: #334e68;
+  color: #d9e2ec;
+}
 .demo-controls {
   margin-top: 18px;
   padding-top: 14px;
