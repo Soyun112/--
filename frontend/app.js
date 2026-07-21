@@ -3,8 +3,8 @@
 const CATEGORY_COLORS = {
   cctv: "#2f7dd1",
   hotspot: "#d64545",
-  docRisk: "#e08a2c",
-  docRiskEstimated: "#b08900",
+  docRisk: "#1a9f5c",
+  docRiskEstimated: "#3d9b6a",
   guardian: "#8e44ad",
   safetyCctv: "#1a6fbf",
   safetyStreetlight: "#f5b800",
