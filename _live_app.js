@@ -832,14 +832,31 @@ function openKidCardMode() {
   state.kidCardSteps = steps;
   state.kidCardIndex = 0;
   resetProgressStamps();
+  const sharePanel = document.getElementById("kid-card-share-panel");
+  if (sharePanel) sharePanel.hidden = true;
   document.getElementById("kid-card-overlay").hidden = false;
+  document.body.classList.add("kid-card-open");
   renderKidCard(0);
 }
 
 function closeKidCardMode() {
   document.getElementById("kid-card-overlay").hidden = true;
+  document.body.classList.remove("kid-card-open");
   hideKidCardCheer();
   updateKidProgressSummaryOnBoard();
+  const sharePanel = document.getElementById("kid-card-share-panel");
+  if (sharePanel) sharePanel.hidden = true;
+  const shareToggle = document.getElementById("kid-card-share-toggle");
+  if (shareToggle) shareToggle.setAttribute("aria-expanded", "false");
+}
+
+function toggleKidCardSharePanel() {
+  const panel = document.getElementById("kid-card-share-panel");
+  const toggle = document.getElementById("kid-card-share-toggle");
+  if (!panel || !toggle) return;
+  const open = panel.hidden;
+  panel.hidden = !open;
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 function updateKidProgressSummaryOnBoard() {
@@ -879,13 +896,13 @@ function buildKidGuideSharePayload() {
     steps: steps.map((step, idx) => {
       const isArrive = idx === steps.length - 1;
       const [icon] = navigationIcon(step);
-      const { text: stepText } = kidStepText(step.distance_m);
+      const keyword = isArrive ? "도착! 잘했어요" : navigationKeywordPlain(step);
       const landmark = landmarkPhrase(step);
       const weather = state.lastResult?.weather || null;
       return {
         icon: isArrive ? "🎉" : icon,
         keyword: isArrive ? "도착! 잘했어요" : navigationKeywordPlain(step),
-        friendly: isArrive || !stepText ? "" : `👣 ${stepText} 걸어가요`,
+        friendly: isArrive ? "" : kidWalkLine(keyword, step.distance_m || 0),
         tip: kidSafetyTip(step, { isArrive, weather }),
         distance_m: isArrive ? 0 : step.distance_m || 0,
         landmark: isArrive || !landmark ? "" : `📍 ${landmark}`,
@@ -898,7 +915,7 @@ function buildKidGuideSharePayload() {
 function buildKidGuideShareText() {
   const payload = buildKidGuideSharePayload();
   const title = payload.title || "오늘의 안전 길";
-  return `👶 ${title}\n링크를 누르면 길 안내 카드가 바로 열려요!`;
+  return `👶 ${title}\n링크를 누르면 아이용 길 안내 카드가 바로 열려요!`;
 }
 
 async function ensureKidGuideShareUrl() {
@@ -954,28 +971,28 @@ async function shareKidGuide(mode = "kakao") {
     }
 
     resetKidGuideShareCache();
-    const payload = buildKidGuideSharePayload();
+    const text = buildKidGuideShareText();
     const url = await ensureKidGuideShareUrl();
-    const shareTitle = `👶 ${payload.title || "오늘의 안전 길"}`;
 
     if (mode === "kakao" && navigator.share) {
       try {
         await navigator.share({
-          title: shareTitle,
-          text: buildKidGuideShareText(),
+          title: "👶 오늘의 안전 길",
+          text,
           url,
         });
         return;
       } catch (shareErr) {
         if (shareErr?.name === "AbortError") return;
+        // share 실패 시 복사로 폴백
       }
     }
 
     await copyTextToClipboard(url);
     showKidShareToast(
       mode === "kakao"
-        ? "링크가 복사됐어요. 카톡에 붙여넣기 하세요."
-        : "링크가 복사됐어요!"
+        ? "카톡에 붙여넣기 하세요. 링크 끝까지 잘렸으면 다시 복사해 주세요."
+        : "링크 복사됐어요! guide?d= 로 시작하는지 확인해 주세요."
     );
   } catch (err) {
     if (err?.name !== "AbortError") {
@@ -996,49 +1013,40 @@ function renderKidCard(direction = 0) {
   const step = steps[index];
   const isArrive = index === total - 1;
   const [icon] = navigationIcon(step);
-  const { text: stepText } = kidStepText(step.distance_m);
+  const keyword = isArrive ? "도착! 잘했어요" : navigationKeywordPlain(step);
   const landmark = landmarkPhrase(step);
-  const weather = state.lastResult?.weather || null;
-  const tip = kidSafetyTip(step, { isArrive, weather });
+  const walkLine = isArrive ? "" : kidWalkLine(keyword, step.distance_m || 0);
   const ratio = kidProgressRatio(steps, index);
-  const plain = navigationKeywordPlain(step);
-  // 한 줄만: 횡단·회전·도착은 tip, 직진은 걸음 수 (m·tip·걸음 동시 표시 안 함)
-  const preferTip =
-    isArrive ||
-    plain.includes("횡단") ||
-    plain.includes("육교") ||
-    plain.includes("왼쪽") ||
-    plain.includes("오른쪽");
-  let support = "";
-  if (preferTip) support = tip || "";
-  else if (stepText) support = `👣 ${stepText} 걸어가요`;
-  else support = tip || "";
+  const stepCheer = typeof kidCardCheerMessage === "function" ? kidCardCheerMessage(index, total) : "";
 
-  document.getElementById("kid-card-progress").textContent = `${index + 1} / ${total}`;
+  const cheerEl = document.getElementById("kid-card-cheer");
+  if (cheerEl && stepCheer) {
+    cheerEl.textContent = stepCheer;
+    cheerEl.hidden = false;
+  } else if (cheerEl && !cheerEl.classList.contains("pop")) {
+    cheerEl.textContent = "";
+    cheerEl.hidden = true;
+  }
+
   document.getElementById("kid-card").classList.toggle("arrived", isArrive);
   document.getElementById("kid-card-icon").textContent = isArrive ? "🎉" : icon;
-  document.getElementById("kid-card-text").textContent = isArrive ? "도착! 잘했어요" : plain;
-  const supportEl = document.getElementById("kid-card-support");
-  if (supportEl) {
-    supportEl.textContent = support;
-    supportEl.classList.toggle("is-tip", preferTip && Boolean(tip));
-    supportEl.classList.toggle("is-steps", !preferTip && Boolean(stepText));
-  }
+  document.getElementById("kid-card-text").textContent = keyword;
+  document.getElementById("kid-card-friendly").textContent = walkLine;
   document.getElementById("kid-card-landmark").textContent =
     isArrive || !landmark ? "" : `📍 ${landmark}`;
-  const prevBtn = document.getElementById("kid-card-prev");
-  if (prevBtn) {
-    prevBtn.hidden = index === 0;
-    prevBtn.disabled = index === 0;
-  }
-  const nextBtn = document.getElementById("kid-card-next");
-  nextBtn.hidden = isArrive;
-  nextBtn.textContent = index >= total - 2 ? "도착! →" : "다음 →";
-  document.querySelector(".kid-card-nav")?.classList.toggle("solo-next", index === 0 && !isArrive);
 
-  // 공유는 부모용 → 도착 카드에만
-  const shareRow = document.getElementById("kid-card-share-row");
-  if (shareRow) shareRow.hidden = !isArrive;
+  const nextBtn = document.getElementById("kid-card-next");
+  const sharePanel = document.getElementById("kid-card-share-panel");
+  if (isArrive) {
+    nextBtn.textContent = "🎉 도착! 잘했어요";
+    nextBtn.classList.add("arrive-btn");
+    nextBtn.disabled = true;
+    if (sharePanel) sharePanel.hidden = false;
+  } else {
+    nextBtn.textContent = "다음 →";
+    nextBtn.classList.remove("arrive-btn");
+    nextBtn.disabled = false;
+  }
 
   updateProgressStamps(ratio, { announce: direction !== 0 || index === 0 });
   animateKidCard(direction);
@@ -1060,6 +1068,38 @@ function stepKidCard(delta) {
   if (next === state.kidCardIndex) return;
   state.kidCardIndex = next;
   renderKidCard(delta);
+}
+
+function bindKidCardSwipe() {
+  const card = document.getElementById("kid-card");
+  if (!card || card.dataset.swipeBound === "1") return;
+  card.dataset.swipeBound = "1";
+
+  let startX = 0;
+  let startY = 0;
+  card.addEventListener(
+    "touchstart",
+    (event) => {
+      const touch = event.changedTouches[0];
+      startX = touch.clientX;
+      startY = touch.clientY;
+    },
+    { passive: true }
+  );
+  card.addEventListener(
+    "touchend",
+    (event) => {
+      const touch = event.changedTouches[0];
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
+      if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy)) return;
+      stepKidCard(dx < 0 ? 1 : -1);
+    },
+    { passive: true }
+  );
+
+  document.getElementById("kid-card-tap-prev")?.addEventListener("click", () => stepKidCard(-1));
+  document.getElementById("kid-card-tap-next")?.addEventListener("click", () => stepKidCard(1));
 }
 
 function renderLegend() {
@@ -1710,10 +1750,11 @@ function bindAppUi() {
     selectRoute(card.dataset.routeId);
   });
   document.getElementById("kid-card-close")?.addEventListener("click", closeKidCardMode);
+  document.getElementById("kid-card-share-toggle")?.addEventListener("click", toggleKidCardSharePanel);
   document.getElementById("kid-card-share-kakao")?.addEventListener("click", () => shareKidGuide("kakao"));
   document.getElementById("kid-card-share-copy")?.addEventListener("click", () => shareKidGuide("copy"));
-  document.getElementById("kid-card-prev")?.addEventListener("click", () => stepKidCard(-1));
   document.getElementById("kid-card-next")?.addEventListener("click", () => stepKidCard(1));
+  bindKidCardSwipe();
   startLiveClock();
   setMode(state.mode);
   setTheme(localStorage.getItem("kids-theme") || "light");

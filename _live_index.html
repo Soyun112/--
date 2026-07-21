@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<script>
+(function () {
+  var TOKEN_KEY = "kids_auth_token";
+
+  function saveToken(raw) {
+    if (!raw) return;
+    var token = raw;
+    try { token = decodeURIComponent(token); } catch (e) { /* keep raw */ }
+    try { localStorage.setItem(TOKEN_KEY, token); } catch (e) { /* ignore */ }
+  }
+
+  function scrubAccessTokenFromUrl() {
+    var q = new URLSearchParams(location.search);
+    if (!q.has("access_token")) return;
+    q.delete("access_token");
+    var next = q.toString();
+    history.replaceState(null, "", location.pathname + (next ? "?" + next : ""));
+  }
+
+  // OAuth 콜백(?access_token= / #access_token=)은 다른 스크립트보다 먼저 저장
+  try {
+    var q = new URLSearchParams(location.search);
+    if (q.has("access_token")) {
+      saveToken(q.get("access_token"));
+      scrubAccessTokenFromUrl();
+    } else {
+      var hash = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
+      if (hash && hash.indexOf("access_token=") >= 0) {
+        saveToken(new URLSearchParams(hash).get("access_token"));
+        history.replaceState(null, "", location.pathname + location.search);
+      }
+    }
+  } catch (e) { /* ignore */ }
+
+  var params = new URLSearchParams(location.search);
+  var authErr = params.get("auth_error");
+  if (authErr) {
+    try {
+      sessionStorage.setItem("kids_auth_error", authErr);
+      localStorage.removeItem("kids_auth_token");
+    } catch (e) { /* ignore */ }
+  }
+
+  var path = location.pathname.replace(/\/+$/, "") || "/";
+  var onGuidePage = /kid-guide\.html$/i.test(path) || path === "/g" || /\/g\.html$/i.test(path) || path === "/guide";
+  if (
+    !onGuidePage &&
+    (params.has("d") || params.has("id")) &&
+    !params.has("access_token") &&
+    !params.has("login_code") &&
+    !params.has("auth_error")
+  ) {
+    location.replace("guide" + location.search + location.hash);
+  }
+})();
+</script>
+<title>AI 어린이 안심 길찾기</title>
+<link rel="stylesheet" href="styles.css" />
+<!-- Tmap SDK는 app.js에서 /api/config 키 로드 후 programmatic 으로 불러옵니다 -->
+</head>
+<body>
+  <!-- 로그인 화면 (미로그인 시) -->
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <span class="login-emoji" aria-hidden="true">🧒🛡️</span>
+      <h1>AI 어린이 안심 길찾기</h1>
+      <p class="login-subtitle">Google 계정으로 로그인하고 안전한 길을 찾아보세요.</p>
+      <p id="login-status" class="login-status" hidden role="status">로그인 확인 중…</p>
+      <p id="login-error" class="login-error" hidden role="alert"></p>
+      <script>
+      (function () {
+        try {
+          var err = new URLSearchParams(location.search).get("auth_error") || sessionStorage.getItem("kids_auth_error");
+          if (!err) return;
+          sessionStorage.removeItem("kids_auth_error");
+          try { localStorage.removeItem("kids_auth_token"); } catch (e) {}
+          var el = document.getElementById("login-error");
+          if (!el) return;
+          el.textContent = "Google 로그인 실패 (" + err + "). 잠시 후 자세한 안내가 표시됩니다.";
+          el.hidden = false;
+          el.setAttribute("data-auth-error", err);
+        } catch (e) { /* ignore */ }
+      })();
+      </script>
+      <button type="button" id="google-login-btn" class="google-login-btn">
+        <span class="google-icon" aria-hidden="true">G</span>
+        Google로 로그인
+      </button>
+    </div>
+  </div>
+
+  <div id="app-shell" hidden>
+  <div id="auth-verify-banner" class="auth-verify-banner" hidden role="status">로그인 확인 중…</div>
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-emoji" aria-hidden="true">🧒🛡️</span>
+      <div>
+        <h1>AI 어린이 안심 길찾기</h1>
+        <p class="subtitle">아이와 함께 더 안전한 길을 찾아봐요</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <div id="user-profile" class="user-profile" hidden>
+        <img id="user-avatar" class="user-avatar" alt="" width="36" height="36" />
+        <div class="user-meta">
+          <span id="user-name" class="user-name"></span>
+          <span id="user-email" class="user-email"></span>
+        </div>
+        <button type="button" id="logout-btn" class="logout-btn">로그아웃</button>
+      </div>
+      <div id="live-clock" class="live-clock" aria-live="polite">--:--</div>
+      <div class="mode-toggle" role="group" aria-label="안내 화면 선택">
+        <button type="button" class="mode-button active" data-mode="parent" aria-pressed="true">부모 모드</button>
+        <button type="button" class="mode-button" data-mode="kid" aria-pressed="false">아이 모드</button>
+      </div>
+      <button type="button" id="theme-toggle" class="theme-toggle" aria-pressed="false">다크 모드</button>
+    </div>
+  </header>
+
+  <div id="time-banner" class="time-banner" hidden>
+    <span id="time-banner-icon" class="time-banner-icon" aria-hidden="true">☀️</span>
+    <div class="time-banner-text">
+      <strong id="time-recommendation">안전 경로를 찾으면 시간대 맞춤 안내가 표시됩니다.</strong>
+      <span id="time-eta" class="time-eta"></span>
+    </div>
+  </div>
+
+  <main class="layout">
+    <section class="panel form-panel">
+      <h2>어디로 갈까요?</h2>
+      <form id="route-form">
+        <fieldset>
+          <legend>출발지 (건물명 · 역 이름 · 주소)</legend>
+          <input type="text" id="origin-query" aria-label="출발지" value="개나리SK뷰5차아파트" placeholder="예: 강남역, 코엑스, OO초등학교" required />
+        </fieldset>
+        <button type="button" id="swap-locations" class="swap-locations" aria-label="출발지와 목적지 바꾸기" title="출발지와 목적지 바꾸기">↕</button>
+        <fieldset>
+          <legend>목적지 (건물명 · 역 이름 · 주소)</legend>
+          <input type="text" id="dest-query" aria-label="목적지" value="도성초등학교" placeholder="예: 학교, 서울역, 봉은사" required />
+        </fieldset>
+        <!-- 아이용 AI 설명 난이도 조절 기능을 다시 사용할 때 활성화합니다.
+        <label class="age-label">아이 나이
+          <input type="number" id="audience-age" min="3" max="15" value="8" />
+        </label>
+        -->
+        <div class="form-actions">
+          <button type="submit" id="submit-btn">안전 경로 찾기</button>
+        </div>
+      </form>
+      <p class="hint">출발지와 목적지를 입력한 뒤 안전한 길을 찾아보세요.</p>
+      <details class="demo-controls">
+        <summary>발표용 시나리오 선택</summary>
+        <label>데모 시나리오
+          <select id="demo-scenario-select">
+            <option value="morning_school">등교길</option>
+            <option value="night_academy">야간 학원 하원길</option>
+            <option value="school_to_academy">학교 → 학원길</option>
+          </select>
+        </label>
+        <p id="scenario-hint" class="hint"></p>
+      </details>
+      <section class="results-panel">
+        <h2 id="results-label">안전한 길 비교</h2>
+        <div id="candidates-list" class="candidates-list">
+          <p class="placeholder">안전 경로를 찾으면 여기에 결과가 표시됩니다.</p>
+        </div>
+      </section>
+    </section>
+
+    <section class="panel map-panel">
+      <h2><span id="route-label">부모님이 추천한 길</span> <span id="weather-badge" class="weather-badge" style="display:none;"></span></h2>
+      <p id="mode-message" class="mode-message">안전 점수와 주변 시설을 비교해 가장 안전한 길을 골랐어요.</p>
+      <div class="map-wrap">
+        <div id="tmap" class="map-surface"></div>
+        <div id="map-status" class="map-status">티맵 지도를 불러오는 중…</div>
+        <svg id="svg-map" class="map-surface" style="display:none;" viewBox="0 0 600 600" preserveAspectRatio="xMidYMid meet"></svg>
+      </div>
+      <div id="legend" class="legend"></div>
+    </section>
+
+    <section class="panel ai-panel">
+      <h2 id="guide-label">오늘의 추천 길</h2>
+      <div class="ai-tabs">
+        <div class="ai-card mode-report parent-report-card">
+          <h3>👪 부모용 안전 리포트</h3>
+          <p id="parent-report" class="ai-text placeholder">경로를 찾으면 시간대 맞춤 안전 리포트가 표시됩니다.</p>
+        </div>
+        <div class="ai-card mode-report kid-report-card">
+          <h3>오늘의 추천 길</h3>
+          <div id="kid-keywords" class="route-keywords">
+            <span class="placeholder">경로를 찾으면 안전 키워드가 표시됩니다.</span>
+          </div>
+          <div id="kid-directions" class="kid-directions"></div>
+          <div id="kid-stamp-board" class="stamp-board"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <p>공공 안전 데이터와 AI를 활용해 더 안전한 통학로를 안내합니다.</p>
+  </footer>
+
+  <div id="kid-card-overlay" class="kid-card-overlay" hidden>
+    <div class="kid-card-shell">
+      <header class="kid-card-topbar">
+        <button type="button" id="kid-card-close" class="kid-card-back">← 목록으로</button>
+        <button type="button" id="kid-card-share-toggle" class="kid-card-share-toggle" aria-expanded="false">공유</button>
+      </header>
+
+      <div id="kid-progress-stamps" class="kid-progress-stamps" aria-label="길 따라가기 스탬프">
+        <div class="kid-progress-stamp" data-stamp="third" title="1/3 지점">
+          <span class="kid-progress-stamp-emoji">⭐</span>
+          <span class="kid-progress-stamp-label">1/3</span>
+        </div>
+        <div class="kid-progress-stamp" data-stamp="twoThirds" title="2/3 지점">
+          <span class="kid-progress-stamp-emoji">🌟</span>
+          <span class="kid-progress-stamp-label">2/3</span>
+        </div>
+        <div class="kid-progress-stamp arrive" data-stamp="arrive" title="도착">
+          <span class="kid-progress-stamp-emoji">👑</span>
+          <span class="kid-progress-stamp-label">도착</span>
+        </div>
+      </div>
+      <div id="kid-card-cheer" class="kid-card-cheer" hidden role="status"></div>
+
+      <main id="kid-card" class="kid-card-main">
+        <div id="kid-stamp-burst" class="kid-stamp-burst" hidden aria-hidden="true">
+          <div class="kid-stamp-burst-glow"></div>
+          <div id="kid-stamp-burst-emoji" class="kid-stamp-burst-emoji">⭐</div>
+          <div id="kid-stamp-burst-text" class="kid-stamp-burst-text">스탬프 겟!</div>
+          <div id="kid-stamp-burst-particles" class="kid-stamp-burst-particles" aria-hidden="true"></div>
+        </div>
+        <div id="kid-card-tap-prev" class="kid-card-tap-left" aria-label="이전"></div>
+        <div id="kid-card-tap-next" class="kid-card-tap-right" aria-label="다음"></div>
+        <div id="kid-card-stage" class="kid-card-stage">
+          <div id="kid-card-icon" class="kid-card-icon" aria-hidden="true">↑</div>
+          <h2 id="kid-card-text" class="kid-card-text">직진</h2>
+          <p id="kid-card-friendly" class="kid-card-friendly"></p>
+          <p id="kid-card-landmark" class="kid-card-landmark"></p>
+        </div>
+      </main>
+
+      <button type="button" id="kid-card-next" class="kid-card-next-btn">다음 →</button>
+
+      <div id="kid-card-share-panel" class="kid-card-share-panel" hidden>
+        <button type="button" id="kid-card-share-kakao" class="kid-card-share-btn primary">💬 카톡으로 보내기</button>
+        <button type="button" id="kid-card-share-copy" class="kid-card-share-btn">🔗 링크 복사</button>
+      </div>
+    </div>
+  </div>
+
+  </div><!-- #app-shell -->
+
+  <script src="auth.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
+  <script src="kid-guide-share.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

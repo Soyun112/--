@@ -17,6 +17,7 @@ class KidGuideStep(BaseModel):
     icon: str = "↑"
     keyword: str
     friendly: str = ""
+    tip: str = ""
     distance_m: float = 0
     landmark: str = ""
     is_arrive: bool = False

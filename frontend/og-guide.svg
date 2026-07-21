@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400" role="img" aria-label="AI ´°t Hì 8>0">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fff6d8"/>
+      <stop offset="55%" stop-color="#ffe8ef"/>
+      <stop offset="100%" stop-color="#d9f2ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="400" rx="48" fill="url(#bg)"/>
+  <circle cx="200" cy="156" r="72" fill="#3a8be0"/>
+  <text x="200" y="178" text-anchor="middle" font-size="64">>Ò</text>
+  <text x="200" y="268" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="#1f5a9c">H 8 H´</text>
+  <text x="200" y="306" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" fill="#5a6b7d">AI ´°t Hì 8>0</text>
+</svg>

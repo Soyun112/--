@@ -128,6 +128,8 @@ function renderCard(direction = 0) {
   card.classList.toggle("arrived", isArrive);
   document.getElementById("kid-guide-icon").textContent = step.icon || (isArrive ? "🎉" : "↑");
   document.getElementById("kid-guide-text").textContent = step.keyword || "";
+  document.getElementById("kid-guide-tip").textContent =
+    step.tip || tipForKeyword(step.keyword, isArrive);
   document.getElementById("kid-guide-friendly").textContent = step.friendly || "";
   const tipEl = document.getElementById("kid-guide-tip");
   if (tipEl) tipEl.textContent = step.tip || (isArrive ? "도착! 오늘도 안전하게 와줘서 고마워요" : "");
