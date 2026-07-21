@@ -1,13 +1,31 @@
 /** 아이용 길 안내 공유 — LZ 압축 + ?d= (카톡은 # 해시를 제거함) */
+function compactFriendly(value) {
+  return (value || "").replace(/^👣\s*/, "");
+}
+
+function compactLandmark(value) {
+  return (value || "").replace(/^📍\s*/, "").replace(/\s*쪽으로$/, "").trim();
+}
+
+function expandFriendly(value) {
+  if (!value) return "";
+  return value.startsWith("👣") ? value : `👣 ${value}`;
+}
+
+function expandLandmark(value) {
+  if (!value) return "";
+  if (value.startsWith("📍")) return value;
+  return `📍 ${value} 쪽으로`;
+}
+
 function ultraCompactPayload(payload) {
   return {
     t: payload.title || "",
     s: (payload.steps || []).map((step) => [
       step.keyword || "",
-      step.friendly || "",
-      step.landmark || "",
+      compactFriendly(step.friendly || ""),
+      compactLandmark(step.landmark || ""),
       step.is_arrive ? 1 : 0,
-      step.tip || "",
     ]),
   };
 }
@@ -20,16 +38,15 @@ function expandKidGuidePayload(data) {
     title: data.t || "오늘의 안전 길",
     steps: data.s.map((row) => {
       const keyword = row[0] || "";
-      const friendly = row[1] || "";
-      const landmark = row[2] || "";
+      const friendly = expandFriendly(row[1] || "");
+      const landmark = expandLandmark(row[2] || "");
       const isArrive = !!row[3];
-      const tip = row[4] || tipForShareStep({ keyword, friendly, landmark, is_arrive: isArrive });
       return {
         keyword,
         friendly,
         landmark,
         is_arrive: isArrive,
-        tip,
+        tip: tipForShareStep({ keyword, friendly, landmark, is_arrive: isArrive }),
         icon: iconForKeyword(keyword, isArrive),
       };
     }),
@@ -177,10 +194,18 @@ function readEncodedFromLocation() {
 
   if (!encoded) {
     const match = window.location.pathname.match(/\/g\/(.+)/i);
-    if (match) encoded = match[1].replace(/\//g, "");
+    if (match) encoded = match[1];
   }
 
-  return encoded;
+  if (!encoded) return null;
+
+  encoded = String(encoded).trim();
+  try {
+    encoded = decodeURIComponent(encoded);
+  } catch {
+    /* keep raw */
+  }
+  return encoded.replace(/\//g, "");
 }
 
 function readInlineGuidePayload() {
@@ -220,12 +245,7 @@ function buildKidGuideShareUrl(payload) {
   const encoded = encodeKidGuidePayload(payload);
   const base = resolveKidGuideFrontendBase();
 
-  // /g/ 짧은 URL — 카톡에서 ?d= 긴 주소가 잘리는 문제 완화
   if (encoded.length <= 1800) {
-    return `${base}/g/${encoded}`;
-  }
-
-  if (encoded.length <= 1200) {
     return `${base}/guide?d=${encoded}`;
   }
 

@@ -54,11 +54,8 @@ def _require_user(authorization: Annotated[str | None, Header()] = None) -> None
 
 
 @router.post("/kid-guide", response_model=KidGuideShareResponse)
-def post_kid_guide_share(
-    body: KidGuideShareCreate,
-    authorization: Annotated[str | None, Header()] = None,
-) -> KidGuideShareResponse:
-    _require_user(authorization)
+def post_kid_guide_share(body: KidGuideShareCreate) -> KidGuideShareResponse:
+    # 공유 링크는 로그인 없이 생성 (짧은 id URL — 카톡 URL 잘림 방지)
     result = create_share(body.model_dump())
     return KidGuideShareResponse(**result)
 

@@ -152,7 +152,7 @@ async function loadGuide() {
     try {
       const data = await fetchShareById(shareId);
       if (data?.steps?.length) {
-        showApp(data);
+        showApp(typeof normalizeSteps === "function" ? normalizeSteps(data) : data);
         return;
       }
     } catch {

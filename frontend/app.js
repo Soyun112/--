@@ -728,7 +728,24 @@ function buildKidGuideShareText() {
 }
 
 async function ensureKidGuideShareUrl() {
-  cachedKidGuideShareUrl = buildKidGuideShareUrl(buildKidGuideSharePayload());
+  if (cachedKidGuideShareUrl) return cachedKidGuideShareUrl;
+
+  const payload = buildKidGuideSharePayload();
+  try {
+    const data = await fetchJson("/api/share/kid-guide", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (data?.id) {
+      cachedKidGuideShareUrl = buildKidGuideShortUrl(data.id);
+      return cachedKidGuideShareUrl;
+    }
+  } catch {
+    /* 서버 저장 실패 시 인라인 URL */
+  }
+
+  cachedKidGuideShareUrl = buildKidGuideShareUrl(payload);
   return cachedKidGuideShareUrl;
 }
 
