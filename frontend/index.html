@@ -68,54 +68,58 @@
   </div>
 
   <main class="layout">
-    <section class="panel form-panel">
-      <h2>어디로 갈까요?</h2>
-      <form id="route-form">
-        <fieldset>
-          <legend>출발지 (건물명 · 역 이름 · 주소)</legend>
-          <input type="text" id="origin-query" aria-label="출발지" value="개나리SK뷰5차아파트" placeholder="예: 강남역, 코엑스, OO초등학교" required />
-        </fieldset>
-        <button type="button" id="swap-locations" class="swap-locations" aria-label="출발지와 목적지 바꾸기" title="출발지와 목적지 바꾸기">↕</button>
-        <fieldset>
-          <legend>목적지 (건물명 · 역 이름 · 주소)</legend>
-          <input type="text" id="dest-query" aria-label="목적지" value="도성초등학교" placeholder="예: 학교, 서울역, 봉은사" required />
-        </fieldset>
-        <!-- 아이용 AI 설명 난이도 조절 기능을 다시 사용할 때 활성화합니다.
-        <label class="age-label">아이 나이
-          <input type="number" id="audience-age" min="3" max="15" value="8" />
-        </label>
-        -->
-        <div class="form-actions">
-          <button type="submit" id="submit-btn">안전 경로 찾기</button>
-        </div>
-      </form>
-      <p class="hint">출발지와 목적지를 입력한 뒤 안전한 길을 찾아보세요.</p>
-
-      <section class="doc-upload-panel" aria-label="안전 문서 업로드">
-        <h3 class="doc-upload-title">📄 안전 문서 반영</h3>
-        <p class="hint doc-upload-hint">
-          통학로·안전진단 보고서(PDF·이미지)를 올리면 문서를 텍스트로 읽은 뒤
-          지도용 주소로 바꿔 위험 지점을 표시합니다.
+    <section class="panel doc-panel" aria-label="안전 문서 업로드">
+      <h2 class="doc-upload-title">📄 안전 문서 반영</h2>
+      <p class="hint doc-upload-hint">
+        문서를 여러 개 추가한 뒤 「확인」으로 분석하거나, 문서 없이 가려면 「반영 안함」을 눌러 주세요.
+        완료 후 「안전 경로 찾기」가 켜집니다.
+      </p>
+      <div class="doc-upload-actions">
+        <input
+          type="file"
+          id="doc-upload-input"
+          accept=".pdf,.png,.jpg,.jpeg,.webp,.hwp,.hwpx,.md,.txt,application/pdf,image/*"
+          multiple
+          hidden
+        />
+        <button type="button" id="doc-add-btn" class="doc-upload-btn">문서 추가</button>
+        <button type="button" id="doc-skip-btn" class="doc-skip-btn">반영 안함</button>
+      </div>
+      <ul id="doc-queue-list" class="doc-queue-list" aria-label="추가된 문서 목록"></ul>
+      <div class="doc-confirm-row">
+        <button type="button" id="doc-confirm-btn" class="doc-confirm-btn" disabled>확인 (문서 분석)</button>
+      </div>
+      <p id="doc-upload-status" class="doc-upload-status" role="status" aria-live="polite">
+        문서를 추가하거나 「반영 안함」을 선택해 주세요.
+      </p>
+      <div id="doc-review-panel" class="doc-review-panel" hidden>
+        <h4 class="doc-review-title">위치 확인이 필요해요</h4>
+        <p class="hint doc-review-hint">
+          자동으로 못 찍은 지점이에요. 검색어를 고친 뒤 「지도에 올리기」를 눌러 주세요.
         </p>
-        <div class="doc-upload-actions">
-          <input
-            type="file"
-            id="doc-upload-input"
-            accept=".pdf,.png,.jpg,.jpeg,.webp,.hwp,.hwpx,.md,.txt,application/pdf,image/*"
-            hidden
-          />
-          <button type="button" id="doc-upload-btn" class="doc-upload-btn">문서 선택·업로드</button>
-        </div>
-        <p id="doc-upload-status" class="doc-upload-status" role="status" aria-live="polite"></p>
-        <div id="doc-review-panel" class="doc-review-panel" hidden>
-          <h4 class="doc-review-title">위치 확인이 필요해요</h4>
-          <p class="hint doc-review-hint">
-            자동으로 못 찍은 지점이에요. 검색어를 고친 뒤 「지도에 올리기」를 눌러 주세요.
-          </p>
-          <ul id="doc-review-list" class="doc-review-list"></ul>
-        </div>
-      </section>
+        <ul id="doc-review-list" class="doc-review-list"></ul>
+      </div>
+    </section>
 
+    <section class="panel route-bar">
+      <div class="route-bar-main">
+        <h2>어디로 갈까요?</h2>
+        <form id="route-form" class="route-form-horizontal">
+          <fieldset>
+            <legend>출발지 (건물명 · 역 이름 · 주소)</legend>
+            <input type="text" id="origin-query" aria-label="출발지" value="개나리SK뷰5차아파트" placeholder="예: 강남역, 코엑스, OO초등학교" required />
+          </fieldset>
+          <button type="button" id="swap-locations" class="swap-locations" aria-label="출발지와 목적지 바꾸기" title="출발지와 목적지 바꾸기">↕</button>
+          <fieldset>
+            <legend>목적지 (건물명 · 역 이름 · 주소)</legend>
+            <input type="text" id="dest-query" aria-label="목적지" value="도성초등학교" placeholder="예: 학교, 서울역, 봉은사" required />
+          </fieldset>
+          <div class="form-actions">
+            <button type="submit" id="submit-btn" disabled title="먼저 안전 문서를 확인하거나 반영 안함을 선택해 주세요.">안전 경로 찾기</button>
+          </div>
+        </form>
+        <p class="hint route-bar-hint">왼쪽에서 문서 확인(또는 반영 안함) 후, 출발·도착을 넣고 안전한 길을 찾아보세요.</p>
+      </div>
       <details class="demo-controls">
         <summary>발표용 시나리오 선택</summary>
         <label>데모 시나리오
@@ -127,12 +131,6 @@
         </label>
         <p id="scenario-hint" class="hint"></p>
       </details>
-      <section class="results-panel">
-        <h2 id="results-label">안전한 길 비교</h2>
-        <div id="candidates-list" class="candidates-list">
-          <p class="placeholder">안전 경로를 찾으면 여기에 결과가 표시됩니다.</p>
-        </div>
-      </section>
     </section>
 
     <section class="panel map-panel">
@@ -144,6 +142,13 @@
         <svg id="svg-map" class="map-surface" style="display:none;" viewBox="0 0 600 600" preserveAspectRatio="xMidYMid meet"></svg>
       </div>
       <div id="legend" class="legend"></div>
+    </section>
+
+    <section class="panel results-panel">
+      <h2 id="results-label">안전한 길 비교</h2>
+      <div id="candidates-list" class="candidates-list">
+        <p class="placeholder">안전 경로를 찾으면 여기에 결과가 표시됩니다.</p>
+      </div>
     </section>
 
     <section class="panel ai-panel">

@@ -90,7 +90,7 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  max-width: 1400px;
+  max-width: 1600px;
   margin: 0 auto 4px;
   padding: 14px 18px;
   background: linear-gradient(90deg, #fff9e6, #eef7ff);
@@ -123,12 +123,13 @@ body {
 
 .layout {
   display: grid;
-  grid-template-columns: 320px 1fr;
-  grid-template-rows: auto auto;
+  grid-template-columns: 300px minmax(0, 1fr) 300px;
+  grid-template-rows: auto auto auto;
   gap: 20px;
   padding: 24px 32px 48px;
-  max-width: 1400px;
+  max-width: 1600px;
   margin: 0 auto;
+  align-items: start;
 }
 
 .panel {
@@ -141,10 +142,73 @@ body {
 
 .panel h2 { margin-top: 0; font-size: 16px; color: var(--primary-dark); }
 
-.form-panel { grid-column: 1; grid-row: 1 / span 2; }
-.map-panel { grid-column: 2; grid-row: 1; }
-.results-panel { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
-.ai-panel { grid-column: 2; grid-row: 2; }
+.doc-panel {
+  grid-column: 1;
+  grid-row: 1 / span 3;
+  background: linear-gradient(180deg, #f7fbff, #ffffff);
+}
+
+.route-bar {
+  grid-column: 2 / -1;
+  grid-row: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px 24px;
+  align-items: flex-start;
+}
+
+.route-bar-main {
+  flex: 1 1 420px;
+  min-width: 0;
+}
+
+.route-bar-hint { margin-top: 8px; margin-bottom: 0; }
+
+.route-form-horizontal {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  gap: 10px 12px;
+  align-items: end;
+}
+
+.route-form-horizontal fieldset {
+  margin-bottom: 0;
+}
+
+.route-form-horizontal .swap-locations {
+  margin: 0 0 6px;
+  width: 40px;
+  height: 40px;
+}
+
+.route-form-horizontal .form-actions {
+  margin-top: 0;
+  min-width: 120px;
+}
+
+.route-bar .demo-controls {
+  flex: 0 1 240px;
+  margin-top: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #f8fafc;
+  align-self: stretch;
+}
+
+.map-panel { grid-column: 2; grid-row: 2; min-width: 0; }
+
+.results-panel {
+  grid-column: 3;
+  grid-row: 2 / span 2;
+  margin-top: 0;
+  padding-top: 20px;
+  border-top: none;
+  max-height: calc(100vh - 160px);
+  overflow: auto;
+}
+
+.ai-panel { grid-column: 2; grid-row: 3; min-width: 0; }
 
 fieldset {
   border: 1px solid var(--border);
@@ -212,6 +276,10 @@ button {
   background: linear-gradient(180deg, #f7fbff, #f3f7fb);
 }
 
+.doc-panel .doc-upload-title {
+  margin: 0 0 8px;
+}
+
 .doc-upload-title {
   margin: 0 0 6px;
   font-size: 15px;
@@ -225,18 +293,24 @@ button {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
-.doc-upload-btn {
+.doc-upload-btn,
+.doc-skip-btn {
   flex: 1;
+  min-width: 100px;
   padding: 11px 14px;
   border-radius: 12px;
-  border: 1px solid #9bb8d6;
-  background: #fff;
-  color: #1f5a9c;
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
+}
+
+.doc-upload-btn {
+  border: 1px solid #9bb8d6;
+  background: #fff;
+  color: #1f5a9c;
 }
 .doc-upload-btn:hover:not(:disabled) {
   background: #e8f3ff;
@@ -244,6 +318,87 @@ button {
 .doc-upload-btn:disabled {
   opacity: 0.65;
   cursor: wait;
+}
+
+.doc-skip-btn {
+  border: 1px solid var(--border);
+  background: #eef2f7;
+  color: var(--text);
+}
+.doc-skip-btn:hover:not(:disabled) {
+  background: #e2e8f0;
+}
+
+.doc-queue-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.doc-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.doc-queue-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.85rem;
+  color: #334e68;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-queue-remove {
+  flex: none;
+  padding: 5px 10px;
+  font-size: 0.8rem;
+  border-radius: 6px;
+  background: #fce8e6;
+  color: #b3261e;
+  border: 1px solid #f5c2c0;
+  cursor: pointer;
+}
+.doc-queue-remove:hover {
+  background: #f9d5d2;
+}
+
+.doc-confirm-row {
+  margin-top: 12px;
+}
+
+.doc-confirm-btn {
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: 12px;
+  border: none;
+  background: var(--accent-green, #2e9e5b);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.doc-confirm-btn:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+.doc-confirm-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: none;
+}
+
+#submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .doc-upload-status {
@@ -257,8 +412,26 @@ button {
 .doc-upload-status.is-error { color: #b3261e; }
 .doc-upload-status.is-ok { color: #1c7c3b; }
 
+body.theme-dark .doc-queue-item {
+  background: #243447;
+  border-color: #334e68;
+}
+body.theme-dark .doc-queue-name { color: #e2e8f0; }
+body.theme-dark .doc-skip-btn {
+  background: #334e68;
+  color: #d9e2ec;
+  border-color: #486581;
+}
+
 body.theme-dark .doc-upload-panel {
   background: linear-gradient(180deg, #1a2430, #16202a);
+  border-color: #2f4054;
+}
+body.theme-dark .doc-panel {
+  background: linear-gradient(180deg, #1a2430, #16202a);
+}
+body.theme-dark .route-bar .demo-controls {
+  background: #1a2430;
   border-color: #2f4054;
 }
 body.theme-dark .doc-upload-btn {
@@ -716,9 +889,32 @@ body.theme-dark .weather-badge { color: #b5ddff; background: #1d3549; border-col
 body.theme-dark .mode-button.active { background: #e7f1fb; color: #183c62; }
 body.theme-dark #tmap { filter: brightness(0.78) contrast(0.92) saturate(0.85); }
 
+@media (max-width: 1100px) {
+  .layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+  }
+  .doc-panel,
+  .route-bar,
+  .map-panel,
+  .results-panel,
+  .ai-panel {
+    grid-column: 1;
+    grid-row: auto;
+    max-height: none;
+  }
+  .route-form-horizontal {
+    grid-template-columns: 1fr;
+  }
+  .route-form-horizontal .swap-locations {
+    margin: 0 auto;
+  }
+  .route-bar .demo-controls {
+    flex: 1 1 100%;
+  }
+}
+
 @media (max-width: 900px) {
-  .layout { grid-template-columns: 1fr; }
-  .form-panel, .map-panel, .results-panel, .ai-panel { grid-column: 1; }
   .ai-tabs { grid-template-columns: 1fr; }
   .header-actions { width: 100%; justify-content: space-between; }
 }

@@ -56,6 +56,11 @@ const state = {
   // 구간 진행 스탬프 (안전 스탬프와 별개, 세션 단위)
   progressStamps: { third: false, twoThirds: false, arrive: false },
   clockTimer: null,
+  // 안전 문서: 큐 → 확인(분석) 또는 반영 안함 → 경로 찾기 가능
+  docQueue: [],
+  docReady: false,
+  docMode: null, // "analyzed" | "skipped" | null
+  docQueueSeq: 0,
 };
 
 const PROGRESS_STAMP_DEFS = [
@@ -1572,6 +1577,11 @@ function selectRoute(routeId) {
 
 async function handleSubmit(event) {
   event.preventDefault();
+  if (!state.docReady) {
+    alert("먼저 왼쪽에서 문서를 「확인」하거나 「반영 안함」을 선택해 주세요.");
+    return;
+  }
+
   const submitBtn = document.getElementById("submit-btn");
   submitBtn.disabled = true;
   submitBtn.textContent = "계산 중...";
@@ -1587,7 +1597,6 @@ async function handleSubmit(event) {
     const payload = {
       origin: { query: originQuery, name: originQuery },
       destination: { query: destQuery, name: destQuery },
-      // audience_age: parseInt(document.getElementById("audience-age").value, 10) || 8,
     };
 
     const [routeData, publicData] = await Promise.all([
@@ -1602,16 +1611,7 @@ async function handleSubmit(event) {
     state.lastResult = routeData;
     state.publicData = publicData;
     state.selectedRouteId = null;
-
-    console.log(
-      "[경로안내] API 응답:",
-      routeData.candidates.map((c) => ({
-        id: c.id,
-        source: c.source,
-        steps: resolveNavigationSteps(c).length,
-        preview: resolveNavigationSteps(c).slice(0, 3).map((s) => s.description),
-      }))
-    );
+    if (state.docMode === "analyzed") state.activePublicLayer = "doc-risk";
 
     renderWeather(routeData.weather);
     renderTimeContext(routeData);
@@ -1638,8 +1638,9 @@ async function handleSubmit(event) {
     alert(`경로 계산 중 오류가 발생했습니다: ${friendly}`);
     console.error(err);
   } finally {
-    submitBtn.disabled = false;
-    submitBtn.textContent = "안전 경로 찾기";
+    const btn = document.getElementById("submit-btn");
+    if (btn) btn.textContent = "안전 경로 찾기";
+    syncRouteSubmitButton();
   }
 }
 
@@ -1805,112 +1806,249 @@ async function maybeRerunRouteAfterDocument() {
   return true;
 }
 
-async function uploadSafetyDocument(file) {
-  const btn = document.getElementById("doc-upload-btn");
-  const input = document.getElementById("doc-upload-input");
-  if (!file) return;
+function syncRouteSubmitButton() {
+  const btn = document.getElementById("submit-btn");
+  if (!btn) return;
+  btn.disabled = !state.docReady;
+  btn.title = state.docReady
+    ? ""
+    : "먼저 안전 문서를 확인하거나 반영 안함을 선택해 주세요.";
+}
 
-  if (file.size > 15 * 1024 * 1024) {
-    setDocUploadStatus("파일이 너무 큽니다. 15MB 이하로 올려 주세요.", "error");
+function syncDocConfirmButton() {
+  const btn = document.getElementById("doc-confirm-btn");
+  if (!btn) return;
+  btn.disabled = state.docQueue.length === 0;
+}
+
+function renderDocQueue() {
+  const list = document.getElementById("doc-queue-list");
+  if (!list) return;
+  list.innerHTML = "";
+  state.docQueue.forEach((item) => {
+    const li = document.createElement("li");
+    li.className = "doc-queue-item";
+
+    const name = document.createElement("span");
+    name.className = "doc-queue-name";
+    name.textContent = item.name;
+    name.title = item.name;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "doc-queue-remove";
+    removeBtn.textContent = "취소";
+    removeBtn.addEventListener("click", () => removeDocFromQueue(item.id));
+
+    li.append(name, removeBtn);
+    list.appendChild(li);
+  });
+  syncDocConfirmButton();
+}
+
+function addDocsToQueue(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+
+  let added = 0;
+  for (const file of files) {
+    if (file.size > 15 * 1024 * 1024) {
+      setDocUploadStatus(`「${file.name}」은 15MB를 넘어 제외했어요.`, "error");
+      continue;
+    }
+    const dup = state.docQueue.some(
+      (q) => q.name === file.name && q.file.size === file.size
+    );
+    if (dup) continue;
+    state.docQueueSeq += 1;
+    state.docQueue.push({
+      id: state.docQueueSeq,
+      file,
+      name: file.name,
+    });
+    added += 1;
+  }
+
+  if (added > 0) {
+    // 새 문서를 넣으면 다시 확인이 필요함
+    state.docReady = false;
+    state.docMode = null;
+    syncRouteSubmitButton();
+    hideDocReviewPanel();
+    setDocUploadStatus(
+      `${state.docQueue.length}개 문서가 대기 중이에요. 「확인」을 누르면 분석을 시작해요.`,
+      ""
+    );
+  }
+  renderDocQueue();
+}
+
+function removeDocFromQueue(id) {
+  state.docQueue = state.docQueue.filter((q) => q.id !== id);
+  state.docReady = false;
+  state.docMode = null;
+  syncRouteSubmitButton();
+  renderDocQueue();
+  if (!state.docQueue.length) {
+    setDocUploadStatus("문서를 추가하거나 「반영 안함」을 선택해 주세요.", "");
+  } else {
+    setDocUploadStatus(
+      `${state.docQueue.length}개 문서가 대기 중이에요. 「확인」을 누르면 분석을 시작해요.`,
+      ""
+    );
+  }
+}
+
+function skipDocumentReflection() {
+  state.docQueue = [];
+  state.docReady = true;
+  state.docMode = "skipped";
+  hideDocReviewPanel();
+  renderDocQueue();
+  syncRouteSubmitButton();
+  setDocUploadStatus(
+    "문서를 반영하지 않아요. 이제 「안전 경로 찾기」를 눌러 주세요.",
+    "ok"
+  );
+}
+
+async function ingestOneDocument(file) {
+  const form = new FormData();
+  form.append("file", file);
+  const origin = document.getElementById("origin-query")?.value?.trim() || "";
+  const dest = document.getElementById("dest-query")?.value?.trim() || "";
+  const hint = [origin, dest].filter(Boolean).join(" / ");
+  if (hint) form.append("region_hint", hint);
+
+  const res = await fetch(`${API_BASE}/api/documents/ingest`, {
+    method: "POST",
+    headers: { ...authHeaders() },
+    body: form,
+  });
+  const raw = await res.text();
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    data = null;
+  }
+  if (!res.ok) {
+    const detail =
+      (data && (data.detail || data.message)) ||
+      raw ||
+      `업로드 실패 (${res.status})`;
+    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+  return data;
+}
+
+async function confirmDocumentQueue() {
+  const confirmBtn = document.getElementById("doc-confirm-btn");
+  const addBtn = document.getElementById("doc-add-btn");
+  const skipBtn = document.getElementById("doc-skip-btn");
+  if (!state.docQueue.length) {
+    setDocUploadStatus("분석할 문서가 없어요. 문서를 추가하거나 「반영 안함」을 눌러 주세요.", "error");
     return;
   }
 
+  const queue = [...state.docQueue];
+  let totalCreated = 0;
+  let allPending = [];
+  const errors = [];
+
   try {
-    if (btn) {
-      btn.disabled = true;
-      btn.textContent = "파싱 중…";
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = "분석 중…";
     }
+    if (addBtn) addBtn.disabled = true;
+    if (skipBtn) skipBtn.disabled = true;
     hideDocReviewPanel();
-    setDocUploadStatus("문서를 읽고 위험 지점을 추출하는 중이에요. 잠시만 기다려 주세요…");
 
-    const form = new FormData();
-    form.append("file", file);
-    const origin = document.getElementById("origin-query")?.value?.trim() || "";
-    const dest = document.getElementById("dest-query")?.value?.trim() || "";
-    const hint = [origin, dest].filter(Boolean).join(" / ");
-    if (hint) form.append("region_hint", hint);
-
-    const res = await fetch(`${API_BASE}/api/documents/ingest`, {
-      method: "POST",
-      headers: { ...authHeaders() },
-      body: form,
-    });
-    const raw = await res.text();
-    let data = null;
-    try {
-      data = raw ? JSON.parse(raw) : null;
-    } catch {
-      data = null;
-    }
-    if (!res.ok) {
-      const detail =
-        (data && (data.detail || data.message)) ||
-        raw ||
-        `업로드 실패 (${res.status})`;
-      throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
-    }
-
-    const created = data?.risk_points_created ?? 0;
-    const skipped = data?.risk_points_skipped ?? 0;
-    const skippedList = data?.extracted?.skipped_points || [];
-    const createdList = data?.extracted?.created_points || [];
-    const estimatedCount = createdList.filter((p) => p.is_estimated).length;
-    const mockNote = data?.used_mock ? " (샘플/MOCK 파싱)" : "";
-    const estimateHint =
-      estimatedCount > 0 ? ` · 그중 ${estimatedCount}곳은 추정 위치([추정] 표시)` : "";
-
-    renderDocReviewPanel(skippedList);
-
-    if (created <= 0) {
-      if (skippedList.length > 0) {
-        setDocUploadStatus(
-          `「${data?.document_name || file.name}」에서 위치를 읽었지만 바로 찍지 못했어요. 아래 목록에서 검색어를 확인하고 지도에 올려 주세요.${mockNote}`,
-          ""
-        );
-      } else {
-        setDocUploadStatus(
-          `「${data?.document_name || file.name}」에서 찍을 위험 지점을 찾지 못했어요. 도로명·주소가 보이는 문서인지 확인해 주세요.${mockNote}`,
-          "error"
-        );
+    for (let i = 0; i < queue.length; i += 1) {
+      const item = queue[i];
+      setDocUploadStatus(
+        `문서 분석 중… (${i + 1}/${queue.length}) 「${item.name}」`,
+        ""
+      );
+      try {
+        const data = await ingestOneDocument(item.file);
+        totalCreated += data?.risk_points_created ?? 0;
+        const pending = data?.extracted?.skipped_points || [];
+        allPending = allPending.concat(pending);
+      } catch (err) {
+        console.error(err);
+        errors.push(`${item.name}: ${err.message || "실패"}`);
       }
-      await refreshPublicDataAndMap({ focusDocRisk: true });
+    }
+
+    state.docQueue = [];
+    renderDocQueue();
+
+    if (errors.length && totalCreated <= 0 && !allPending.length) {
+      state.docReady = false;
+      state.docMode = null;
+      syncRouteSubmitButton();
+      setDocUploadStatus(`분석에 실패했어요. ${errors[0]}`, "error");
       return;
     }
 
-    const reran = await maybeRerunRouteAfterDocument();
-    if (!reran) {
-      await refreshPublicDataAndMap({ focusDocRisk: true });
+    state.docReady = true;
+    state.docMode = "analyzed";
+    syncRouteSubmitButton();
+    renderDocReviewPanel(allPending);
+
+    const errHint = errors.length ? ` · 일부 실패 ${errors.length}건` : "";
+    if (totalCreated > 0) {
+      setDocUploadStatus(
+        `문서 분석 완료: 위험 지점 ${totalCreated}곳을 준비했어요${errHint}. 이제 「안전 경로 찾기」를 누르면 지도·경로에 반영돼요.`,
+        "ok"
+      );
+    } else if (allPending.length > 0) {
+      setDocUploadStatus(
+        `문서에서 위치를 읽었지만 바로 못 찍은 곳이 있어요. 아래 목록을 확인한 뒤 「안전 경로 찾기」를 눌러 주세요.${errHint}`,
+        ""
+      );
+    } else {
+      setDocUploadStatus(
+        `문서 분석은 끝났지만 찍을 지점이 거의 없어요${errHint}. 그래도 「안전 경로 찾기」는 가능해요.`,
+        ""
+      );
     }
 
-    const skipHint =
-      skipped > 0 ? ` · 확인 필요 ${skipped}곳은 아래 목록에서 검토해 주세요` : "";
-    setDocUploadStatus(
-      `「${data.document_name}」에서 ${created}곳을 지도에 반영했어요${estimateHint}${skipHint}. 범례 「문서 기반 위험지역」에 커서를 올려 확인하세요.${mockNote}`,
-      "ok"
-    );
+    await refreshPublicDataAndMap({ focusDocRisk: true });
   } catch (err) {
     console.error(err);
-    setDocUploadStatus(err.message || "문서 업로드에 실패했습니다.", "error");
+    state.docReady = false;
+    state.docMode = null;
+    syncRouteSubmitButton();
+    setDocUploadStatus(err.message || "문서 분석에 실패했습니다.", "error");
   } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = "문서 선택·업로드";
+    if (confirmBtn) {
+      confirmBtn.textContent = "확인 (문서 분석)";
+      syncDocConfirmButton();
     }
-    if (input) input.value = "";
+    if (addBtn) addBtn.disabled = false;
+    if (skipBtn) skipBtn.disabled = false;
   }
 }
 
 function bindDocumentUpload() {
-  const btn = document.getElementById("doc-upload-btn");
+  const addBtn = document.getElementById("doc-add-btn");
+  const skipBtn = document.getElementById("doc-skip-btn");
+  const confirmBtn = document.getElementById("doc-confirm-btn");
   const input = document.getElementById("doc-upload-input");
-  if (!btn || !input) return;
 
-  btn.addEventListener("click", () => {
-    input.click();
-  });
-  input.addEventListener("change", () => {
-    const file = input.files && input.files[0];
-    if (file) uploadSafetyDocument(file);
+  syncRouteSubmitButton();
+  syncDocConfirmButton();
+  renderDocQueue();
+
+  addBtn?.addEventListener("click", () => input?.click());
+  skipBtn?.addEventListener("click", skipDocumentReflection);
+  confirmBtn?.addEventListener("click", () => confirmDocumentQueue());
+  input?.addEventListener("change", () => {
+    if (input.files?.length) addDocsToQueue(input.files);
+    input.value = "";
   });
 }
 
