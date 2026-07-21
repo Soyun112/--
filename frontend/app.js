@@ -358,6 +358,7 @@ function resetProgressStamps() {
   state.progressStamps = { third: false, twoThirds: false, arrive: false };
   renderProgressStampSlots();
   hideKidCardCheer();
+  hideStampBurst();
 }
 
 function renderProgressStampSlots(justUnlockedIds = []) {
@@ -373,7 +374,7 @@ function renderProgressStampSlots(justUnlockedIds = []) {
       void el.offsetWidth;
       el.classList.add("just-unlocked");
       clearTimeout(el._stampAnimTimer);
-      el._stampAnimTimer = setTimeout(() => el.classList.remove("just-unlocked"), 900);
+      el._stampAnimTimer = setTimeout(() => el.classList.remove("just-unlocked"), 1400);
     }
   });
 }
@@ -384,6 +385,51 @@ function hideKidCardCheer() {
   el.hidden = true;
   el.textContent = "";
   el.classList.remove("pop");
+}
+
+function hideStampBurst() {
+  const burst = document.getElementById("kid-stamp-burst");
+  if (!burst) return;
+  burst.hidden = true;
+  burst.classList.remove("show");
+  document.getElementById("kid-card")?.classList.remove("stamp-celebrate");
+  const particles = document.getElementById("kid-stamp-burst-particles");
+  if (particles) particles.innerHTML = "";
+}
+
+function showStampBurst(stampId, message) {
+  const burst = document.getElementById("kid-stamp-burst");
+  const card = document.getElementById("kid-card");
+  if (!burst || !card) return;
+
+  const def = PROGRESS_STAMP_DEFS.find((d) => d.id === stampId);
+  const stampEl = document.querySelector(`#kid-progress-stamps [data-stamp="${stampId}"]`);
+  const emoji = stampEl?.querySelector(".kid-progress-stamp-emoji")?.textContent?.trim() || "⭐";
+  const shortLabel =
+    stampId === "arrive" ? "도착 스탬프!" : stampId === "twoThirds" ? "2/3 스탬프!" : "1/3 스탬프!";
+
+  document.getElementById("kid-stamp-burst-emoji").textContent = emoji;
+  document.getElementById("kid-stamp-burst-text").textContent = message || shortLabel;
+
+  const particles = document.getElementById("kid-stamp-burst-particles");
+  if (particles) {
+    const bits = ["✨", "⭐", "🌟", "💛", "🎉", "✦", "✸", "💫"];
+    particles.innerHTML = Array.from({ length: 14 }, (_, i) => {
+      const angle = (i / 14) * 360;
+      const dist = 72 + (i % 3) * 18;
+      return `<span class="kid-stamp-particle" style="--a:${angle}deg;--d:${dist}px;--delay:${i * 0.03}s">${bits[i % bits.length]}</span>`;
+    }).join("");
+  }
+
+  burst.hidden = false;
+  burst.classList.remove("show");
+  card.classList.remove("stamp-celebrate");
+  void burst.offsetWidth;
+  burst.classList.add("show");
+  card.classList.add("stamp-celebrate");
+
+  clearTimeout(showStampBurst._timer);
+  showStampBurst._timer = setTimeout(() => hideStampBurst(), 1600);
 }
 
 function showKidCardCheer(message) {
@@ -398,22 +444,27 @@ function showKidCardCheer(message) {
   showKidCardCheer._timer = setTimeout(() => {
     el.classList.remove("pop");
     el.hidden = true;
-  }, 1600);
+  }, 2200);
 }
 
 /** 진행률에 맞춰 구간 스탬프 unlock (뒤로 가도 잠그지 않음) */
 function updateProgressStamps(ratio, { announce = true } = {}) {
   const justUnlocked = [];
   let cheer = "";
+  let lastId = "";
   PROGRESS_STAMP_DEFS.forEach((def) => {
     if (ratio + 1e-9 >= def.at && !state.progressStamps[def.id]) {
       state.progressStamps[def.id] = true;
       justUnlocked.push(def.id);
       cheer = def.cheer;
+      lastId = def.id;
     }
   });
   renderProgressStampSlots(justUnlocked);
-  if (announce && cheer) showKidCardCheer(cheer);
+  if (announce && lastId) {
+    showStampBurst(lastId, cheer);
+    showKidCardCheer(cheer);
+  }
   return cheer;
 }
 
