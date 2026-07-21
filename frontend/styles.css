@@ -124,7 +124,7 @@ body {
 .layout {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr) 300px;
-  grid-template-rows: auto auto auto;
+  grid-template-rows: auto;
   gap: 20px;
   padding: 24px 32px 48px;
   max-width: 1600px;
@@ -142,13 +142,23 @@ body {
 
 .panel h2 { margin-top: 0; font-size: 16px; color: var(--primary-dark); }
 
-/* 왼쪽: 문서 바로 아래 경로(지도 높이와 무관하게 붙임) / 가운데 위: 지도 / 오른쪽: 비교 */
+/* 왼쪽: 문서→경로 / 가운데: 지도→설명 / 오른쪽: 비교 — 세로 간격 약 1cm */
 .left-stack {
   grid-column: 1;
-  grid-row: 1 / span 2;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 1cm;
+  align-self: start;
+  min-width: 0;
+}
+
+.center-stack {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1cm;
   align-self: start;
   min-width: 0;
 }
@@ -157,26 +167,15 @@ body {
   background: linear-gradient(180deg, #f7fbff, #ffffff);
 }
 
-.map-panel {
-  grid-column: 2;
-  grid-row: 1;
-  min-width: 0;
-}
-
 .results-panel {
   grid-column: 3;
-  grid-row: 1 / span 2;
+  grid-row: 1;
   margin-top: 0;
   padding-top: 20px;
   border-top: none;
   max-height: calc(100vh - 120px);
   overflow: auto;
-}
-
-.ai-panel {
-  grid-column: 2;
-  grid-row: 2;
-  min-width: 0;
+  align-self: start;
 }
 
 .route-panel-hint { margin-top: 8px; }
@@ -878,9 +877,8 @@ body.theme-dark #tmap { filter: brightness(0.78) contrast(0.92) saturate(0.85); 
     grid-template-rows: none;
   }
   .left-stack,
-  .map-panel,
-  .results-panel,
-  .ai-panel {
+  .center-stack,
+  .results-panel {
     grid-column: 1;
     grid-row: auto;
     max-height: none;
