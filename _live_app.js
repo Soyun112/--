@@ -1,0 +1,1788 @@
+// API_BASE는 auth.js에서 정의 (로컬 8000 / 배포 시 /api 프록시)
+
+const CATEGORY_COLORS = {
+  cctv: "#2f7dd1",
+  hotspot: "#d64545",
+  docRisk: "#e08a2c",
+  guardian: "#8e44ad",
+  safetyCctv: "#1a6fbf",
+  safetyStreetlight: "#f5b800",
+};
+
+const PUBLIC_DATA_LEGEND = [
+  ["safety-cctv", "safetyCctv", "안심귀갓길 CCTV"],
+  ["safety-streetlight", "safetyStreetlight", "안심귀갓길 보안등"],
+  ["cctv", "cctv", "어린이 보호구역 CCTV"],
+  ["hotspot", "hotspot", "교통사고다발지역"],
+  ["guardian", "guardian", "아동안전지킴이집"],
+  ["doc-risk", "docRisk", "문서 기반 위험지역"],
+];
+
+const DEMO_SCENARIOS = {
+  morning_school: {
+    origin: "개나리SK뷰5차아파트",
+    destination: "도성초등학교",
+    age: 8,
+    note: "도성초등학교 주변 통학로를 비교해 CCTV·보호구역이 많은 길을 추천합니다.",
+  },
+  night_academy: {
+    origin: "필수학학원",
+    destination: "개나리SK뷰5차아파트",
+    age: 11,
+    note: "야간 하원도 Tmap 보행자 큰길(대로 우선) 경로로 안내합니다.",
+  },
+  school_to_academy: {
+    origin: "도성초등학교",
+    destination: "필수학학원",
+    age: 8,
+    note: "도성초등학교에서 필수학학원으로 이동하는 길의 안전시설을 비교해 보여줍니다.",
+  },
+};
+
+const state = {
+  config: null,
+  lastResult: null,
+  publicData: null,
+  tmapReady: false,
+  tmap: null,
+  tmapOverlays: [],
+  infoWindow: null,
+  mode: "parent",
+  selectedRouteId: null,
+  activePublicLayer: null,
+  kidCardSteps: [],
+  kidCardIndex: 0,
+  // 구간 진행 스탬프 (안전 스탬프와 별개, 세션 단위)
+  progressStamps: { third: false, twoThirds: false, arrive: false },
+  clockTimer: null,
+};
+
+const PROGRESS_STAMP_DEFS = [
+  { id: "third", at: 1 / 3, cheer: "잘했어! 1/3 왔어요 ⭐" },
+  { id: "twoThirds", at: 2 / 3, cheer: "멋져요! 거의 다 왔어요 🌟" },
+  { id: "arrive", at: 1, cheer: "도착! 오늘도 안전하게 와줘서 고마워요 👑" },
+];
+
+async function fetchJson(path, options = {}) {
+  const url = `${API_BASE}${path}`;
+  const headers = {
+    ...(options.headers || {}),
+    ...authHeaders(),
+  };
+  let res;
+  try {
+    res = await fetch(url, { ...options, headers });
+  } catch (err) {
+    const onVercel = /\.vercel\.app$/i.test(window.location.hostname);
+    if (onVercel) {
+      throw new Error(
+        "백엔드에 연결할 수 없습니다. Vercel에 BACKEND_URL(Render URL)이 설정됐는지 확인해 주세요."
+      );
+    }
+    throw new Error("백엔드(127.0.0.1:8000)에 연결할 수 없습니다. backend 폴더에서 서버를 켜 주세요.");
+  }
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`${path} 요청 실패 (${res.status}): ${detail}`);
+  }
+  return res.json();
+}
+
+function fillDemoCoordinates() {
+  const select = document.getElementById("demo-scenario-select");
+  const scenario = DEMO_SCENARIOS[select.value] || DEMO_SCENARIOS.morning_school;
+
+  document.getElementById("origin-query").value = scenario.origin;
+  document.getElementById("dest-query").value = scenario.destination;
+  // 아이 나이 입력란을 다시 활성화하면 함께 복원합니다.
+  // document.getElementById("audience-age").value = scenario.age;
+
+  const hint = document.getElementById("scenario-hint");
+  if (hint) hint.textContent = scenario.note;
+}
+
+function swapLocations() {
+  const origin = document.getElementById("origin-query");
+  const destination = document.getElementById("dest-query");
+  [origin.value, destination.value] = [destination.value, origin.value];
+  origin.focus();
+}
+
+function scoreColor(score) {
+  if (score >= 70) return "#2e9e5b";
+  if (score >= 45) return "#e08a2c";
+  return "#d64545";
+}
+
+function scoreExplanation(candidate) {
+  const features = candidate.features;
+  const safetyFacilities =
+    (features.safety_facility_cctv_count || 0) +
+    (features.safety_facility_streetlight_count || 0) +
+    (features.safety_bell_count || 0) +
+    (features.emergency112_count || 0);
+  if (candidate.safety_score >= 70) {
+    return `안전시설 ${safetyFacilities}곳과 보호구역 정보를 반영해 안전한 길로 평가했어요.`;
+  }
+  if (features.accident_hotspot_count > 0 || features.doc_risk_count > 0) {
+    return `사고다발지역 또는 주의 구간이 있어, 다른 경로와 함께 비교해 보세요.`;
+  }
+  return `주변 안전시설과 도로 정보를 종합해 계산한 안전 점수예요.`;
+}
+
+function routeDisplayName(routeId) {
+  if (routeId.includes("pedestrian-main") || routeId.includes("direct")) return "보행자 큰길 경로";
+  if (routeId.includes("pedestrian-alt")) return "보행자 대안 경로";
+  if (routeId.endsWith("-a") || routeId.includes("grid-a")) return "우회 경로 A";
+  if (routeId.endsWith("-b") || routeId.includes("grid-b")) return "우회 경로 B";
+  return "보행자 경로";
+}
+
+function routeDisplaySortKey(routeId) {
+  if (routeId.includes("pedestrian-main") || routeId.includes("direct")) return 0;
+  if (routeId.includes("pedestrian-alt")) return 1;
+  if (routeId.endsWith("-a") || routeId.includes("grid-a")) return 2;
+  if (routeId.endsWith("-b") || routeId.includes("grid-b")) return 3;
+  return 4;
+}
+
+function isDuplicateRouteCard(first, second) {
+  return (
+    Math.abs(first.distance_m - second.distance_m) <= 10 &&
+    Math.abs(first.duration_s - second.duration_s) <= 20
+  );
+}
+
+function candidatesForDisplay(routeData) {
+  const uniqueCandidates = [...routeData.candidates]
+    .sort((first, second) => routeDisplaySortKey(first.id) - routeDisplaySortKey(second.id))
+    .filter(
+      (candidate, index, candidates) =>
+        !candidates.slice(0, index).some((existing) => isDuplicateRouteCard(existing, candidate))
+    );
+  const recommended =
+    uniqueCandidates.find((candidate) => candidate.id === routeData.recommended_id) ||
+    uniqueCandidates[0];
+  if (!recommended) return [];
+
+  const alternatives = uniqueCandidates
+    .filter(
+      (candidate) =>
+        candidate.id !== recommended.id && candidate.safety_score < recommended.safety_score
+    )
+    .sort(
+      (first, second) =>
+        second.safety_score - first.safety_score ||
+        routeDisplaySortKey(first.id) - routeDisplaySortKey(second.id)
+    );
+  return [recommended, ...alternatives];
+}
+
+function activeRouteId(routeData) {
+  const visibleCandidates = candidatesForDisplay(routeData);
+  if (state.selectedRouteId && visibleCandidates.some((candidate) => candidate.id === state.selectedRouteId)) {
+    return state.selectedRouteId;
+  }
+  return visibleCandidates.some((candidate) => candidate.id === routeData.recommended_id)
+    ? routeData.recommended_id
+    : visibleCandidates[0]?.id;
+}
+
+function activeRoute(routeData) {
+  return routeData.candidates.find((candidate) => candidate.id === activeRouteId(routeData));
+}
+
+function navigationIcon(step) {
+  const description = step.description || "";
+  const turnType = step.turn_type;
+  if (turnType === 201 || description.includes("도착")) return ["⌖", "arrive"];
+  if (description.includes("횡단보도") || description.includes("육교") || (turnType >= 211 && turnType <= 217)) {
+    return ["🚸", "cross"];
+  }
+  const plain = navigationKeywordPlain(step);
+  if (plain.includes("왼쪽")) return ["↰", "turn"];
+  if (plain.includes("오른쪽")) return ["↱", "turn"];
+  return ["↑", ""];
+}
+
+function navigationKeywordPlain(step) {
+  const description = step.description || "";
+  const tt = step.turn_type;
+  if (tt === 201 || description.includes("도착")) return "도착";
+  if (description.includes("횡단보도") || description.includes("육교") || (tt >= 211 && tt <= 217)) {
+    return description.includes("육교") ? "육교 건너기" : "횡단보도 건너기";
+  }
+  if (description.includes("좌회전") || description.includes("좌측") || tt === 12 || tt === 16) {
+    return "왼쪽으로 가기";
+  }
+  if (description.includes("우회전") || description.includes("우측") || tt === 13 || tt === 17) {
+    return "오른쪽으로 가기";
+  }
+  if (tt === 200) return "출발";
+  return "직진";
+}
+
+function navigationKeyword(step) {
+  const plain = navigationKeywordPlain(step);
+  if (plain === "도착") return plain;
+  const distance = step.distance_m > 0 ? ` · ${Math.round(step.distance_m)}m` : "";
+  return `${plain}${distance}`;
+}
+
+function simplifyCoordinates(coordinates, minDistM = 15) {
+  if (!coordinates || coordinates.length <= 2) return coordinates || [];
+  const out = [coordinates[0]];
+  for (let i = 1; i < coordinates.length; i += 1) {
+    const last = out[out.length - 1];
+    if (haversineM(last, coordinates[i]) >= minDistM) {
+      out.push(coordinates[i]);
+    }
+  }
+  const end = coordinates[coordinates.length - 1];
+  const last = out[out.length - 1];
+  if (last.lat !== end.lat || last.lng !== end.lng) out.push(end);
+  return out.length >= 2 ? out : coordinates;
+}
+
+function mergeNavigationSteps(steps) {
+  const merged = [];
+  for (const step of steps) {
+    const key = navigationKeywordPlain(step);
+    const prev = merged[merged.length - 1];
+    if (
+      prev &&
+      navigationKeywordPlain(prev) === key &&
+      key !== "횡단보도 건너기" &&
+      key !== "육교 건너기" &&
+      key !== "도착" &&
+      key !== "출발"
+    ) {
+      prev.distance_m = Math.round((prev.distance_m + step.distance_m) * 10) / 10;
+      continue;
+    }
+    merged.push({ ...step });
+  }
+  return merged;
+}
+
+function stepsForDisplay(steps) {
+  return (steps || []).filter((s) => {
+    if (s.turn_type === 200) return false;
+    if ((s.description || "").trim() === "출발") return false;
+    return true;
+  });
+}
+
+// 아이는 "m" 단위 감이 없다. 아이 보폭(약 0.5m = 1걸음) 기준으로 걸음 수를 계산해
+// 세면서 걸을 수 있게 한다. 예) 58m ≈ 116걸음. 너무 크거나 작은 숫자는
+// "많이"/"조금만" 같은 표현을 함께 붙여 감을 잡도록 돕는다.
+const KID_STRIDE_M = 0.5;
+
+function kidStepCount(distanceM) {
+  return Math.max(1, Math.round(distanceM / KID_STRIDE_M));
+}
+
+// { steps, text } 반환. text 예) "약 116걸음", "약 8걸음(조금만)", "약 240걸음(많이)"
+function kidStepText(distanceM) {
+  if (!distanceM || distanceM <= 0) return { steps: 0, text: "" };
+  const steps = kidStepCount(distanceM);
+  let qualifier = "";
+  if (steps <= 15) qualifier = "(조금만)";
+  else if (steps >= 200) qualifier = "(많이)";
+  return { steps, text: `약 ${steps}걸음${qualifier}` };
+}
+
+function kidFriendlySteps(distanceM) {
+  const { text } = kidStepText(distanceM);
+  return text ? `👣 ${text}` : "";
+}
+
+// 목록/카드에서 쓰는 한 문장. 예) "왼쪽으로 약 116걸음 걸어가요 (58m)"
+function navigationSentence(step) {
+  const plain = navigationKeywordPlain(step);
+  if (plain === "도착") return "목적지에 도착해요";
+  const meters = step.distance_m > 0 ? ` (${Math.round(step.distance_m)}m)` : "";
+  const { text } = kidStepText(step.distance_m);
+  if (plain.includes("횡단보도") || plain.includes("육교")) return `${plain.replace(" 건너기", "")}를 건너요`;
+  let direction = "앞으로";
+  if (plain.includes("왼쪽")) direction = "왼쪽으로";
+  else if (plain.includes("오른쪽")) direction = "오른쪽으로";
+  if (!text) return `${direction} 걸어가요`;
+  return `${direction} ${text} 걸어가요${meters}`;
+}
+
+function landmarkPhrase(step) {
+  return step && step.landmark ? `${step.landmark} 쪽으로` : "";
+}
+
+/** 아이 카드용 상황별 안전 한마디 (본문 행동 안내와 별도 1줄) */
+function kidSafetyTip(step, { isArrive = false, weather = null } = {}) {
+  if (isArrive) return "도착! 오늘도 안전하게 와줘서 고마워요";
+
+  const desc = `${step?.description || ""} ${navigationKeywordPlain(step) || ""}`;
+  const tt = step?.turn_type;
+  const raining = Boolean(weather?.is_rain);
+
+  if (desc.includes("횡단") || desc.includes("육교") || (tt >= 211 && tt <= 217)) {
+    if (desc.includes("신호") || desc.includes("초록")) return "초록불일 때 함께 건너요";
+    return raining ? "미끄러울 수 있어요, 뛰지 말고 천천히" : "👀 왼쪽·오른쪽 보고 천천히 건너요";
+  }
+  if (desc.includes("좌회전") || desc.includes("우회전") || desc.includes("왼쪽") || desc.includes("오른쪽") || tt === 12 || tt === 13 || tt === 16 || tt === 17) {
+    return "모퉁이에선 천천히, 나오는 차 조심해요";
+  }
+  if (desc.includes("골목") || desc.includes("이면")) {
+    return "조용한 길이어도 좌우 살피요";
+  }
+  if (raining) return "길이 미끄러울 수 있어요, 천천히";
+  if (desc.includes("대로") || desc.includes("큰길")) return "차와 멀리, 인도로 걸어요";
+  return "휴대폰 보지 말고 앞을 봐요";
+}
+
+function totalStepDistanceM(steps) {
+  return (steps || []).reduce((sum, s) => sum + (Number(s.distance_m) || 0), 0);
+}
+
+/** 현재 카드까지 진행률 (0~1). 마지막 카드는 항상 1 */
+function kidProgressRatio(steps, index) {
+  const list = steps || [];
+  if (!list.length) return 0;
+  if (index >= list.length - 1) return 1;
+  const total = totalStepDistanceM(list);
+  if (total <= 0) return (index + 1) / list.length;
+  let walked = 0;
+  for (let i = 0; i <= index; i += 1) walked += Number(list[i].distance_m) || 0;
+  return Math.min(1, walked / total);
+}
+
+function resetProgressStamps() {
+  state.progressStamps = { third: false, twoThirds: false, arrive: false };
+  renderProgressStampSlots();
+  hideKidCardCheer();
+  hideStampBurst();
+}
+
+function renderProgressStampSlots(justUnlockedIds = []) {
+  const root = document.getElementById("kid-progress-stamps");
+  if (!root) return;
+  PROGRESS_STAMP_DEFS.forEach((def) => {
+    const el = root.querySelector(`[data-stamp="${def.id}"]`);
+    if (!el) return;
+    const unlocked = Boolean(state.progressStamps[def.id]);
+    el.classList.toggle("unlocked", unlocked);
+    if (justUnlockedIds.includes(def.id)) {
+      el.classList.remove("just-unlocked");
+      void el.offsetWidth;
+      el.classList.add("just-unlocked");
+      clearTimeout(el._stampAnimTimer);
+      el._stampAnimTimer = setTimeout(() => el.classList.remove("just-unlocked"), 1400);
+    }
+  });
+}
+
+function hideKidCardCheer() {
+  const el = document.getElementById("kid-card-cheer");
+  if (!el) return;
+  el.hidden = true;
+  el.textContent = "";
+  el.classList.remove("pop");
+}
+
+function hideStampBurst() {
+  const burst = document.getElementById("kid-stamp-burst");
+  if (!burst) return;
+  burst.hidden = true;
+  burst.classList.remove("show");
+  document.getElementById("kid-card")?.classList.remove("stamp-celebrate");
+  const particles = document.getElementById("kid-stamp-burst-particles");
+  if (particles) particles.innerHTML = "";
+}
+
+function showStampBurst(stampId, message) {
+  const burst = document.getElementById("kid-stamp-burst");
+  const card = document.getElementById("kid-card");
+  if (!burst || !card) return;
+
+  const def = PROGRESS_STAMP_DEFS.find((d) => d.id === stampId);
+  const stampEl = document.querySelector(`#kid-progress-stamps [data-stamp="${stampId}"]`);
+  const emoji = stampEl?.querySelector(".kid-progress-stamp-emoji")?.textContent?.trim() || "⭐";
+  const shortLabel =
+    stampId === "arrive" ? "도착 스탬프!" : stampId === "twoThirds" ? "2/3 스탬프!" : "1/3 스탬프!";
+
+  document.getElementById("kid-stamp-burst-emoji").textContent = emoji;
+  document.getElementById("kid-stamp-burst-text").textContent = message || shortLabel;
+
+  const particles = document.getElementById("kid-stamp-burst-particles");
+  if (particles) {
+    const bits = ["✨", "⭐", "🌟", "💛", "🎉", "✦", "✸", "💫"];
+    particles.innerHTML = Array.from({ length: 14 }, (_, i) => {
+      const angle = (i / 14) * 360;
+      const dist = 72 + (i % 3) * 18;
+      return `<span class="kid-stamp-particle" style="--a:${angle}deg;--d:${dist}px;--delay:${i * 0.03}s">${bits[i % bits.length]}</span>`;
+    }).join("");
+  }
+
+  burst.hidden = false;
+  burst.classList.remove("show");
+  card.classList.remove("stamp-celebrate");
+  void burst.offsetWidth;
+  burst.classList.add("show");
+  card.classList.add("stamp-celebrate");
+
+  clearTimeout(showStampBurst._timer);
+  showStampBurst._timer = setTimeout(() => hideStampBurst(), 1600);
+}
+
+function showKidCardCheer(message) {
+  const el = document.getElementById("kid-card-cheer");
+  if (!el || !message) return;
+  el.textContent = message;
+  el.hidden = false;
+  el.classList.remove("pop");
+  void el.offsetWidth;
+  el.classList.add("pop");
+  clearTimeout(showKidCardCheer._timer);
+  showKidCardCheer._timer = setTimeout(() => {
+    el.classList.remove("pop");
+    el.hidden = true;
+  }, 2200);
+}
+
+/** 진행률에 맞춰 구간 스탬프 unlock (뒤로 가도 잠그지 않음) */
+function updateProgressStamps(ratio, { announce = true } = {}) {
+  const justUnlocked = [];
+  let cheer = "";
+  let lastId = "";
+  PROGRESS_STAMP_DEFS.forEach((def) => {
+    if (ratio + 1e-9 >= def.at && !state.progressStamps[def.id]) {
+      state.progressStamps[def.id] = true;
+      justUnlocked.push(def.id);
+      cheer = def.cheer;
+      lastId = def.id;
+    }
+  });
+  renderProgressStampSlots(justUnlocked);
+  if (announce && lastId) {
+    showStampBurst(lastId, cheer);
+    showKidCardCheer(cheer);
+  }
+  return cheer;
+}
+
+function progressStampSummaryText() {
+  const n = PROGRESS_STAMP_DEFS.filter((d) => state.progressStamps[d.id]).length;
+  return `🚶 길 스탬프 ${n}/3`;
+}
+
+// API navigation_steps가 비어 있을 때(구버전 백엔드 등) 경로 좌표로 턴바이턴을 합성한다.
+const SYNTH_CHUNK_PATTERN = [58, 84, 43, 71, 96, 52];
+
+function haversineM(a, b) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function bearingDeg(a, b) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const dlng = toRad(b.lng - a.lng);
+  const x = Math.sin(dlng) * Math.cos(lat2);
+  const y = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dlng);
+  return (Math.atan2(x, y) * (180 / Math.PI) + 360) % 360;
+}
+
+function synthesizeStepsFromCoordinates(coordinates) {
+  const simplified = simplifyCoordinates(coordinates);
+  if (!simplified || simplified.length < 2) return [];
+
+  const steps = [];
+  let prevBearing = null;
+  let chunkI = 0;
+
+  for (let i = 0; i < simplified.length - 1; i += 1) {
+    const start = simplified[i];
+    const end = simplified[i + 1];
+    const legDist = haversineM(start, end);
+    if (legDist < 1) continue;
+
+    const bearing = bearingDeg(start, end);
+    let turnDesc = "직진";
+    let turnType = 11;
+    if (prevBearing !== null) {
+      const diff = ((bearing - prevBearing + 540) % 360) - 180;
+      if (diff < -30) {
+        turnDesc = "좌회전";
+        turnType = 12;
+      } else if (diff > 30) {
+        turnDesc = "우회전";
+        turnType = 13;
+      }
+    }
+    prevBearing = bearing;
+
+    let remaining = legDist;
+    let walked = 0;
+    let firstChunk = true;
+    while (remaining > 1) {
+      const d = Math.min(SYNTH_CHUNK_PATTERN[chunkI % SYNTH_CHUNK_PATTERN.length], remaining);
+      chunkI += 1;
+      walked += d;
+      remaining -= d;
+      const desc = firstChunk ? turnDesc : "직진";
+      const tt = firstChunk ? turnType : 11;
+      firstChunk = false;
+      steps.push({ description: desc, turn_type: tt, distance_m: Math.round(d * 10) / 10, landmark: null });
+    }
+
+    if (i < simplified.length - 2 && (turnType === 12 || turnType === 13)) {
+      const cwDist = Math.max(12, Math.min(35, Math.round(legDist * 0.25)));
+      steps.push({ description: "횡단보도 건너기", turn_type: 211, distance_m: cwDist, landmark: null });
+    }
+  }
+
+  steps.push({ description: "목적지 도착", turn_type: 201, distance_m: 0, landmark: null });
+  return mergeNavigationSteps(steps);
+}
+
+function polishNavigationSteps(steps) {
+  return mergeNavigationSteps(stepsForDisplay(steps));
+}
+
+function resolveNavigationSteps(route) {
+  if (!route) return [];
+  let steps = route.navigation_steps;
+  if (steps && steps.length > 0) {
+    steps = polishNavigationSteps(steps);
+  } else {
+    const synthesized = synthesizeStepsFromCoordinates(route.coordinates);
+    if (synthesized.length > 0) {
+      console.log(
+        `[경로안내] API steps 없음 → 프론트에서 좌표 기반 합성 ${synthesized.length}단계`,
+        route.id
+      );
+      steps = synthesized;
+    }
+  }
+  if (steps && steps.length > 0) {
+    route.navigation_steps = steps;
+  }
+  return steps || [];
+}
+
+function buildTurnGuide(navigationSteps) {
+  const steps = stepsForDisplay(navigationSteps);
+  if (!steps.length) {
+    return '<li class="turn-step"><span>이 경로는 상세 보행 안내를 제공하지 않습니다.</span></li>';
+  }
+
+  return steps
+    .map((step) => {
+      const [icon, className] = navigationIcon(step);
+      const landmark = landmarkPhrase(step);
+      const line = navigationKeyword(step);
+      const friendly = navigationSentence(step);
+      const showFriendly = friendly && friendly !== line && !line.includes("도착");
+      return `<li class="turn-step ${className}"><span class="turn-icon">${icon}</span><span class="turn-step-body"><strong>${line}</strong>${showFriendly ? `<br><small class="turn-step-friendly">${friendly}</small>` : ""}${landmark ? `<br><small class="turn-step-landmark">📍 ${landmark}</small>` : ""}</span></li>`;
+    })
+    .join("");
+}
+
+function facilityCounts(features) {
+  const f = features || {};
+  return {
+    cctv: (f.safety_facility_cctv_count || 0) + (f.cctv_count || 0),
+    streetlight: (f.safety_facility_streetlight_count || 0) + (f.streetlight_count || 0),
+    safetyBell: f.safety_bell_count || 0,
+    emergency112: f.emergency112_count || 0,
+  };
+}
+
+function safetyFacilitiesNearRoute(publicData, routeData, radiusM = 140) {
+  const all = pointsNearRecommendedRoute(publicData.safety_facilities || [], routeData, radiusM);
+  return {
+    cctv: all.filter((p) => p.facility_type === "cctv"),
+    streetlight: all.filter((p) => p.facility_type === "streetlight"),
+    safetyBell: all.filter((p) => p.facility_type === "safety_bell"),
+    emergency112: all.filter((p) => p.facility_type === "emergency112"),
+    all,
+  };
+}
+
+function formatKoreanTime(date = new Date()) {
+  const hour = date.getHours();
+  const minute = date.getMinutes();
+  let period;
+  let displayHour;
+  if (hour < 12) {
+    period = "오전";
+    displayHour = hour === 0 ? 12 : hour;
+  } else if (hour === 12) {
+    period = "오후";
+    displayHour = 12;
+  } else {
+    period = "오후";
+    displayHour = hour - 12;
+  }
+  return `${period} ${displayHour}:${String(minute).padStart(2, "0")}`;
+}
+
+function updateLiveClock() {
+  const el = document.getElementById("live-clock");
+  if (!el) return;
+  el.textContent = formatKoreanTime();
+}
+
+function etaMessageForDuration(durationS) {
+  if (!durationS || durationS <= 0) return "";
+  const arrival = new Date(Date.now() + durationS * 1000);
+  return `지금 출발하면 약 ${formatKoreanTime(arrival)} 도착`;
+}
+
+function routeTimeRange(durationS) {
+  if (!durationS || durationS <= 0) return "";
+  const departure = new Date();
+  const arrival = new Date(departure.getTime() + durationS * 1000);
+  return `${formatKoreanTime(departure)} 출발 → ${formatKoreanTime(arrival)} 도착`;
+}
+
+function updateEtaForSelectedRoute(routeData) {
+  const selected = activeRoute(routeData);
+  const eta = document.getElementById("time-eta");
+  if (!selected || !eta) return;
+  const msg = etaMessageForDuration(selected.duration_s);
+  eta.textContent = msg ? ` · ${msg}` : "";
+}
+
+function renderTimeContext(routeData) {
+  const banner = document.getElementById("time-banner");
+  const icon = document.getElementById("time-banner-icon");
+  const rec = document.getElementById("time-recommendation");
+  const eta = document.getElementById("time-eta");
+  const tc = routeData && routeData.time_context;
+  if (!banner || !tc) {
+    if (banner) banner.hidden = true;
+    return;
+  }
+
+  banner.hidden = false;
+  banner.classList.toggle("night", tc.is_night);
+  if (icon) icon.textContent = tc.period_emoji || (tc.is_night ? "🌙" : "☀️");
+  if (rec) rec.textContent = tc.recommendation_message || "";
+  updateEtaForSelectedRoute(routeData);
+
+  const modeMsg = document.getElementById("mode-message");
+  if (modeMsg && tc.recommendation_message) {
+    modeMsg.textContent = tc.recommendation_message;
+  }
+}
+
+function renderParentReport(routeData) {
+  const el = document.getElementById("parent-report");
+  if (!el) return;
+  const text = routeData && routeData.parent_report;
+  if (!text) {
+    el.textContent = "경로를 찾으면 시간대 맞춤 안전 리포트가 표시됩니다.";
+    el.classList.add("placeholder");
+    return;
+  }
+  el.textContent = text;
+  el.classList.remove("placeholder");
+}
+
+function startLiveClock() {
+  updateLiveClock();
+  if (state.clockTimer) clearInterval(state.clockTimer);
+  state.clockTimer = setInterval(updateLiveClock, 30_000);
+}
+
+function renderCandidates(data) {
+  const el = document.getElementById("candidates-list");
+  const displayCandidates = candidatesForDisplay(data);
+  el.innerHTML = displayCandidates
+    .map((c) => {
+      const isRecommended = c.id === displayCandidates[0]?.id;
+      const isActive = c.id === activeRouteId(data);
+      const routeName = isRecommended ? "추천 경로" : routeDisplayName(c.id);
+      const docsHtml = c.features.matched_documents
+        .map(
+          (d) =>
+            `<div class="doc-evidence">${d.is_risk ? "⚠️" : "✅"} <strong>${d.risk_type}</strong> (${d.source_doc}, 경로에서 ${Math.round(d.distance_m)}m) — "${d.snippet}"</div>`
+        )
+        .join("");
+      const stars = "⭐".repeat(c.star_rating) + "☆".repeat(3 - c.star_rating);
+      const stampsHtml = (c.stamps || [])
+        .map(
+          (s) =>
+            `<span class="stamp-chip" title="${s.description}">${s.emoji} ${s.label}${s.count > 1 ? ` x${s.count}` : ""}</span>`
+        )
+        .join("");
+      return `
+        <div class="candidate-card ${isRecommended ? "recommended" : ""} ${isActive ? "selected" : ""}" data-route-id="${c.id}" role="button" tabindex="0" aria-pressed="${isActive}">
+          <h4>
+            <span>${routeName}${isRecommended ? '<span class="recommended-tag">★ 가장 안전한 길</span>' : ""}</span>
+            <span class="score-pill" style="background:${scoreColor(c.safety_score)}">${c.safety_score}점</span>
+          </h4>
+          <div class="star-rating" title="안전 등급 ${c.star_rating}/3">${stars}</div>
+          ${isRecommended ? `<div class="candidate-time">${routeTimeRange(c.duration_s)}</div>` : ""}
+          <div class="candidate-meta candidate-summary">
+            <span>거리: ${(c.distance_m / 1000).toFixed(2)}km</span>
+            <span>예상 소요: ${Math.round(c.duration_s / 60)}분</span>
+          </div>
+          ${stampsHtml ? `<div class="stamps-row">${stampsHtml}</div>` : ""}
+          <details class="candidate-details">
+            <summary>안전 점수 자세히 보기</summary>
+            <p class="score-explanation">💬 ${scoreExplanation(c)}</p>
+            <div class="candidate-meta detail-meta">
+              <span>안심귀갓길 CCTV: ${c.features.safety_facility_cctv_count || 0}대</span>
+              <span>안심귀갓길 보안등: ${c.features.safety_facility_streetlight_count || 0}개</span>
+              <span>안심벨: ${c.features.safety_bell_count || 0} · 112: ${c.features.emergency112_count || 0}</span>
+              <span>보호구역 통과율: ${c.features.child_zone_coverage_pct}%</span>
+              <span>사고다발지역: ${c.features.accident_hotspot_count}곳</span>
+              <span>범죄위험 근사지수: ${c.features.crime_risk_proxy}</span>
+              <span>안전지킴이집: ${c.features.guardian_house_count}곳</span>
+              <span>보안등: 1km당 ${c.features.streetlight_density}개</span>
+              <span>단속카메라: ${c.features.speed_camera_count}곳</span>
+            </div>
+            ${docsHtml}
+          </details>
+        </div>`;
+    })
+    .join("");
+}
+
+function renderReports(data) {
+  const recommended = activeRoute(data);
+  const keywords = document.getElementById("kid-keywords");
+  const directions = document.getElementById("kid-directions");
+  const board = document.getElementById("kid-stamp-board");
+  if (!recommended) {
+    keywords.innerHTML = "";
+    directions.innerHTML = "";
+    board.innerHTML = "";
+    state.kidCardSteps = [];
+    resetKidGuideShareCache();
+    return;
+  }
+
+  state.kidCardSteps = resolveNavigationSteps(recommended);
+  resetKidGuideShareCache();
+  console.log(
+    `[경로안내] 선택 경로 ${recommended.id} · ${state.kidCardSteps.length}단계`,
+    state.kidCardSteps.slice(0, 5)
+  );
+  const fc = facilityCounts(recommended.features);
+
+  keywords.innerHTML = `
+    <span class="route-keyword score">안전 ${recommended.safety_score}점</span>
+    <span class="route-keyword">${data.time_context?.period_emoji || "☀️"} ${data.time_context?.period_label || "낮"}</span>
+    <span class="route-keyword">CCTV ${fc.cctv}곳</span>
+    <span class="route-keyword">보안등 ${fc.streetlight}개</span>
+    <span class="route-keyword">🔔 ${fc.safetyBell}</span>
+    ${data.time_context?.eta_message ? `<span class="route-keyword">${data.time_context.eta_message}</span>` : ""}
+    <span class="route-keyword">${Math.round(recommended.duration_s / 60)}분</span>
+  `;
+  directions.innerHTML = `
+    <section class="turn-guide" aria-label="아이용 길 안내">
+      <div class="turn-guide-header">
+        <h5>오늘은 이렇게 걸어요 <span class="turn-step-count">${state.kidCardSteps.length}단계</span></h5>
+        <button type="button" id="kid-card-mode-btn" class="kid-card-mode-btn">👶 아이가 보기 쉽게</button>
+      </div>
+      <ol class="turn-steps">${buildTurnGuide(state.kidCardSteps)}</ol>
+    </section>
+  `;
+  document.getElementById("kid-card-mode-btn").addEventListener("click", openKidCardMode);
+
+  if (!recommended.stamps || recommended.stamps.length === 0) {
+    board.innerHTML = `<div class="kid-progress-summary">🚶 길 스탬프는 「아이가 보기 쉽게」에서 받아요</div>`;
+    return;
+  }
+  const stars = "⭐".repeat(recommended.star_rating);
+  board.innerHTML = `
+    <div class="kid-progress-summary">🚶 길 스탬프는 「아이가 보기 쉽게」에서 받아요</div>
+    <div class="stamp-board-title">🎉 오늘의 안전 스탬프 ${stars}</div>
+    <div class="stamps-row">
+      ${recommended.stamps
+        .map(
+          (s) =>
+            `<span class="stamp-chip big" title="${s.description}">${s.emoji} ${s.label}${s.count > 1 ? ` x${s.count}` : ""}</span>`
+        )
+        .join("")}
+    </div>`;
+}
+
+function openKidCardMode() {
+  if (!state.lastResult) {
+    alert("먼저 안전 경로를 찾아주세요.");
+    return;
+  }
+  const route = activeRoute(state.lastResult);
+  const steps = resolveNavigationSteps(route) || state.kidCardSteps;
+  if (!steps || steps.length === 0) {
+    alert("이 경로에 상세 보행 안내를 만들 수 없습니다.\n출발지와 도착지를 다시 확인해 주세요.");
+    return;
+  }
+  state.kidCardSteps = steps;
+  state.kidCardIndex = 0;
+  resetProgressStamps();
+  const sharePanel = document.getElementById("kid-card-share-panel");
+  if (sharePanel) sharePanel.hidden = true;
+  document.getElementById("kid-card-overlay").hidden = false;
+  document.body.classList.add("kid-card-open");
+  renderKidCard(0);
+}
+
+function closeKidCardMode() {
+  document.getElementById("kid-card-overlay").hidden = true;
+  document.body.classList.remove("kid-card-open");
+  hideKidCardCheer();
+  updateKidProgressSummaryOnBoard();
+  const sharePanel = document.getElementById("kid-card-share-panel");
+  if (sharePanel) sharePanel.hidden = true;
+  const shareToggle = document.getElementById("kid-card-share-toggle");
+  if (shareToggle) shareToggle.setAttribute("aria-expanded", "false");
+}
+
+function toggleKidCardSharePanel() {
+  const panel = document.getElementById("kid-card-share-panel");
+  const toggle = document.getElementById("kid-card-share-toggle");
+  if (!panel || !toggle) return;
+  const open = panel.hidden;
+  panel.hidden = !open;
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function updateKidProgressSummaryOnBoard() {
+  const board = document.getElementById("kid-stamp-board");
+  if (!board) return;
+  let line = board.querySelector(".kid-progress-summary");
+  const unlocked = PROGRESS_STAMP_DEFS.filter((d) => state.progressStamps[d.id]).length;
+  if (unlocked === 0 && !line) return;
+  if (!line) {
+    line = document.createElement("div");
+    line.className = "kid-progress-summary";
+    board.prepend(line);
+  }
+  line.textContent =
+    unlocked >= 3
+      ? "🚶 오늘 길 스탬프 3/3 · 안전하게 도착했어요!"
+      : `${progressStampSummaryText()} · 「아이가 보기 쉽게」에서 받아요`;
+}
+
+let cachedKidGuideShareUrl = null;
+
+function resetKidGuideShareCache() {
+  cachedKidGuideShareUrl = null;
+}
+
+function buildKidGuideSharePayload() {
+  const route = activeRoute(state.lastResult);
+  const steps = state.kidCardSteps;
+  const origin = document.getElementById("origin-query")?.value?.trim() || "";
+  const destination = document.getElementById("dest-query")?.value?.trim() || "";
+  return {
+    title: origin && destination ? `${origin} → ${destination}` : "오늘의 안전 길",
+    origin,
+    destination,
+    safety_score: route?.safety_score ?? null,
+    duration_min: route ? Math.round(route.duration_s / 60) : null,
+    steps: steps.map((step, idx) => {
+      const isArrive = idx === steps.length - 1;
+      const [icon] = navigationIcon(step);
+      const keyword = isArrive ? "도착! 잘했어요" : navigationKeywordPlain(step);
+      const landmark = landmarkPhrase(step);
+      const weather = state.lastResult?.weather || null;
+      return {
+        icon: isArrive ? "🎉" : icon,
+        keyword: isArrive ? "도착! 잘했어요" : navigationKeywordPlain(step),
+        friendly: isArrive ? "" : kidWalkLine(keyword, step.distance_m || 0),
+        tip: kidSafetyTip(step, { isArrive, weather }),
+        distance_m: isArrive ? 0 : step.distance_m || 0,
+        landmark: isArrive || !landmark ? "" : `📍 ${landmark}`,
+        is_arrive: isArrive,
+      };
+    }),
+  };
+}
+
+function buildKidGuideShareText() {
+  const payload = buildKidGuideSharePayload();
+  const title = payload.title || "오늘의 안전 길";
+  return `👶 ${title}\n링크를 누르면 아이용 길 안내 카드가 바로 열려요!`;
+}
+
+async function ensureKidGuideShareUrl() {
+  cachedKidGuideShareUrl = buildKidGuideShareUrl(buildKidGuideSharePayload());
+  return cachedKidGuideShareUrl;
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
+function showKidShareToast(message) {
+  let toast = document.getElementById("kid-share-toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "kid-share-toast";
+    toast.className = "kid-share-toast";
+    toast.setAttribute("role", "status");
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.classList.add("visible");
+  clearTimeout(showKidShareToast._timer);
+  showKidShareToast._timer = setTimeout(() => toast.classList.remove("visible"), 2800);
+}
+
+async function shareKidGuide(mode = "kakao") {
+  if (!state.kidCardSteps.length) {
+    alert("먼저 길 안내를 만들어 주세요.");
+    return;
+  }
+
+  const buttonId = mode === "copy" ? "kid-card-share-copy" : "kid-card-share-kakao";
+  const button = document.getElementById(buttonId);
+  const originalText = button?.textContent || "";
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = mode === "copy" ? "복사하는 중…" : "보내는 중…";
+    }
+
+    resetKidGuideShareCache();
+    const text = buildKidGuideShareText();
+    const url = await ensureKidGuideShareUrl();
+
+    if (mode === "kakao" && navigator.share) {
+      try {
+        await navigator.share({
+          title: "👶 오늘의 안전 길",
+          text,
+          url,
+        });
+        return;
+      } catch (shareErr) {
+        if (shareErr?.name === "AbortError") return;
+        // share 실패 시 복사로 폴백
+      }
+    }
+
+    await copyTextToClipboard(url);
+    showKidShareToast(
+      mode === "kakao"
+        ? "카톡에 붙여넣기 하세요. 링크 끝까지 잘렸으면 다시 복사해 주세요."
+        : "링크 복사됐어요! guide?d= 로 시작하는지 확인해 주세요."
+    );
+  } catch (err) {
+    if (err?.name !== "AbortError") {
+      alert(err?.message || "공유에 실패했습니다.");
+    }
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
+}
+
+function renderKidCard(direction = 0) {
+  const steps = state.kidCardSteps;
+  const total = steps.length;
+  const index = Math.min(state.kidCardIndex, total - 1);
+  const step = steps[index];
+  const isArrive = index === total - 1;
+  const [icon] = navigationIcon(step);
+  const keyword = isArrive ? "도착! 잘했어요" : navigationKeywordPlain(step);
+  const landmark = landmarkPhrase(step);
+  const walkLine = isArrive ? "" : kidWalkLine(keyword, step.distance_m || 0);
+  const ratio = kidProgressRatio(steps, index);
+  const stepCheer = typeof kidCardCheerMessage === "function" ? kidCardCheerMessage(index, total) : "";
+
+  const cheerEl = document.getElementById("kid-card-cheer");
+  if (cheerEl && stepCheer) {
+    cheerEl.textContent = stepCheer;
+    cheerEl.hidden = false;
+  } else if (cheerEl && !cheerEl.classList.contains("pop")) {
+    cheerEl.textContent = "";
+    cheerEl.hidden = true;
+  }
+
+  document.getElementById("kid-card").classList.toggle("arrived", isArrive);
+  document.getElementById("kid-card-icon").textContent = isArrive ? "🎉" : icon;
+  document.getElementById("kid-card-text").textContent = keyword;
+  document.getElementById("kid-card-friendly").textContent = walkLine;
+  document.getElementById("kid-card-landmark").textContent =
+    isArrive || !landmark ? "" : `📍 ${landmark}`;
+
+  const nextBtn = document.getElementById("kid-card-next");
+  const sharePanel = document.getElementById("kid-card-share-panel");
+  if (isArrive) {
+    nextBtn.textContent = "🎉 도착! 잘했어요";
+    nextBtn.classList.add("arrive-btn");
+    nextBtn.disabled = true;
+    if (sharePanel) sharePanel.hidden = false;
+  } else {
+    nextBtn.textContent = "다음 →";
+    nextBtn.classList.remove("arrive-btn");
+    nextBtn.disabled = false;
+  }
+
+  updateProgressStamps(ratio, { announce: direction !== 0 || index === 0 });
+  animateKidCard(direction);
+}
+
+// 카드 넘김 효과: 다음이면 오른쪽에서, 이전이면 왼쪽에서 슬라이드 인.
+function animateKidCard(direction) {
+  const stage = document.querySelector(".kid-card-stage");
+  if (!stage) return;
+  stage.classList.remove("slide-next", "slide-prev");
+  // 리플로우를 강제해 애니메이션을 재시작시킨다.
+  void stage.offsetWidth;
+  stage.classList.add(direction < 0 ? "slide-prev" : "slide-next");
+}
+
+function stepKidCard(delta) {
+  const total = state.kidCardSteps.length;
+  const next = Math.min(total - 1, Math.max(0, state.kidCardIndex + delta));
+  if (next === state.kidCardIndex) return;
+  state.kidCardIndex = next;
+  renderKidCard(delta);
+}
+
+function bindKidCardSwipe() {
+  const card = document.getElementById("kid-card");
+  if (!card || card.dataset.swipeBound === "1") return;
+  card.dataset.swipeBound = "1";
+
+  let startX = 0;
+  let startY = 0;
+  card.addEventListener(
+    "touchstart",
+    (event) => {
+      const touch = event.changedTouches[0];
+      startX = touch.clientX;
+      startY = touch.clientY;
+    },
+    { passive: true }
+  );
+  card.addEventListener(
+    "touchend",
+    (event) => {
+      const touch = event.changedTouches[0];
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
+      if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy)) return;
+      stepKidCard(dx < 0 ? 1 : -1);
+    },
+    { passive: true }
+  );
+
+  document.getElementById("kid-card-tap-prev")?.addEventListener("click", () => stepKidCard(-1));
+  document.getElementById("kid-card-tap-next")?.addEventListener("click", () => stepKidCard(1));
+}
+
+function renderLegend() {
+  const el = document.getElementById("legend");
+  el.innerHTML = `
+    <span class="legend-instruction">공공데이터 항목에 커서를 올리면 지도에 표시됩니다.</span>
+    ${PUBLIC_DATA_LEGEND.map(
+      ([layer, color, label]) =>
+        `<button type="button" class="legend-item" data-public-layer="${layer}"><span class="dot" style="background:${CATEGORY_COLORS[color]}"></span>${label}</button>`
+    ).join("")}
+    <span class="legend-route-help">굵은 실선 = 선택한 경로</span>
+  `;
+  el.querySelectorAll("[data-public-layer]").forEach((item) => {
+    const showLayer = () => setActivePublicLayer(item.dataset.publicLayer);
+    item.addEventListener("pointerenter", showLayer);
+    item.addEventListener("focus", showLayer);
+    item.addEventListener("pointerleave", () => setActivePublicLayer(null));
+    item.addEventListener("blur", () => setActivePublicLayer(null));
+  });
+}
+
+function setActivePublicLayer(layer) {
+  if (state.activePublicLayer === layer) return;
+  state.activePublicLayer = layer;
+  if (state.lastResult && state.publicData) renderMap(state.lastResult, state.publicData, false);
+}
+
+function shouldShowPublicLayer(layer) {
+  return state.activePublicLayer === layer;
+}
+
+// ---------- SVG 스키매틱 지도 (Leaflet/OSM 로드 실패 시 오프라인 폴백) ----------
+
+function computeBounds(points) {
+  const lats = points.map((p) => p.lat);
+  const lngs = points.map((p) => p.lng);
+  return {
+    minLat: Math.min(...lats),
+    maxLat: Math.max(...lats),
+    minLng: Math.min(...lngs),
+    maxLng: Math.max(...lngs),
+  };
+}
+
+function project(point, bounds, size, padding) {
+  const latSpan = bounds.maxLat - bounds.minLat || 0.001;
+  const lngSpan = bounds.maxLng - bounds.minLng || 0.001;
+  const x = padding + ((point.lng - bounds.minLng) / lngSpan) * (size - padding * 2);
+  // 위도는 위로 갈수록 커지므로 SVG y축(아래로 증가)에 맞춰 반전
+  const y = size - padding - ((point.lat - bounds.minLat) / latSpan) * (size - padding * 2);
+  return { x, y };
+}
+
+function distanceMeters(a, b) {
+  const radians = (value) => (value * Math.PI) / 180;
+  const latDelta = radians(b.lat - a.lat);
+  const lngDelta = radians(b.lng - a.lng);
+  const lat1 = radians(a.lat);
+  const lat2 = radians(b.lat);
+  const value =
+    Math.sin(latDelta / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(lngDelta / 2) ** 2;
+  return 6_371_000 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+}
+
+function pointsNearRecommendedRoute(points, routeData, radiusM = 140) {
+  const selected = activeRoute(routeData);
+  if (!selected) return [];
+  return points.filter((point) =>
+    selected.coordinates.some((coordinate) => distanceMeters(point, coordinate) <= radiusM)
+  );
+}
+
+function renderSvgMap(routeData, publicData) {
+  const svg = document.getElementById("svg-map");
+  const size = 600;
+  const padding = 40;
+  svg.innerHTML = "";
+
+  const childZones = pointsNearRecommendedRoute(publicData.child_zones || [], routeData);
+  const accidentHotspots = pointsNearRecommendedRoute(publicData.accident_hotspots || [], routeData);
+  const guardianHouses = pointsNearRecommendedRoute(publicData.guardian_houses || [], routeData);
+  const sf = safetyFacilitiesNearRoute(publicData, routeData);
+  const documentPoints = pointsNearRecommendedRoute(publicData.doc_risk_points || [], routeData);
+  const allPoints = [];
+  const active = activeRoute(routeData);
+  routeData.candidates.forEach((c) => {
+    if (!active || c.id !== active.id) return;
+    c.coordinates.forEach((pt) => allPoints.push(pt));
+  });
+  [childZones, accidentHotspots, guardianHouses, sf.cctv, sf.streetlight, documentPoints]
+    .forEach((points) => points.forEach((point) => allPoints.push(point)));
+  if (allPoints.length === 0) return;
+
+  const bounds = computeBounds(allPoints);
+
+  const ns = "http://www.w3.org/2000/svg";
+  const bg = document.createElementNS(ns, "rect");
+  bg.setAttribute("x", 0);
+  bg.setAttribute("y", 0);
+  bg.setAttribute("width", size);
+  bg.setAttribute("height", size);
+  bg.setAttribute("fill", "#eef3f8");
+  svg.appendChild(bg);
+
+  // 선택한 경로만 폴리라인으로 표시
+  if (active && active.coordinates.length >= 2) {
+    const pts = active.coordinates.map((pt) => project(pt, bounds, size, padding));
+    const path = document.createElementNS(ns, "polyline");
+    path.setAttribute("points", pts.map((p) => `${p.x},${p.y}`).join(" "));
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", scoreColor(active.safety_score));
+    path.setAttribute("stroke-width", 5);
+    path.setAttribute("stroke-opacity", 0.95);
+    path.setAttribute("stroke-linecap", "round");
+    svg.appendChild(path);
+  }
+
+  function drawMarker(pt, color, shape, title) {
+    const p = project(pt, bounds, size, padding);
+    let node;
+    if (shape === "circle") {
+      node = document.createElementNS(ns, "circle");
+      node.setAttribute("cx", p.x);
+      node.setAttribute("cy", p.y);
+      node.setAttribute("r", 6);
+    } else if (shape === "triangle") {
+      node = document.createElementNS(ns, "polygon");
+      const s = 8;
+      node.setAttribute("points", `${p.x},${p.y - s} ${p.x - s},${p.y + s} ${p.x + s},${p.y + s}`);
+    } else if (shape === "diamond") {
+      node = document.createElementNS(ns, "polygon");
+      const s = 7;
+      node.setAttribute("points", `${p.x},${p.y - s} ${p.x + s},${p.y} ${p.x},${p.y + s} ${p.x - s},${p.y}`);
+    } else {
+      node = document.createElementNS(ns, "rect");
+      node.setAttribute("x", p.x - 6);
+      node.setAttribute("y", p.y - 6);
+      node.setAttribute("width", 12);
+      node.setAttribute("height", 12);
+    }
+    node.setAttribute("fill", color);
+    node.setAttribute("stroke", "white");
+    node.setAttribute("stroke-width", 1.5);
+    const titleEl = document.createElementNS(ns, "title");
+    titleEl.textContent = title;
+    node.appendChild(titleEl);
+    svg.appendChild(node);
+  }
+
+  if (shouldShowPublicLayer("cctv")) {
+    childZones.forEach((z) =>
+      drawMarker(z, CATEGORY_COLORS.cctv, "circle", `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`)
+    );
+  }
+  if (shouldShowPublicLayer("safety-cctv")) sf.cctv.forEach((f) =>
+    drawMarker(f, CATEGORY_COLORS.safetyCctv, "circle", `📹 ${f.label} ${f.install_count > 1 ? `x${f.install_count}` : ""} · ${f.dong || f.district || ""}`)
+  );
+  if (shouldShowPublicLayer("safety-streetlight")) sf.streetlight.forEach((f) =>
+    drawMarker(f, CATEGORY_COLORS.safetyStreetlight, "circle", `💡 ${f.label} · ${f.dong || f.district || ""}`)
+  );
+  if (shouldShowPublicLayer("hotspot")) accidentHotspots.forEach((h) =>
+    drawMarker(h, CATEGORY_COLORS.hotspot, "triangle", `${h.name || "사고다발지역"} (${h.occurrence_count}건)`)
+  );
+  if (shouldShowPublicLayer("guardian")) guardianHouses.forEach((g) =>
+    drawMarker(g, CATEGORY_COLORS.guardian, "diamond", `🏪 ${g.name || "아동안전지킴이집"}`)
+  );
+  if (shouldShowPublicLayer("doc-risk")) documentPoints.filter((d) => d.is_risk).forEach((d) =>
+    drawMarker(d, CATEGORY_COLORS.docRisk, "square", `[문서근거] ${d.risk_type} (${d.source_doc})`)
+  );
+
+  // 출발/목적지 라벨
+  [routeData.origin, routeData.destination].forEach((wp, idx) => {
+    const p = project(wp, bounds, size, padding);
+    const text = document.createElementNS(ns, "text");
+    text.setAttribute("x", p.x);
+    text.setAttribute("y", p.y - 12);
+    text.setAttribute("text-anchor", "middle");
+    text.setAttribute("font-size", "13");
+    text.setAttribute("font-weight", "700");
+    text.setAttribute("fill", "#1c2733");
+    text.textContent = idx === 0 ? `🏠 ${wp.name || "출발"}` : `🏫 ${wp.name || "목적지"}`;
+    svg.appendChild(text);
+  });
+}
+
+// ---------- Tmap 지도 (Tmap JS SDK v2) ----------
+
+function setMapStatus(message, visible = true) {
+  const el = document.getElementById("map-status");
+  if (!el) return;
+  el.textContent = message || "";
+  el.classList.toggle("visible", Boolean(visible && message));
+}
+
+function isTmapReady() {
+  const T = window.Tmapv2;
+  // Tmapv2 객체만 있고 LatLng/Map 생성자가 아직 없는 순간이 있음 → 둘 다 function 일 때만 준비 완료
+  return Boolean(
+    T &&
+      typeof T.Map === "function" &&
+      typeof T.LatLng === "function" &&
+      typeof T.LatLngBounds === "function" &&
+      typeof T.Polyline === "function" &&
+      typeof T.Marker === "function"
+  );
+}
+
+function loadScriptOnce(src, datasetKey) {
+  return new Promise((resolve, reject) => {
+    const existing = datasetKey
+      ? document.querySelector(`script[data-tmap-sdk="${datasetKey}"]`)
+      : document.querySelector(`script[src="${src}"]`);
+    if (existing) {
+      if (existing.dataset.loaded === "1") return resolve();
+      if (existing.readyState === "complete" || existing.readyState === "loaded") {
+        existing.dataset.loaded = "1";
+        return resolve();
+      }
+      const timer = setTimeout(
+        () => reject(new Error(`스크립트 로드 시간 초과: ${src}`)),
+        20000
+      );
+      existing.addEventListener("load", () => {
+        clearTimeout(timer);
+        existing.dataset.loaded = "1";
+        resolve();
+      });
+      existing.addEventListener("error", () => {
+        clearTimeout(timer);
+        existing.remove();
+        reject(new Error(`스크립트 로드 실패: ${src}`));
+      });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = false;
+    if (datasetKey) script.dataset.tmapSdk = datasetKey;
+    const timer = setTimeout(
+      () => reject(new Error(`스크립트 로드 시간 초과: ${src}`)),
+      20000
+    );
+    script.onload = () => {
+      clearTimeout(timer);
+      script.dataset.loaded = "1";
+      resolve();
+    };
+    script.onerror = () => {
+      clearTimeout(timer);
+      script.remove();
+      reject(new Error(`스크립트 로드 실패: ${src}`));
+    };
+    document.head.appendChild(script);
+  });
+}
+
+async function waitUntil(predicate, timeoutMs, label) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(label || "대기 시간 초과");
+}
+
+async function loadTmapSdk(appKey) {
+  if (!appKey) {
+    throw new Error("Tmap appKey가 없습니다. Render Environment에 TMAP_APP_KEY를 설정하세요.");
+  }
+
+  if (isTmapReady()) {
+    window.__TMAP_APP_KEY__ = appKey;
+    try {
+      window.Tmapv2.appKey = appKey;
+    } catch (_) {
+      /* ignore */
+    }
+    return;
+  }
+
+  const coreUrls = [1, 2, 3].map(
+    (n) => `https://topopentile${n}.tmap.co.kr/scriptSDKV2/tmapjs2.min.js?version=20231206`
+  );
+  let lastError = null;
+  for (let i = 0; i < coreUrls.length; i += 1) {
+    try {
+      await loadScriptOnce(coreUrls[i], `tmap-core-${i + 1}`);
+      await waitUntil(isTmapReady, 15000, "Tmap SDK를 불러오지 못했습니다.");
+      window.__TMAP_APP_KEY__ = appKey;
+      if (typeof window.Tmapv2.setHttpsMode === "function") {
+        window.Tmapv2.setHttpsMode(true);
+      }
+      try {
+        window.Tmapv2.appKey = appKey;
+      } catch (_) {
+        /* ignore */
+      }
+      return;
+    } catch (err) {
+      lastError = err;
+      document.querySelector(`script[data-tmap-sdk="tmap-core-${i + 1}"]`)?.remove();
+    }
+  }
+  throw lastError || new Error("Tmap SDK를 불러오지 못했습니다.");
+}
+
+async function tryInitTmap() {
+  const container = document.getElementById("tmap");
+  const svgEl = document.getElementById("svg-map");
+  try {
+    setMapStatus("티맵 지도를 불러오는 중…", true);
+    const appKey =
+      (state.config && state.config.tmap_web_key) ||
+      window.__TMAP_APP_KEY__ ||
+      "";
+    await loadTmapSdk(appKey);
+
+    // 로그인 직후 app-shell 표시 직후 레이아웃 확정 대기
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+
+    // 이전에 실패한 지도 DOM이 남아 있으면 비우고 다시 생성
+    container.innerHTML = "";
+    container.style.display = "block";
+    container.style.width = "100%";
+    container.style.height = "420px";
+    if (svgEl) svgEl.style.display = "none";
+
+    const center = (state.config && state.config.demo_center) || { lat: 37.5013, lng: 127.0396 };
+    const T = window.Tmapv2;
+    state.tmap = new T.Map("tmap", {
+      center: new T.LatLng(center.lat, center.lng),
+      width: "100%",
+      height: "420px",
+      zoom: 16,
+      zoomControl: true,
+      scrollwheel: true,
+    });
+    state.tmapOverlays = [];
+    state.tmapReady = true;
+    setMapStatus("", false);
+  } catch (err) {
+    console.warn("Tmap 지도 로드 실패, SVG 스키매틱 지도로 대체합니다.", err);
+    state.tmapReady = false;
+    if (container) container.style.display = "none";
+    if (svgEl) {
+      svgEl.style.display = "block";
+      renderSvgMap(
+        state.lastResult || {
+          origin: { lat: 37.5013, lng: 127.0396, name: "출발" },
+          destination: { lat: 37.5013, lng: 127.0396, name: "목적지" },
+          candidates: [],
+        },
+        state.publicData || { cctvs: [], child_zones: [], accident_hotspots: [] }
+      );
+    }
+    setMapStatus(
+      `티맵 지도를 불러오지 못했습니다. (${err.message || err}) SVG 지도로 표시합니다.`,
+      true
+    );
+  }
+}
+
+// Leaflet circleMarker 대체: 카테고리 색상 원을 data-URI SVG 아이콘으로 만든다.
+function tmapDotIcon(color) {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18">` +
+    `<circle cx="9" cy="9" r="6" fill="${color}" stroke="white" stroke-width="2"/></svg>`;
+  return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+}
+
+// Tmap은 layerGroup.clearLayers()가 없으므로, 다시 그리기 전 오버레이를 직접 지운다.
+function clearTmapOverlays() {
+  (state.tmapOverlays || []).forEach((overlay) => overlay.setMap(null));
+  state.tmapOverlays = [];
+  if (state.infoWindow) {
+    state.infoWindow.setMap(null);
+    state.infoWindow = null;
+  }
+}
+
+function renderTmapRoutes(routeData, publicData) {
+  if (!state.tmap) return;
+  clearTmapOverlays();
+  const bounds = new Tmapv2.LatLngBounds();
+  let hasPoint = false;
+  const track = (overlay) => {
+    state.tmapOverlays.push(overlay);
+    return overlay;
+  };
+
+  const childZones = pointsNearRecommendedRoute(publicData.child_zones || [], routeData);
+  const accidentHotspots = pointsNearRecommendedRoute(publicData.accident_hotspots || [], routeData);
+  const guardianHouses = pointsNearRecommendedRoute(publicData.guardian_houses || [], routeData);
+  const sf = safetyFacilitiesNearRoute(publicData, routeData);
+  const documentPoints = pointsNearRecommendedRoute(publicData.doc_risk_points || [], routeData);
+
+  const active = activeRoute(routeData);
+  if (active && active.coordinates.length >= 2) {
+    const path = active.coordinates.map((pt) => {
+      const latlng = new Tmapv2.LatLng(pt.lat, pt.lng);
+      bounds.extend(latlng);
+      hasPoint = true;
+      return latlng;
+    });
+    track(
+      new Tmapv2.Polyline({
+        path,
+        strokeColor: scoreColor(active.safety_score),
+        strokeWeight: 6,
+        strokeStyle: "solid",
+        strokeOpacity: 0.95,
+        map: state.tmap,
+      })
+    );
+  }
+
+  function marker(pt, color, title, label) {
+    const latlng = new Tmapv2.LatLng(pt.lat, pt.lng);
+    bounds.extend(latlng);
+    hasPoint = true;
+    const options = {
+      position: latlng,
+      icon: tmapDotIcon(color),
+      iconSize: new Tmapv2.Size(18, 18),
+      map: state.tmap,
+    };
+    if (label) options.label = label;
+    const m = track(new Tmapv2.Marker(options));
+    if (title) {
+      m.addListener("click", () => {
+        if (state.infoWindow) state.infoWindow.setMap(null);
+        state.infoWindow = new Tmapv2.InfoWindow({
+          position: latlng,
+          content: `<div style="padding:6px 8px;font-size:12px;max-width:220px">${title}</div>`,
+          type: 2,
+          border: "1px solid #888",
+          map: state.tmap,
+        });
+      });
+    }
+    return m;
+  }
+
+  if (shouldShowPublicLayer("cctv")) {
+    childZones.forEach((z) =>
+      marker(z, CATEGORY_COLORS.cctv, `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`)
+    );
+  }
+  if (shouldShowPublicLayer("safety-cctv")) sf.cctv.forEach((f) =>
+    marker(f, CATEGORY_COLORS.safetyCctv, `📹 ${f.label} ${f.install_count > 1 ? `x${f.install_count}` : ""} · ${f.dong || f.district || ""}`)
+  );
+  if (shouldShowPublicLayer("safety-streetlight")) sf.streetlight.forEach((f) =>
+    marker(f, CATEGORY_COLORS.safetyStreetlight, `💡 ${f.label} · ${f.dong || f.district || ""}`)
+  );
+  if (shouldShowPublicLayer("hotspot")) accidentHotspots.forEach((h) =>
+    marker(h, CATEGORY_COLORS.hotspot, `${h.name || "사고다발지역"} (${h.occurrence_count}건)`)
+  );
+  if (shouldShowPublicLayer("guardian")) guardianHouses.forEach((g) =>
+    marker(g, CATEGORY_COLORS.guardian, `🏪 ${g.name || "아동안전지킴이집"}`)
+  );
+  if (shouldShowPublicLayer("doc-risk")) documentPoints.filter((d) => d.is_risk).forEach((d) =>
+    marker(d, CATEGORY_COLORS.docRisk, `[문서근거] ${d.risk_type} (${d.source_doc})`)
+  );
+
+  const originName = routeData.origin.name || "출발";
+  const destName = routeData.destination.name || "목적지";
+  marker(routeData.origin, "#1c7c3b", `🏠 ${originName}`, `<span class="tmap-wp-label">🏠 ${originName}</span>`);
+  marker(routeData.destination, "#b3261e", `🏫 ${destName}`, `<span class="tmap-wp-label">🏫 ${destName}</span>`);
+
+  if (hasPoint) {
+    state.tmap.fitBounds(bounds);
+  }
+}
+
+function renderMap(routeData, publicData, refreshLegend = true) {
+  if (state.tmapReady) {
+    setMapStatus("", false);
+    document.getElementById("tmap").style.display = "block";
+    document.getElementById("svg-map").style.display = "none";
+    renderTmapRoutes(routeData, publicData);
+  } else {
+    document.getElementById("svg-map").style.display = "block";
+    document.getElementById("tmap").style.display = "none";
+    renderSvgMap(routeData, publicData);
+    setMapStatus("", false);
+  }
+  if (refreshLegend) renderLegend();
+}
+
+function selectRoute(routeId) {
+  if (!state.lastResult || !state.publicData) return;
+  state.selectedRouteId = routeId;
+  renderCandidates(state.lastResult);
+  renderReports(state.lastResult);
+  renderParentReport(state.lastResult);
+  renderTimeContext(state.lastResult);
+  renderMap(state.lastResult, state.publicData);
+}
+
+async function handleSubmit(event) {
+  event.preventDefault();
+  const submitBtn = document.getElementById("submit-btn");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "계산 중...";
+
+  try {
+    const originQuery = document.getElementById("origin-query").value.trim();
+    const destQuery = document.getElementById("dest-query").value.trim();
+    if (!originQuery || !destQuery) {
+      alert("출발지와 목적지 이름을 모두 입력해주세요.");
+      return;
+    }
+
+    const payload = {
+      origin: { query: originQuery, name: originQuery },
+      destination: { query: destQuery, name: destQuery },
+      // audience_age: parseInt(document.getElementById("audience-age").value, 10) || 8,
+    };
+
+    const [routeData, publicData] = await Promise.all([
+      fetchJson("/api/route", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+      fetchJson("/api/public-data"),
+    ]);
+
+    state.lastResult = routeData;
+    state.publicData = publicData;
+    state.selectedRouteId = null;
+
+    console.log(
+      "[경로안내] API 응답:",
+      routeData.candidates.map((c) => ({
+        id: c.id,
+        source: c.source,
+        steps: resolveNavigationSteps(c).length,
+        preview: resolveNavigationSteps(c).slice(0, 3).map((s) => s.description),
+      }))
+    );
+
+    renderWeather(routeData.weather);
+    renderTimeContext(routeData);
+    renderParentReport(routeData);
+    renderCandidates(routeData);
+    renderReports(routeData);
+    renderMap(routeData, publicData);
+
+    if (routeData.used_mock && routeData.used_mock.routing) {
+      console.warn("[경로] MOCK 모드 — Tmap 보행자 API 미사용");
+    } else {
+      const main = routeData.candidates.find((c) => c.source === "TMAP_PEDESTRIAN_API");
+      if (main) {
+        console.log(`[경로] Tmap 보행자 경로 좌표 ${main.coordinates.length}개`);
+      }
+    }
+  } catch (err) {
+    const msg = err.message || String(err);
+    const friendly = msg.includes("429") || msg.includes("한도")
+      ? "Tmap API 호출 한도에 걸렸습니다. 1~2분 후 다시 시도해 주세요."
+      : msg.includes("503")
+        ? "Tmap 보행 경로를 불러오지 못했습니다. 잠시 후 다시 시도하거나 Render 배포·TMAP_APP_KEY를 확인해 주세요."
+        : msg;
+    alert(`경로 계산 중 오류가 발생했습니다: ${friendly}`);
+    console.error(err);
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "안전 경로 찾기";
+  }
+}
+
+function renderWeather(weather) {
+  const el = document.getElementById("weather-badge");
+  if (!el) return;
+  if (!weather) {
+    el.textContent = "";
+    el.style.display = "none";
+    return;
+  }
+  const parts = [weather.description];
+  if (weather.temperature_c) parts.push(`${weather.temperature_c}°C`);
+  if (weather.humidity_pct) parts.push(`습도 ${weather.humidity_pct}%`);
+  if (weather.is_rain && weather.rain_mm && weather.rain_mm !== "0") parts.push(`강수 ${weather.rain_mm}mm`);
+  const emoji = weather.is_rain ? "🌧️" : "🌡️";
+  el.textContent = `${emoji} 목적지 날씨 · ${parts.filter(Boolean).join(" · ")}`;
+  el.style.display = "inline-block";
+}
+
+function setMode(mode) {
+  state.mode = mode;
+  document.body.dataset.mode = mode;
+
+  document.querySelectorAll(".mode-button").forEach((button) => {
+    const active = button.dataset.mode === mode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+
+  const kidMode = mode === "kid";
+  document.getElementById("route-label").textContent = kidMode
+    ? "부모님이 골라준 안전한 길"
+    : "부모님이 추천한 길";
+  document.getElementById("mode-message").textContent = kidMode
+    ? "부모님이 골라준 길을 따라 안전하게 걸어가요."
+    : "안전 점수와 주변 시설을 비교해 가장 안전한 길을 골랐어요.";
+  document.getElementById("guide-label").textContent = kidMode
+    ? "오늘의 추천 길"
+    : "안전 설명";
+  document.getElementById("results-label").textContent = kidMode
+    ? "오늘의 추천 길"
+    : "안전한 길 비교";
+
+  if (!kidMode && state.lastResult) {
+    renderParentReport(state.lastResult);
+  }
+}
+
+function setTheme(theme) {
+  const isDark = theme === "dark";
+  document.body.classList.toggle("theme-dark", isDark);
+  const button = document.getElementById("theme-toggle");
+  button.textContent = isDark ? "라이트 모드" : "다크 모드";
+  button.setAttribute("aria-pressed", String(isDark));
+  localStorage.setItem("kids-theme", theme);
+}
+
+function bindAppUi() {
+  document.getElementById("demo-scenario-select")?.addEventListener("change", fillDemoCoordinates);
+  document.getElementById("swap-locations")?.addEventListener("click", swapLocations);
+  document.getElementById("route-form")?.addEventListener("submit", handleSubmit);
+  document.querySelectorAll(".mode-button").forEach((button) => {
+    button.addEventListener("click", () => setMode(button.dataset.mode));
+  });
+  document.getElementById("theme-toggle")?.addEventListener("click", () => {
+    setTheme(document.body.classList.contains("theme-dark") ? "light" : "dark");
+  });
+  document.getElementById("candidates-list")?.addEventListener("click", (event) => {
+    const card = event.target.closest(".candidate-card[data-route-id]");
+    if (card) selectRoute(card.dataset.routeId);
+  });
+  document.getElementById("candidates-list")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const card = event.target.closest(".candidate-card[data-route-id]");
+    if (!card) return;
+    event.preventDefault();
+    selectRoute(card.dataset.routeId);
+  });
+  document.getElementById("kid-card-close")?.addEventListener("click", closeKidCardMode);
+  document.getElementById("kid-card-share-toggle")?.addEventListener("click", toggleKidCardSharePanel);
+  document.getElementById("kid-card-share-kakao")?.addEventListener("click", () => shareKidGuide("kakao"));
+  document.getElementById("kid-card-share-copy")?.addEventListener("click", () => shareKidGuide("copy"));
+  document.getElementById("kid-card-next")?.addEventListener("click", () => stepKidCard(1));
+  bindKidCardSwipe();
+  startLiveClock();
+  setMode(state.mode);
+  setTheme(localStorage.getItem("kids-theme") || "light");
+  fillDemoCoordinates();
+}
+
+async function init() {
+  document.getElementById("google-login-btn")?.addEventListener("click", startGoogleLogin);
+  document.getElementById("logout-btn")?.addEventListener("click", logout);
+
+  const user = await requireAuth();
+  if (!user) return;
+
+  try {
+    bindAppUi();
+  } catch (err) {
+    console.error("화면 연결 중 오류가 났습니다. 지도는 계속 불러옵니다.", err);
+  }
+
+  try {
+    state.config = await fetchJson("/api/config");
+  } catch (err) {
+    console.warn("백엔드 설정을 불러오지 못했습니다. 백엔드가 실행 중인지 확인하세요.", err);
+    state.config = { demo_center: { lat: 37.5013, lng: 127.0396 } };
+  }
+
+  await tryInitTmap();
+  renderLegend();
+}
+
+init();
