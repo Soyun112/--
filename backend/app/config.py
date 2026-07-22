@@ -167,22 +167,22 @@ class Settings:
     def upstage_mock(self) -> bool:
         return self.force_mock or not self.upstage_api_key
 
-    # 안전점수 가중치 — 합이 과도하면 상대점수 clip(100)으로 후보가 전부 만점처럼 보임
+    # 안전점수 가중치 (PROJECT_PLAN.md 5장 수식과 대응)
     weights = {
-        "cctv_density": 12.0,
-        "child_zone_coverage": 12.0,
-        "doc_safety": 8.0,
-        "guardian_house": 8.0,
-        "streetlight_density": 6.0,
-        "speed_camera": 5.0,
-        "accident_hotspot": 18.0,
-        "crime_risk": 10.0,
-        "doc_risk": 20.0,
-        # 안심귀갓길 CSV 시설물
-        "safety_facility_cctv": 14.0,
-        "safety_facility_streetlight": 10.0,
-        "safety_bell": 5.0,
-        "emergency112": 4.0,
+        "cctv_density": 18.0,
+        "child_zone_coverage": 15.0,
+        "doc_safety": 10.0,
+        "guardian_house": 10.0,
+        "streetlight_density": 8.0,
+        "speed_camera": 6.0,
+        "accident_hotspot": 22.0,
+        "crime_risk": 12.0,
+        "doc_risk": 28.0,
+        # 안심귀갓길 CSV 시설물 (CCTV·보안등 가점 크게)
+        "safety_facility_cctv": 22.0,
+        "safety_facility_streetlight": 14.0,
+        "safety_bell": 6.0,
+        "emergency112": 5.0,
     }
 
     buffer_radius_m: float = 40.0

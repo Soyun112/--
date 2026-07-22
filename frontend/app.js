@@ -47,8 +47,6 @@ const state = {
   tmapReady: false,
   tmap: null,
   tmapOverlays: [],
-  publicOverlays: [],
-  publicLayerGroups: {},
   infoWindow: null,
   mode: "parent",
   selectedRouteId: null,
@@ -706,20 +704,9 @@ function etaMessageForDuration(durationS) {
 }
 
 function routeTimeRange(durationS) {
-  const seconds = Number(durationS);
-  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  if (!durationS || durationS <= 0) return "";
   const departure = new Date();
-  const arrival = new Date(departure.getTime() + seconds * 1000);
-  return `${formatKoreanTime(departure)} 출발 → ${formatKoreanTime(arrival)} 도착`;
-}
-
-function candidateTimeLine(candidate) {
-  const fromDuration = routeTimeRange(candidate?.duration_s);
-  if (fromDuration) return fromDuration;
-  const minutes = Math.max(1, Math.round(Number(candidate?.duration_s) / 60) || 0);
-  if (!minutes) return "출발 · 도착 시간을 계산하는 중";
-  const departure = new Date();
-  const arrival = new Date(departure.getTime() + minutes * 60 * 1000);
+  const arrival = new Date(departure.getTime() + durationS * 1000);
   return `${formatKoreanTime(departure)} 출발 → ${formatKoreanTime(arrival)} 도착`;
 }
 
@@ -815,7 +802,7 @@ function renderCandidates(data) {
             <span class="score-pill" style="background:${scoreColor(c.safety_score)}">${c.safety_score}점</span>
           </h4>
           <div class="star-rating" title="안전 등급 ${c.star_rating}/3">${stars}</div>
-          <div class="candidate-time">${candidateTimeLine(c)}</div>
+          ${isRecommended ? `<div class="candidate-time">${routeTimeRange(c.duration_s)}</div>` : ""}
           <div class="candidate-meta candidate-summary">
             <span>거리: ${(c.distance_m / 1000).toFixed(2)}km</span>
             <span>예상 소요: ${Math.round(c.duration_s / 60)}분</span>
@@ -1156,201 +1143,33 @@ function renderLegend() {
     <span class="legend-instruction">공공데이터 항목에 커서를 올리면 지도에 표시됩니다.</span>
     ${PUBLIC_DATA_LEGEND.map(
       ([layer, color, label]) =>
-        `<span class="legend-item" role="button" tabindex="0" data-public-layer="${layer}"><span class="dot" style="background:${CATEGORY_COLORS[color]}"></span>${label}</span>`
+        `<button type="button" class="legend-item" data-public-layer="${layer}"><span class="dot" style="background:${CATEGORY_COLORS[color]}"></span>${label}</button>`
     ).join("")}
     <span class="legend-route-help">굵은 실선 = 선택한 경로</span>
   `;
   el.querySelectorAll("[data-public-layer]").forEach((item) => {
     const showLayer = () => setActivePublicLayer(item.dataset.publicLayer);
-    const hideLayer = () => setActivePublicLayer(null);
     item.addEventListener("pointerenter", showLayer);
-    item.addEventListener("pointerleave", hideLayer);
     item.addEventListener("focus", showLayer);
-    item.addEventListener("blur", hideLayer);
-    item.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        showLayer();
-      }
-    });
+    item.addEventListener("pointerleave", () => setActivePublicLayer(null));
+    item.addEventListener("blur", () => setActivePublicLayer(null));
   });
 }
 
 function setActivePublicLayer(layer) {
   if (state.activePublicLayer === layer) return;
   state.activePublicLayer = layer;
-  // 커서를 올려도 fitBounds/지도 재렌더 금지 — 이미 만들어 둔 마커 표시만 토글
-  applyPublicLayerVisibility();
+  if (state.lastResult && state.publicData) {
+    renderMap(state.lastResult, state.publicData, false);
+  } else if (state.publicData && state.docMode === "analyzed") {
+    renderDocRiskOnlyMap(state.publicData);
+  }
 }
 
 function shouldShowPublicLayer(layer) {
   // 문서 분석 후에는 범례에 올리지 않아도 문서 위험이 항상 보이게
   if (layer === "doc-risk" && state.docMode === "analyzed") return true;
   return state.activePublicLayer === layer;
-}
-
-function captureMapView() {
-  if (!state.tmap) return null;
-  try {
-    return {
-      center: state.tmap.getCenter(),
-      zoom: state.tmap.getZoom(),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function restoreMapView(view) {
-  if (!state.tmap || !view) return;
-  try {
-    if (view.center) state.tmap.setCenter(view.center);
-    if (view.zoom != null && view.zoom !== undefined) state.tmap.setZoom(view.zoom);
-  } catch {
-    /* ignore */
-  }
-}
-
-function clearPublicOverlays() {
-  (state.publicOverlays || []).forEach((overlay) => {
-    try {
-      overlay.setMap(null);
-    } catch {
-      /* ignore */
-    }
-  });
-  state.publicOverlays = [];
-  state.publicLayerGroups = {};
-}
-
-function makePublicDotMarker(pt, color, title) {
-  const latlng = new Tmapv2.LatLng(pt.lat, pt.lng);
-  const m = new Tmapv2.Marker({
-    position: latlng,
-    icon: tmapDotIcon(color),
-    iconSize: new Tmapv2.Size(18, 18),
-    map: state.tmap,
-  });
-  if (title) {
-    m.addListener("click", () => {
-      if (state.infoWindow) state.infoWindow.setMap(null);
-      state.infoWindow = new Tmapv2.InfoWindow({
-        position: latlng,
-        content: `<div style="padding:6px 8px;font-size:12px;max-width:220px">${title}</div>`,
-        type: 2,
-        border: "1px solid #888",
-        map: state.tmap,
-      });
-    });
-  }
-  return m;
-}
-
-/** 경로 렌더 시 1회만 호출: 레이어별 마커를 미리 만들고 표시 여부만 맞춤. */
-function rebuildPublicLayerGroups(routeData, publicData) {
-  if (!state.tmapReady || !state.tmap || !publicData) return;
-  const view = captureMapView();
-  clearPublicOverlays();
-
-  const childZones = routeData
-    ? pointsNearRecommendedRoute(publicData.child_zones || [], routeData)
-    : publicData.child_zones || [];
-  const accidentHotspots = routeData
-    ? pointsNearRecommendedRoute(publicData.accident_hotspots || [], routeData)
-    : publicData.accident_hotspots || [];
-  const guardianHouses = routeData
-    ? pointsNearRecommendedRoute(publicData.guardian_houses || [], routeData)
-    : publicData.guardian_houses || [];
-  const sf = routeData
-    ? safetyFacilitiesNearRoute(publicData, routeData)
-    : { cctv: [], streetlight: [] };
-  const documentPoints = documentRiskPointsForMap(publicData, routeData);
-
-  const groups = {
-    cctv: childZones.map((z) =>
-      makePublicDotMarker(
-        z,
-        CATEGORY_COLORS.cctv,
-        `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`
-      )
-    ),
-    "safety-cctv": sf.cctv.map((f) =>
-      makePublicDotMarker(
-        f,
-        CATEGORY_COLORS.safetyCctv,
-        `📹 ${f.label} ${f.install_count > 1 ? `x${f.install_count}` : ""} · ${f.dong || f.district || ""}`
-      )
-    ),
-    "safety-streetlight": sf.streetlight.map((f) =>
-      makePublicDotMarker(
-        f,
-        CATEGORY_COLORS.safetyStreetlight,
-        `💡 ${f.label} · ${f.dong || f.district || ""}`
-      )
-    ),
-    hotspot: accidentHotspots.map((h) =>
-      makePublicDotMarker(
-        h,
-        CATEGORY_COLORS.hotspot,
-        `${h.name || "사고다발지역"} (${h.occurrence_count}건)`
-      )
-    ),
-    guardian: guardianHouses.map((g) =>
-      makePublicDotMarker(g, CATEGORY_COLORS.guardian, `🏪 ${g.name || "아동안전지킴이집"}`)
-    ),
-    "doc-risk": documentPoints.map((d) =>
-      makePublicDotMarker(
-        d,
-        d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk,
-        `${d.is_estimated ? "[추정] " : ""}[문서근거] ${d.risk_type} (${d.source_doc})`
-      )
-    ),
-  };
-
-  state.publicLayerGroups = groups;
-  state.publicOverlays = Object.values(groups).flat();
-  // 생성 직후 표시 상태 맞추고, 혹시 뷰가 바뀌었으면 복구
-  Object.entries(groups).forEach(([layer, markers]) => {
-    const show = shouldShowPublicLayer(layer);
-    markers.forEach((m) => {
-      try {
-        if (typeof m.setVisible === "function") m.setVisible(!!show);
-        else if (show) m.setMap(state.tmap);
-        else m.setMap(null);
-      } catch {
-        /* ignore */
-      }
-    });
-  });
-  restoreMapView(view);
-}
-
-/** 범례 호버: setVisible만 변경. 마커 재생성·fitBounds 없음. */
-function applyPublicLayerVisibility() {
-  if (state.tmapReady && state.tmap && Object.keys(state.publicLayerGroups || {}).length) {
-    const view = captureMapView();
-    Object.entries(state.publicLayerGroups).forEach(([layer, markers]) => {
-      const show = shouldShowPublicLayer(layer);
-      markers.forEach((m) => {
-        try {
-          if (typeof m.setVisible === "function") m.setVisible(!!show);
-          else if (show) m.setMap(state.tmap);
-          else m.setMap(null);
-        } catch {
-          /* ignore */
-        }
-      });
-    });
-    restoreMapView(view);
-    requestAnimationFrame(() => restoreMapView(view));
-    setTimeout(() => restoreMapView(view), 0);
-    setTimeout(() => restoreMapView(view), 50);
-    return;
-  }
-  // Tmap 미사용(SVG 폴백)일 때만 다시 그림 — 축척은 경로 기준으로 고정
-  if (state.lastResult && state.publicData) {
-    renderSvgMap(state.lastResult, state.publicData);
-  }
 }
 
 function documentRiskPointsForMap(publicData, routeData) {
@@ -1362,7 +1181,7 @@ function documentRiskPointsForMap(publicData, routeData) {
   return near.length ? near : all;
 }
 
-function renderDocRiskOnlyMap(publicData, { fitView = true } = {}) {
+function renderDocRiskOnlyMap(publicData) {
   if (!state.tmapReady || !state.tmap) {
     setMapStatus("지도를 준비한 뒤 문서 위험이 표시됩니다.", false);
     return;
@@ -1371,20 +1190,44 @@ function renderDocRiskOnlyMap(publicData, { fitView = true } = {}) {
   document.getElementById("tmap").style.display = "block";
   document.getElementById("svg-map").style.display = "none";
   clearTmapOverlays();
-  rebuildPublicLayerGroups(null, publicData);
 
   const points = documentRiskPointsForMap(publicData, null);
   if (!points.length) {
     setMapStatus("표시할 문서 위험 지점이 아직 없어요.", false);
-    renderLegend();
     return;
   }
 
-  if (fitView) {
-    const bounds = new Tmapv2.LatLngBounds();
-    points.forEach((d) => bounds.extend(new Tmapv2.LatLng(d.lat, d.lng)));
-    state.tmap.fitBounds(bounds);
-  }
+  const bounds = new Tmapv2.LatLngBounds();
+  const track = (overlay) => {
+    state.tmapOverlays.push(overlay);
+    return overlay;
+  };
+
+  points.forEach((d) => {
+    const latlng = new Tmapv2.LatLng(d.lat, d.lng);
+    bounds.extend(latlng);
+    const color = d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk;
+    const title = `${d.is_estimated ? "[추정] " : ""}[문서근거] ${d.risk_type || "위험"} (${d.source_doc || ""})`;
+    const m = track(
+      new Tmapv2.Marker({
+        position: latlng,
+        icon: tmapDotIcon(color),
+        iconSize: new Tmapv2.Size(18, 18),
+        map: state.tmap,
+      })
+    );
+    m.addListener("click", () => {
+      if (state.infoWindow) state.infoWindow.setMap(null);
+      state.infoWindow = new Tmapv2.InfoWindow({
+        position: latlng,
+        content: `<div style="padding:6px 8px;font-size:12px;">${title}</div>`,
+        type: 2,
+        map: state.tmap,
+      });
+    });
+  });
+
+  state.tmap.fitBounds(bounds);
   setMapStatus(`문서 위험 핀 ${points.length}곳 표시`, false);
   renderLegend();
 }
@@ -1448,9 +1291,8 @@ function renderSvgMap(routeData, publicData) {
     if (!active || c.id !== active.id) return;
     c.coordinates.forEach((pt) => allPoints.push(pt));
   });
-  // 축척은 경로·출발·도착만 사용 — 공공데이터를 넣으면 범례 호버 시 축소처럼 보임
-  if (routeData.origin) allPoints.push(routeData.origin);
-  if (routeData.destination) allPoints.push(routeData.destination);
+  [childZones, accidentHotspots, guardianHouses, sf.cctv, sf.streetlight, documentPoints]
+    .forEach((points) => points.forEach((point) => allPoints.push(point)));
   if (allPoints.length === 0) return;
 
   const bounds = computeBounds(allPoints);
@@ -1738,30 +1580,22 @@ function tmapDotIcon(color) {
   return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
 }
 
-/** 출발=빨강 / 도착=초록 물방울 핀 (공공데이터 원형 점과 구분). */
-function waypointPinMeta(kind) {
-  const isOrigin = kind === "origin";
-  return {
-    isOrigin,
-    fill: isOrigin ? "#e53935" : "#2bb673",
-    label: isOrigin ? "출발" : "도착",
-    width: 30,
-    height: 40,
-  };
-}
-
-/** SVG 폴백용 data-URI (Tmap icon 이 실패할 때만 사용). */
+/** 내비 앱과 같은 물방울 핀(원형 머리 + 뾰족한 끝 + 출발/도착 글자). */
 function waypointPinIcon(kind) {
-  const { fill, label, width: w, height: h } = waypointPinMeta(kind);
-  const filterId = kind === "origin" ? "wp-s" : "wp-e";
+  const isOrigin = kind === "origin";
+  const fill = isOrigin ? "#2bb673" : "#e53935";
+  const label = isOrigin ? "출발" : "도착";
+  // 표시 크기는 작게, viewBox는 글자가 또렷하게 보이도록 여유 있게
+  const w = 30;
+  const h = 40;
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 40 52">` +
     `<defs>` +
-    `<filter id="${filterId}" x="-20%" y="-10%" width="140%" height="140%">` +
+    `<filter id="s" x="-20%" y="-10%" width="140%" height="140%">` +
     `<feDropShadow dx="0" dy="1" stdDeviation="1.2" flood-opacity="0.35"/>` +
     `</filter>` +
     `</defs>` +
-    `<path filter="url(#${filterId})" fill="${fill}" ` +
+    `<path filter="url(#s)" fill="${fill}" ` +
     `d="M20 1.5C10.06 1.5 2 9.56 2 19.5c0 12.8 15.4 29.2 17.4 31.2a0.9 0.9 0 0 0 1.2 0C22.6 48.7 38 32.3 38 19.5 38 9.56 29.94 1.5 20 1.5z"/>` +
     `<text x="20" y="23.5" text-anchor="middle" dominant-baseline="middle" ` +
     `font-size="12" font-weight="800" letter-spacing="-0.5" ` +
@@ -1774,30 +1608,17 @@ function waypointPinIcon(kind) {
   };
 }
 
-/** Tmap은 data-URI SVG icon 을 자주 무시하고 기본 집 마커로 떨어지므로 HTML 핀을 쓴다. */
-function waypointPinHtml(kind) {
-  const { isOrigin, label } = waypointPinMeta(kind);
-  const cls = isOrigin ? "tmap-route-pin--origin" : "tmap-route-pin--dest";
-  return (
-    `<div class="tmap-route-pin ${cls}" title="${label}">` +
-    `<span class="tmap-route-pin__label">${label}</span>` +
-    `<span class="tmap-route-pin__drop" aria-hidden="true"></span>` +
-    `</div>`
-  );
-}
-
 // Tmap은 layerGroup.clearLayers()가 없으므로, 다시 그리기 전 오버레이를 직접 지운다.
 function clearTmapOverlays() {
   (state.tmapOverlays || []).forEach((overlay) => overlay.setMap(null));
   state.tmapOverlays = [];
-  clearPublicOverlays();
   if (state.infoWindow) {
     state.infoWindow.setMap(null);
     state.infoWindow = null;
   }
 }
 
-function renderTmapRoutes(routeData, publicData, { fitView = true } = {}) {
+function renderTmapRoutes(routeData, publicData) {
   if (!state.tmap) return;
   clearTmapOverlays();
   const bounds = new Tmapv2.LatLngBounds();
@@ -1806,6 +1627,12 @@ function renderTmapRoutes(routeData, publicData, { fitView = true } = {}) {
     state.tmapOverlays.push(overlay);
     return overlay;
   };
+
+  const childZones = pointsNearRecommendedRoute(publicData.child_zones || [], routeData);
+  const accidentHotspots = pointsNearRecommendedRoute(publicData.accident_hotspots || [], routeData);
+  const guardianHouses = pointsNearRecommendedRoute(publicData.guardian_houses || [], routeData);
+  const sf = safetyFacilitiesNearRoute(publicData, routeData);
+  const documentPoints = documentRiskPointsForMap(publicData, routeData);
 
   const active = activeRoute(routeData);
   if (active && active.coordinates.length >= 2) {
@@ -1827,17 +1654,45 @@ function renderTmapRoutes(routeData, publicData, { fitView = true } = {}) {
     );
   }
 
+  function marker(pt, color, title, label) {
+    const latlng = new Tmapv2.LatLng(pt.lat, pt.lng);
+    bounds.extend(latlng);
+    hasPoint = true;
+    const options = {
+      position: latlng,
+      icon: tmapDotIcon(color),
+      iconSize: new Tmapv2.Size(18, 18),
+      map: state.tmap,
+    };
+    if (label) options.label = label;
+    const m = track(new Tmapv2.Marker(options));
+    if (title) {
+      m.addListener("click", () => {
+        if (state.infoWindow) state.infoWindow.setMap(null);
+        state.infoWindow = new Tmapv2.InfoWindow({
+          position: latlng,
+          content: `<div style="padding:6px 8px;font-size:12px;max-width:220px">${title}</div>`,
+          type: 2,
+          border: "1px solid #888",
+          map: state.tmap,
+        });
+      });
+    }
+    return m;
+  }
+
   function waypointMarker(pt, kind, title) {
-    const { width, height } = waypointPinMeta(kind);
+    const pin = waypointPinIcon(kind);
     const latlng = new Tmapv2.LatLng(pt.lat, pt.lng);
     bounds.extend(latlng);
     hasPoint = true;
     const m = track(
       new Tmapv2.Marker({
         position: latlng,
-        // data-URI icon 은 Tmap 기본 집 아이콘으로 대체되는 경우가 많아 HTML 사용
-        iconHTML: waypointPinHtml(kind),
-        iconSize: new Tmapv2.Size(width, height),
+        icon: pin.url,
+        iconSize: new Tmapv2.Size(pin.width, pin.height),
+        // 핀 끝이 좌표에 닿도록 하단 중앙을 앵커로 둔다.
+        offset: new Tmapv2.Point(pin.width / 2, pin.height),
         map: state.tmap,
       })
     );
@@ -1856,24 +1711,48 @@ function renderTmapRoutes(routeData, publicData, { fitView = true } = {}) {
     return m;
   }
 
-  // 출발=빨강 / 도착=초록 물방울 핀 (공공데이터 원점과 구분)
+  if (shouldShowPublicLayer("cctv")) {
+    childZones.forEach((z) =>
+      marker(z, CATEGORY_COLORS.cctv, `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`)
+    );
+  }
+  if (shouldShowPublicLayer("safety-cctv")) sf.cctv.forEach((f) =>
+    marker(f, CATEGORY_COLORS.safetyCctv, `📹 ${f.label} ${f.install_count > 1 ? `x${f.install_count}` : ""} · ${f.dong || f.district || ""}`)
+  );
+  if (shouldShowPublicLayer("safety-streetlight")) sf.streetlight.forEach((f) =>
+    marker(f, CATEGORY_COLORS.safetyStreetlight, `💡 ${f.label} · ${f.dong || f.district || ""}`)
+  );
+  if (shouldShowPublicLayer("hotspot")) accidentHotspots.forEach((h) =>
+    marker(h, CATEGORY_COLORS.hotspot, `${h.name || "사고다발지역"} (${h.occurrence_count}건)`)
+  );
+  if (shouldShowPublicLayer("guardian")) guardianHouses.forEach((g) =>
+    marker(g, CATEGORY_COLORS.guardian, `🏪 ${g.name || "아동안전지킴이집"}`)
+  );
+  if (shouldShowPublicLayer("doc-risk")) {
+    documentPoints.forEach((d) =>
+      marker(
+        d,
+        d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk,
+        `${d.is_estimated ? "[추정] " : ""}[문서근거] ${d.risk_type} (${d.source_doc})`
+      )
+    );
+  }
+
+  // 출발/도착: 초록·빨강 핀 아이콘
   waypointMarker(routeData.origin, "origin", routeData.origin.name || "출발");
   waypointMarker(routeData.destination, "destination", routeData.destination.name || "도착");
 
-  // 공공데이터는 레이어 그룹으로 미리 만들고, 범례 호버 시 setVisible만 토글
-  rebuildPublicLayerGroups(routeData, publicData);
-
-  if (hasPoint && fitView) {
+  if (hasPoint) {
     state.tmap.fitBounds(bounds);
   }
 }
 
-function renderMap(routeData, publicData, refreshLegend = true, { fitView = true } = {}) {
+function renderMap(routeData, publicData, refreshLegend = true) {
   if (state.tmapReady) {
     setMapStatus("", false);
     document.getElementById("tmap").style.display = "block";
     document.getElementById("svg-map").style.display = "none";
-    renderTmapRoutes(routeData, publicData, { fitView });
+    renderTmapRoutes(routeData, publicData);
   } else {
     document.getElementById("svg-map").style.display = "block";
     document.getElementById("tmap").style.display = "none";
@@ -1945,11 +1824,6 @@ async function handleSubmit(event) {
     renderCandidates(routeData);
     renderReports(routeData);
     renderMap(routeData, publicData);
-
-    const scores = (routeData.candidates || []).map((c) => `${c.id}:${c.safety_score}`);
-    console.log(
-      `[경로] scoring=${routeData.used_mock?.scoring || "unknown"} · 점수 [${scores.join(", ")}]`
-    );
 
     if (routeData.used_mock && routeData.used_mock.routing) {
       console.warn("[경로] MOCK 모드 — Tmap 보행자 API 미사용");

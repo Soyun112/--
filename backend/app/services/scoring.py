@@ -18,7 +18,7 @@ from .geo import buffer_match, min_distance_to_route, resample_route, route_leng
 from ..console_safe import safe_print
 from .routing import RouteCandidateRaw
 from .safety_facilities import get_safety_facilities
-from .time_context import is_nighttime, scoring_context_label
+from .time_context import apply_time_weights, is_nighttime, scoring_context_label
 
 
 @dataclass
@@ -181,79 +181,14 @@ def compute_features(raw: RouteCandidateRaw) -> SafetyFeatures:
     )
 
 
-def _dim(count: float | int | None, per: float, cap: float) -> float:
-    """개수×점수, 상한(cap)으로 포화 방지."""
-    n = max(0.0, float(count or 0))
-    return min(cap, n * per)
-
-
-def _absolute_raw_score(features: SafetyFeatures, is_night: bool) -> float:
-    """시설·위험 개수 기반 절대 점수. 상대 정규화만 쓰면 전부 100으로 붙는 문제 방지."""
-    score = 60.0
-
-    cctv_per = 1.6 if is_night else 1.1
-    light_per = 1.3 if is_night else 0.8
-    hotspot_per = 5.0 if is_night else 7.0
-    doc_risk_per = 6.0 if is_night else 8.0
-
-    # 가점 (상한으로 만점 도달 불가하게)
-    score += _dim(features.safety_facility_cctv_count, cctv_per, 14.0)
-    score += _dim(features.safety_facility_streetlight_count, light_per, 10.0)
-    score += _dim(features.safety_bell_count, 1.0, 4.0)
-    score += _dim(features.emergency112_count, 0.8, 3.0)
-    score += _dim(features.guardian_house_count, 2.0, 8.0)
-    score += _dim(features.speed_camera_count, 1.0, 4.0)
-    score += _dim(features.doc_safety_count, 1.5, 5.0)
-    score += min(8.0, float(features.child_zone_coverage_pct or 0) * 0.08)
-    # 어린이보호구역 CCTV 밀도(보조)
-    score += min(6.0, float(features.cctv_density or 0) * 0.15)
-
-    # 감점
-    score -= _dim(features.accident_hotspot_count, hotspot_per, 22.0)
-    score -= _dim(features.doc_risk_count, doc_risk_per, 22.0)
-    score -= min(10.0, float(features.crime_risk_proxy or 0) * 0.08)
-
-    return score
-
-
-def _force_distinct_scores(raw_scores: List[float], scored: List[ScoredRoute]) -> List[float]:
-    """점수가 전부 같으면 시설·위험·거리로 순위를 갈라 표시 점수를 다르게 만든다."""
-    if len(raw_scores) <= 1:
-        return [round(float(np.clip(raw_scores[0], 38.0, 92.0)), 1)] if raw_scores else []
-
-    rounded = [round(r, 2) for r in raw_scores]
-    if len(set(rounded)) > 1:
-        lo, hi = min(raw_scores), max(raw_scores)
-        return [
-            round(float(np.clip(40.0 + 50.0 * (r - lo) / (hi - lo + 1e-9), 40.0, 92.0)), 1)
-            for r in raw_scores
-        ]
-
-    # 완전 동점 → 보조 키로 강제 분산 (추천이 항상 더 높은 점수)
-    rank_keys = []
-    for s in scored:
-        f = s.features
-        safety_stock = (
-            f.safety_facility_cctv_count
-            + f.safety_facility_streetlight_count
-            + f.guardian_house_count * 2
-            + f.child_zone_coverage_pct * 0.05
-        )
-        risk_stock = f.accident_hotspot_count * 3 + f.doc_risk_count * 4 + f.crime_risk_proxy * 0.05
-        rank_keys.append(
-            (
-                safety_stock - risk_stock,
-                s.raw.main_road_distance_m,
-                -s.raw.distance_m,
-            )
-        )
-    order = sorted(range(len(scored)), key=lambda i: rank_keys[i], reverse=True)
-    # 1등 88, 2등 76, 3등 64 … (최소 12점 간격)
-    assigned = [0.0] * len(scored)
-    top = 88.0
-    for rank, idx in enumerate(order):
-        assigned[idx] = round(max(40.0, top - rank * 12.0), 1)
-    return assigned
+def _normalize(values: List[float]) -> List[float]:
+    """min-max 정규화 (0~1). 후보가 1개뿐이거나 값이 모두 같으면 0.5로 중립화."""
+    if not values:
+        return []
+    lo, hi = min(values), max(values)
+    if hi - lo < 1e-9:
+        return [0.5 for _ in values]
+    return [(v - lo) / (hi - lo) for v in values]
 
 
 def score_candidates(raw_candidates: List[RouteCandidateRaw], is_night: bool | None = None) -> List[ScoredRoute]:
@@ -261,14 +196,39 @@ def score_candidates(raw_candidates: List[RouteCandidateRaw], is_night: bool | N
         is_night = is_nighttime()
 
     scored = [ScoredRoute(raw=r, features=compute_features(r)) for r in raw_candidates]
+
+    w = apply_time_weights(settings.weights, is_night)
     period = scoring_context_label(is_night)
+    cctv_norm = _normalize([s.features.cctv_density for s in scored])
+    zone_norm = _normalize([s.features.child_zone_coverage_pct for s in scored])
+    doc_safety_norm = _normalize([s.features.doc_safety_count for s in scored])
+    guardian_norm = _normalize([s.features.guardian_house_count for s in scored])
+    streetlight_norm = _normalize([s.features.streetlight_density for s in scored])
+    speed_camera_norm = _normalize([s.features.speed_camera_count for s in scored])
+    hotspot_norm = _normalize([s.features.accident_hotspot_count for s in scored])
+    crime_norm = _normalize([s.features.crime_risk_proxy for s in scored])
+    doc_risk_norm = _normalize([s.features.doc_risk_count for s in scored])
+    sf_cctv_norm = _normalize([s.features.safety_facility_cctv_count for s in scored])
+    sf_light_norm = _normalize([s.features.safety_facility_streetlight_count for s in scored])
+    sf_bell_norm = _normalize([s.features.safety_bell_count for s in scored])
+    sf_112_norm = _normalize([s.features.emergency112_count for s in scored])
 
-    raw_scores = [_absolute_raw_score(s.features, is_night) for s in scored]
-    display_scores = _force_distinct_scores(raw_scores, scored)
-
-    for s, display in zip(scored, display_scores):
-        # 하드 캡: 어떤 경우에도 전원 100점 불가 (최대 92)
-        s.safety_score = round(float(np.clip(display, 38.0, 92.0)), 1)
+    for i, s in enumerate(scored):
+        score = 50.0
+        score += w["cctv_density"] * cctv_norm[i]
+        score += w["child_zone_coverage"] * zone_norm[i]
+        score += w["doc_safety"] * doc_safety_norm[i]
+        score += w["guardian_house"] * guardian_norm[i]
+        score += w["streetlight_density"] * streetlight_norm[i]
+        score += w["speed_camera"] * speed_camera_norm[i]
+        score -= w["accident_hotspot"] * hotspot_norm[i]
+        score -= w["crime_risk"] * crime_norm[i]
+        score -= w["doc_risk"] * doc_risk_norm[i]
+        score += w["safety_facility_cctv"] * sf_cctv_norm[i]
+        score += w["safety_facility_streetlight"] * sf_light_norm[i]
+        score += w["safety_bell"] * sf_bell_norm[i]
+        score += w["emergency112"] * sf_112_norm[i]
+        s.safety_score = round(float(np.clip(score, 0, 100)), 1)
 
     # 동점이면 큰길(대로·로) 구간이 더 긴 경로를 우선하고, 다시 동점이면 짧은 길을 고른다.
     best_idx = (
@@ -286,20 +246,17 @@ def score_candidates(raw_candidates: List[RouteCandidateRaw], is_night: bool | N
     if best_idx is not None:
         scored[best_idx].is_recommended = True
 
+    # 경로별 시설 개수·안전점수를 콘솔에 출력 (데모·디버깅용)
     buf = settings.safety_facility_buffer_m
     mode_tag = "밤" if is_night else "낮"
-    safe_print(
-        f"\n=== {period} ({mode_tag}) - 절대점수 absolute_v2 "
-        f"(경로 주변 {buf:.0f}m, 표시 최대 92점) ==="
-    )
-    for s, raw in zip(scored, raw_scores):
+    safe_print(f"\n=== {period} ({mode_tag}) - 안심귀갓길 시설물 기반 안전점수 (경로 주변 {buf:.0f}m) ===")
+    for s in scored:
         f = s.features
         tag = "★추천" if s.is_recommended else "  "
         safe_print(
-            f"{tag} [{s.raw.id}] 안전점수 {s.safety_score}점 (원시 {raw:.1f}) | "
+            f"{tag} [{s.raw.id}] 안전점수 {s.safety_score}점 | "
             f"CCTV {f.safety_facility_cctv_count} · 보안등 {f.safety_facility_streetlight_count} · "
             f"안심벨 {f.safety_bell_count} · 112 {f.emergency112_count} | "
-            f"사고다발 {f.accident_hotspot_count} · 문서위험 {f.doc_risk_count} | "
             f"거리 {f.distance_km:.2f}km"
         )
     safe_print("=" * 60 + "\n")
