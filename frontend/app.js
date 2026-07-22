@@ -187,6 +187,7 @@ function buildSelectedRouteSafetyText(candidate, routeData) {
 }
 
 function routeDisplayName(routeId) {
+  if (routeId.includes("seolleung-sidewalk") || routeId.includes("sidewalk")) return "선릉로 보도 경로";
   if (routeId.includes("avoid-hotspot") || routeId.includes("hotspot-avoid")) return "사고다발 우회 경로";
   if (routeId.includes("doc-avoid") || routeId.includes("avoid-doc")) return "문서 위험 우회 경로";
   if (routeId.includes("pedestrian-main") || routeId.includes("direct")) return "보행자 큰길 경로";
@@ -197,6 +198,7 @@ function routeDisplayName(routeId) {
 }
 
 function routeDisplaySortKey(routeId) {
+  if (routeId.includes("seolleung-sidewalk") || routeId.includes("sidewalk")) return 0;
   if (routeId.includes("pedestrian-main") || routeId.includes("direct")) return 0;
   if (routeId.includes("pedestrian-alt")) return 1;
   if (routeId.includes("avoid-hotspot") || routeId.includes("hotspot-avoid")) return 2;

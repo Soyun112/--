@@ -146,3 +146,30 @@ def test_academy_home_names_do_not_trigger_special_demo_route():
         destination_name="개나리SK뷰5차아파트",
     )
     assert all(c.id != "route-demo-night-main" for c in candidates)
+    assert all(c.source == "MOCK_ROUTING" for c in candidates)
+
+
+def test_seolleung_sidewalk_commute_detected_both_directions():
+    from app.services.routing import _is_seolleung_sidewalk_commute
+
+    assert _is_seolleung_sidewalk_commute(
+        (37.4989686, 127.0525688),
+        (37.5012, 127.0499),
+        "필수학학원",
+        "개나리SK뷰5차아파트",
+    )
+    assert _is_seolleung_sidewalk_commute(
+        (37.5012, 127.0499),
+        (37.4989686, 127.0525688),
+        "개나리SK뷰5차아파트",
+        "필수학학원",
+    )
+
+
+def test_bias_coords_shifts_corridor_east():
+    from app.services.routing import _bias_coords_to_east_sidewalk
+
+    coords = [(37.5005, 127.0500), (37.4995, 127.0501)]
+    biased = _bias_coords_to_east_sidewalk(coords, shift_m=10.0)
+    assert biased[0][1] > coords[0][1]
+    assert biased[1][1] > coords[1][1]

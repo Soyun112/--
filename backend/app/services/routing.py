@@ -24,6 +24,29 @@ from .landmarks import landmark_for
 TMAP_PEDESTRIAN_URL = "https://apis.openapi.sk.com/tmap/routes/pedestrian"
 WALK_SPEED_MPS = 4000 / 3600  # 어린이 평균 도보 속도 근사치 (약 4km/h)
 
+# 개나리SK뷰 ↔ 필수학학원: 선릉로 동측(보도) 경유.
+# Tmap 기본 보행 좌표는 차도 중심선에 붙어 보이므로, 경유지·폴백 좌표를 보도 쪽으로 둔다.
+_ACADEMY_PT = (37.4989686, 127.0525688)
+_HOME_PT = (37.5012, 127.0499)
+# 선릉로 동측 보도 (도로 중심보다 lng를 동쪽으로 ~8–12m)
+_SEOLLEUNG_EAST_SIDEWALK_VIAS: List[Tuple[float, float]] = [
+    (37.50095, 127.05005),  # 도성초교앞 동측
+    (37.49995, 127.05018),  # IBK·투썸 동측
+    (37.49895, 127.05032),  # 학원 골목 진입 전 선릉로 동측
+]
+_SEOLLEUNG_EAST_SIDEWALK_POLYLINE: List[Tuple[float, float]] = [
+    (37.50115, 127.05000),
+    (37.50095, 127.05005),
+    (37.50045, 127.05010),
+    (37.49995, 127.05018),
+    (37.49945, 127.05024),
+    (37.49895, 127.05032),
+    (37.49897, 127.05140),
+    (37.49897, 127.05210),
+]
+_ACADEMY_NAME_KEYS = ("필수학학원", "필수수학학원", "필수수학")
+_HOME_NAME_KEYS = ("개나리sk뷰5차아파트", "개나리sk뷰5차", "개나리sk뷰아파트", "개나리sk뷰")
+
 
 @dataclass
 class NavigationStepRaw:
@@ -1123,6 +1146,120 @@ def _append_avoid_point_detours(
     return out
 
 
+def _normalize_place_name(name: str | None) -> str:
+    return (name or "").strip().replace(" ", "").lower()
+
+
+def _name_matches(name: str | None, keys: tuple[str, ...]) -> bool:
+    normalized = _normalize_place_name(name)
+    if not normalized:
+        return False
+    return any(key in normalized or normalized in key for key in keys)
+
+
+def _is_seolleung_sidewalk_commute(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+    origin_name: str | None = None,
+    destination_name: str | None = None,
+) -> bool:
+    """필수학학원 ↔ 개나리SK뷰 구간(양방향)인지 이름·좌표로 판별."""
+    o_ac = _name_matches(origin_name, _ACADEMY_NAME_KEYS)
+    d_home = _name_matches(destination_name, _HOME_NAME_KEYS)
+    o_home = _name_matches(origin_name, _HOME_NAME_KEYS)
+    d_ac = _name_matches(destination_name, _ACADEMY_NAME_KEYS)
+    if (o_ac and d_home) or (o_home and d_ac):
+        return True
+    near_pair = (
+        _segment_m(origin, _ACADEMY_PT) <= 120.0 and _segment_m(destination, _HOME_PT) <= 120.0
+    ) or (
+        _segment_m(origin, _HOME_PT) <= 120.0 and _segment_m(destination, _ACADEMY_PT) <= 120.0
+    )
+    return near_pair
+
+
+def _seolleung_sidewalk_fixed_route(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+) -> RouteCandidateRaw:
+    """선릉로 동측 보도 폴백 폴리라인 (차도 중심선 회피)."""
+    to_academy = _segment_m(destination, _ACADEMY_PT) <= _segment_m(destination, _HOME_PT)
+    mid = list(_SEOLLEUNG_EAST_SIDEWALK_POLYLINE)
+    if not to_academy:
+        mid = list(reversed(mid))
+    coords: List[Tuple[float, float]] = [origin, *mid, destination]
+    # 출발/도착과 너무 가까운 중간점 제거
+    cleaned: List[Tuple[float, float]] = [coords[0]]
+    for pt in coords[1:]:
+        if _segment_m(cleaned[-1], pt) >= 12.0:
+            cleaned.append(pt)
+    if cleaned[-1] != destination:
+        cleaned.append(destination)
+    distance_m = route_length_m(cleaned)
+    return RouteCandidateRaw(
+        id="route-seolleung-sidewalk",
+        label="선릉로 보도 (큰길)",
+        coordinates=cleaned,
+        distance_m=distance_m,
+        duration_s=distance_m / WALK_SPEED_MPS,
+        source="SIDEWALK_MAIN_ROAD",
+        navigation_steps=[],
+        main_road_distance_m=distance_m * 0.92,
+    )
+
+
+def _bias_coords_to_east_sidewalk(coords: List[Tuple[float, float]], shift_m: float = 10.0) -> List[Tuple[float, float]]:
+    """선릉로 구간 좌표를 동측(보도)으로 살짝 민다. 차도 중심선 표기 완화."""
+    if not coords:
+        return coords
+    out: List[Tuple[float, float]] = []
+    for lat, lng in coords:
+        # 선릉로 통학 구간 대략 박스
+        on_corridor = 37.4987 <= lat <= 37.5014 and 127.0494 <= lng <= 127.0508
+        if on_corridor:
+            # 동쪽 = 방위 90도
+            lat2, lng2 = offset_point(lat, lng, 90.0, shift_m)
+            out.append((lat2, lng2))
+        else:
+            out.append((lat, lng))
+    return out
+
+
+def _seolleung_sidewalk_route(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+) -> RouteCandidateRaw:
+    """보행 API + 선릉로 동측 경유지. 실패/과도 우회 시 보도 폴백."""
+    fixed = _seolleung_sidewalk_fixed_route(origin, destination)
+    to_academy = _segment_m(destination, _ACADEMY_PT) <= _segment_m(destination, _HOME_PT)
+    vias = list(_SEOLLEUNG_EAST_SIDEWALK_VIAS)
+    if not to_academy:
+        vias = list(reversed(vias))
+    pass_list = "_".join(f"{lng},{lat}" for lat, lng in vias)
+
+    via = _call_tmap(
+        origin,
+        destination,
+        pass_list=pass_list,
+        search_option=settings.tmap_pedestrian_search_option,
+        route_suffix="seolleung-sidewalk",
+    )
+    if via and via.coordinates:
+        if via.distance_m <= fixed.distance_m * 1.4:
+            biased = _bias_coords_to_east_sidewalk(via.coordinates, shift_m=9.0)
+            via.coordinates = biased
+            via.distance_m = route_length_m(biased) or via.distance_m
+            via.id = "route-seolleung-sidewalk"
+            via.label = "선릉로 보도 (큰길)"
+            via.main_road_distance_m = via.distance_m * 0.9
+            print("[경로] 선릉로 통학 — Tmap 보도 경유 경로 사용 (+동측 보정)")
+            return via
+        print("[경로] 선릉로 통학 — Tmap 경로가 과도하게 돌아 보도 폴백 사용")
+    else:
+        print("[경로] 선릉로 통학 — Tmap 경유 실패, 보도 폴백 사용")
+    return fixed
+
+
 def get_route_candidates(
     origin: Tuple[float, float],
     destination: Tuple[float, float],
@@ -1134,6 +1271,15 @@ def get_route_candidates(
     mode_label = "MOCK" if use_mock else "LIVE (Tmap)"
     print(f"\n[경로] === 경로 후보 계산 시작 ({mode_label}) ===")
     print(f"[경로] 출발 (lat,lng)=({origin[0]:.6f}, {origin[1]:.6f}) → 도착 ({destination[0]:.6f}, {destination[1]:.6f})")
+
+    # 개나리 ↔ 필수수학: 차도 중심선 대신 선릉로 동측 보도 경로를 우선
+    if (
+        not use_mock
+        and _is_seolleung_sidewalk_commute(origin, destination, origin_name, destination_name)
+    ):
+        print("[경로] 선릉로 통학 구간 — 보도(동측) 경유 경로 우선")
+        sidewalk = _seolleung_sidewalk_route(origin, destination)
+        return _finalize_candidates([sidewalk])
 
     if use_mock:
         print("[경로] MOCK 모드 — 합성 턴바이턴 안내 사용 (route-direct 등)")
