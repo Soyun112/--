@@ -946,7 +946,7 @@ def _call_tmap(
 
 
 def _finalize_candidates(candidates: List[RouteCandidateRaw]) -> List[RouteCandidateRaw]:
-    """왕복 스파이크 후보를 걸러 상세 안내를 보장하고 콘솔에 출력."""
+    """우회(via) 후보의 왕복만 걸러 상세 안내를 보장하고 콘솔에 출력."""
     filtered = _drop_backtracking_candidates(candidates)
     finalized: List[RouteCandidateRaw] = []
     for c in filtered:
@@ -960,6 +960,46 @@ def _point_distance_m(a: Tuple[float, float], b: Tuple[float, float]) -> float:
     return float(
         haversine_m(np.array([a[0]]), np.array([a[1]]), np.array([b[0]]), np.array([b[1]]))[0]
     )
+
+
+def _offset_point_m(
+    lat: float,
+    lng: float,
+    dist_m: float,
+    bearing_rad: float,
+) -> Tuple[float, float]:
+    dlat = (dist_m * math.cos(bearing_rad)) / 111_320.0
+    dlng = (dist_m * math.sin(bearing_rad)) / (111_320.0 * max(0.2, math.cos(math.radians(lat))))
+    return lat + dlat, lng + dlng
+
+
+def _snap_to_pedestrian_network(
+    pt: Tuple[float, float],
+    *,
+    search_option: str,
+    probe_m: float = 80.0,
+    max_snap_m: float = 80.0,
+) -> Tuple[float, float]:
+    """건물·부지 중심점을 보행망 노드로 스냅.
+
+    pt→근처 프로브로 pedestrian을 호출하면 Tmap이 출발점을 도로에 붙인다.
+    그 첫 좌표를 스냅으로 사용 (존 CSV 좌표가 도로 밖일 때 왕복 스파이크 완화).
+    """
+    for bearing_deg in (0.0, 90.0, 180.0, 270.0, 45.0, 135.0):
+        probe = _offset_point_m(pt[0], pt[1], probe_m, math.radians(bearing_deg))
+        data = _fetch_tmap_pedestrian_data(pt, probe, search_option=search_option)
+        if not data:
+            continue
+        coords, _, _, _ = _coords_from_tmap_features(data.get("features", []))
+        if len(coords) < 2:
+            continue
+        snap = coords[0]
+        d = _point_distance_m(snap, pt)
+        if d <= max_snap_m:
+            if d >= 3.0:
+                print(f"[경로] 좌표 스냅 {d:.0f}m → 보행망 ({pt[0]:.5f},{pt[1]:.5f})")
+            return snap
+    return pt
 
 
 def _has_backtrack(
@@ -979,20 +1019,28 @@ def _has_backtrack(
     return False
 
 
+def _is_detour_candidate(candidate: RouteCandidateRaw) -> bool:
+    cid = candidate.id.lower()
+    return "avoid" in cid or "via" in cid or "detour" in cid
+
+
 def _drop_backtracking_candidates(candidates: List[RouteCandidateRaw]) -> List[RouteCandidateRaw]:
+    """왕복 필터는 via 우회 후보에만 적용. main/alt는 Tmap 결과를 그대로 채택."""
     if not candidates:
         return candidates
-    kept = [c for c in candidates if not _has_backtrack(c.coordinates)]
-    dropped = len(candidates) - len(kept)
+    kept: List[RouteCandidateRaw] = []
+    dropped = 0
+    for c in candidates:
+        if _is_detour_candidate(c) and _has_backtrack(c.coordinates):
+            dropped += 1
+            print(f"[경로] 왕복 우회 후보 제외: {c.id}")
+            continue
+        kept.append(c)
     if dropped:
-        print(f"[경로] 왕복 스파이크 후보 {dropped}개 제외")
+        print(f"[경로] 왕복 스파이크 우회 후보 {dropped}개 제외 (main/alt는 유지)")
     if kept:
         return kept
-    # 전부 왕복이면 via 없는 후보라도 남긴다
-    fallback = [c for c in candidates if "avoid" not in c.id and "via" not in c.id]
-    if fallback:
-        print(f"[경로] 왕복 필터 후 비어 비-우회 후보 {len(fallback)}개 유지")
-        return fallback
+    # 우회만 있고 전부 왕복이면 main이 원래 없었거나 비어 있음 → 첫 후보라도 유지
     print("[경로] 왕복 필터 후 후보 없음 → 첫 후보 유지")
     return candidates[:1]
 
@@ -1240,9 +1288,13 @@ def get_route_candidates(
 
     # Tmap 보행자: 대로 우선(기본) + 선택적 alt + 사고다발·문서위험 우회 후보
     primary_option = settings.tmap_pedestrian_search_option
+    # 건물·존 중심점이 도로 밖이면 왕복 스파이크가 나므로 보행망에 스냅
+    origin_s = _snap_to_pedestrian_network(origin, search_option=primary_option)
+    dest_s = _snap_to_pedestrian_network(destination, search_option=primary_option)
+
     direct = _call_tmap(
-        origin,
-        destination,
+        origin_s,
+        dest_s,
         search_option=primary_option,
         route_suffix="main",
     )
@@ -1252,8 +1304,8 @@ def get_route_candidates(
     if settings.tmap_pedestrian_alt_enabled:
         alt_option = "10" if primary_option != "10" else "0"
         alt = _call_tmap(
-            origin,
-            destination,
+            origin_s,
+            dest_s,
             search_option=alt_option,
             route_suffix="alt",
         )
@@ -1261,8 +1313,8 @@ def get_route_candidates(
             candidates.append(alt)
 
     candidates = _append_avoid_point_detours(
-        origin,
-        destination,
+        origin_s,
+        dest_s,
         candidates,
         search_option=primary_option,
     )

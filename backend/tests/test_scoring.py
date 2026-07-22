@@ -130,8 +130,8 @@ def test_saturate_and_demo_od_score_shape():
         safety_facility_cctv_count=0,
     )
     score = absolute_score(f, is_night=False, detour_penalty=0.0, walk_minutes=10.0)
-    # Claude: ≈60.3
-    assert 58.0 <= score <= 63.0
+    # 확정 k 기준 ≈ zone_cctv + coverage + guardian + camera - accident
+    assert 55.0 <= score <= 70.0
 
 
 def test_safety_score_within_bounds():

@@ -177,6 +177,54 @@ def test_has_backtrack_clean_path():
     assert _has_backtrack(coords) is False
 
 
+def test_drop_backtrack_keeps_main_drops_detour():
+    from app.services.routing import RouteCandidateRaw, _drop_backtracking_candidates
+
+    spike = [
+        (37.50040, 127.050689),
+        (37.50035, 127.050500),
+        (37.50030, 127.050366),
+        (37.50019, 127.050044),
+        (37.50030, 127.050366),
+        (37.50040, 127.050689),
+    ]
+    clean = [
+        (37.5012, 127.0499),
+        (37.5008, 127.0502),
+        (37.5004, 127.0505),
+        (37.4995, 127.0512),
+    ]
+    main = RouteCandidateRaw(
+        id="route-tmap-pedestrian-main",
+        label="main",
+        coordinates=spike,
+        distance_m=100,
+        duration_s=90,
+        source="TEST",
+    )
+    detour = RouteCandidateRaw(
+        id="route-tmap-pedestrian-avoid-hotspot-1-via",
+        label="detour",
+        coordinates=spike,
+        distance_m=120,
+        duration_s=100,
+        source="TEST",
+    )
+    alt = RouteCandidateRaw(
+        id="route-tmap-pedestrian-alt",
+        label="alt",
+        coordinates=clean,
+        distance_m=110,
+        duration_s=95,
+        source="TEST",
+    )
+    kept = _drop_backtracking_candidates([main, detour, alt])
+    ids = [c.id for c in kept]
+    assert "route-tmap-pedestrian-main" in ids
+    assert "route-tmap-pedestrian-alt" in ids
+    assert "route-tmap-pedestrian-avoid-hotspot-1-via" not in ids
+
+
 def test_force_densify_waypoints_fills_from_tmap(monkeypatch):
     from app.services import routing
 

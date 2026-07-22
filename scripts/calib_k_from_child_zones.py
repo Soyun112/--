@@ -28,18 +28,22 @@ os.environ.setdefault("PUBLIC_DATA_MOCK", "true")
 from app import db
 from app.config import settings
 from app.services import public_data
-from app.services.routing import _call_tmap, _has_backtrack
+from app.services.routing import _call_tmap, _has_backtrack, _snap_to_pedestrian_network
 from app.services.scoring import absolute_score, compute_features
 
 OUT_DIR = ROOT / "claude_handoff_route_dump"
 OUT_DIR.mkdir(exist_ok=True)
-CSV_PATH = OUT_DIR / "calib_k_100_routes.csv"
-SUMMARY_PATH = OUT_DIR / "calib_k_100_summary.json"
+
+ELEMENTARY_ONLY = os.getenv("CALIB_ELEMENTARY_ONLY", "0").strip().lower() in ("1", "true", "yes")
+TAG = "elem100" if ELEMENTARY_ONLY else "k100"
+CSV_PATH = OUT_DIR / f"calib_{TAG}_routes.csv"
+SUMMARY_PATH = OUT_DIR / f"calib_{TAG}_summary.json"
 
 N_PAIRS = 100
 RNG_SEED = 42
 MIN_M = 300.0
 MAX_M = 1200.0
+MAX_DETOUR_RATIO = 2.5
 
 
 def _offset_point(lat: float, lng: float, dist_m: float, bearing_rad: float) -> tuple[float, float]:
@@ -79,8 +83,11 @@ def main() -> None:
     print(f"[calib] streetlights_now={len(public_data.get_streetlights())}")
 
     zones = public_data.get_child_zones()
-    if len(zones) < 10:
-        raise RuntimeError(f"need child_zones CSV, got {len(zones)}")
+    if ELEMENTARY_ONLY:
+        zones = [z for z in zones if "초등학교" in str(z.get("name") or "")]
+        print(f"[calib] elementary filter → {len(zones)} zones")
+    if len(zones) < 5:
+        raise RuntimeError(f"need child_zones, got {len(zones)}")
 
     snapshot = public_data.build_ingest_snapshot(ingest)
     snapshot["streetlights_forced_empty"] = True
@@ -88,6 +95,9 @@ def main() -> None:
     snapshot["n_pairs_requested"] = N_PAIRS
     snapshot["search_option"] = "4"
     snapshot["rng_seed"] = RNG_SEED
+    snapshot["elementary_only"] = ELEMENTARY_ONLY
+    snapshot["dest_road_snap"] = True
+    snapshot["max_detour_ratio"] = MAX_DETOUR_RATIO
 
     rng = random.Random(RNG_SEED)
     fieldnames = [
@@ -114,12 +124,14 @@ def main() -> None:
     rows: list[dict] = []
     n_fail = 0
     n_backtrack = 0
+    n_detour = 0
     n_ok = 0
 
-    print(f"[calib] zones={len(zones)} pairs={N_PAIRS}")
+    print(f"[calib] zones={len(zones)} pairs={N_PAIRS} elementary={ELEMENTARY_ONLY}")
     for i in range(N_PAIRS):
         zone = zones[i % len(zones)]
-        dest = (float(zone["lat"]), float(zone["lng"]))
+        dest_raw = (float(zone["lat"]), float(zone["lng"]))
+        dest = _snap_to_pedestrian_network(dest_raw, search_option="4")
         dist_m = rng.uniform(MIN_M, MAX_M)
         bearing = rng.uniform(0, 2 * math.pi)
         origin = _offset_point(dest[0], dest[1], dist_m, bearing)
@@ -163,12 +175,27 @@ def main() -> None:
             print(f"  [{i+1}/{N_PAIRS}] EMPTY {zone_name}")
             continue
 
+        # 통계용으로 왕복 기록. 서비스 main은 유지하지만 캘리브 표본에서는 제외.
         if _has_backtrack(cand.coordinates):
             n_backtrack += 1
             base["status"] = "backtrack"
             base["length_km"] = round(cand.distance_m / 1000.0, 4)
             rows.append(base)
             print(f"  [{i+1}/{N_PAIRS}] BACKTRACK {zone_name} {cand.distance_m:.0f}m")
+            continue
+
+        # 직선 대비 과도 우회 (대모산·하천 장벽 등)
+        straight = math.hypot(
+            (origin[0] - dest[0]) * 111_320.0,
+            (origin[1] - dest[1]) * 111_320.0 * math.cos(math.radians(origin[0])),
+        )
+        ratio = cand.distance_m / max(straight, 1.0)
+        if ratio > MAX_DETOUR_RATIO:
+            n_detour += 1
+            base["status"] = f"detour_ratio:{ratio:.2f}"
+            base["length_km"] = round(cand.distance_m / 1000.0, 4)
+            rows.append(base)
+            print(f"  [{i+1}/{N_PAIRS}] DETOUR×{ratio:.1f} {zone_name} {cand.distance_m:.0f}m")
             continue
 
         feats = compute_features(cand)
@@ -202,7 +229,7 @@ def main() -> None:
         f.write("# calib_k_100 snapshot\n")
         for k, v in snapshot.items():
             f.write(f"# {k}: {json.dumps(v, ensure_ascii=False) if not isinstance(v, (str, int, float, bool)) else v}\n")
-        f.write(f"# ok={n_ok} backtrack={n_backtrack} fail={n_fail}\n")
+        f.write(f"# ok={n_ok} backtrack={n_backtrack} detour_ratio={n_detour} fail={n_fail}\n")
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
@@ -214,11 +241,11 @@ def main() -> None:
 
     L = [_eff_km(float(r["length_km"])) for r in ok_rows]
     dens = {
-        "sf_cctv": [c / L[i] for i, c in enumerate(col("sf_cctv_cnt"))],
-        "sf_light": [c / L[i] for i, c in enumerate(col("sf_light_cnt"))],
-        "sf_emerg": [c / L[i] for i, c in enumerate(col("sf_emerg_cnt"))],
-        "guardian": [c / L[i] for i, c in enumerate(col("guardian_cnt"))],
-        "zone_cctv": col("zone_cctv"),  # count
+        "sf_cctv": [c / L[i] for i, c in enumerate(col("sf_cctv_cnt"))] if ok_rows else [],
+        "sf_light": [c / L[i] for i, c in enumerate(col("sf_light_cnt"))] if ok_rows else [],
+        "sf_emerg": [c / L[i] for i, c in enumerate(col("sf_emerg_cnt"))] if ok_rows else [],
+        "guardian": [c / L[i] for i, c in enumerate(col("guardian_cnt"))] if ok_rows else [],
+        "zone_cctv": col("zone_cctv"),
     }
     coverage = col("coverage")
     scores = col("score")
@@ -241,7 +268,13 @@ def main() -> None:
 
     summary = {
         "snapshot": snapshot,
-        "counts": {"requested": N_PAIRS, "ok": n_ok, "backtrack": n_backtrack, "fail": n_fail},
+        "counts": {
+            "requested": N_PAIRS,
+            "ok": n_ok,
+            "backtrack": n_backtrack,
+            "detour_ratio": n_detour,
+            "fail": n_fail,
+        },
         "nonzero_median_k": {
             "sf_cctv_per_km": _nonzero_median(dens["sf_cctv"]),
             "sf_light_per_km": _nonzero_median(dens["sf_light"]),
@@ -252,7 +285,7 @@ def main() -> None:
         "coverage_median_all": float(np.median(coverage)) if coverage else None,
         "accident_dist": count_dist(accidents),
         "camera_dist": count_dist(cameras),
-        "ansim_nonzero_ratio": round(ansim_hit / max(1, n_ok), 4),
+        "ansim_nonzero_ratio": round(ansim_hit / max(1, n_ok), 4) if n_ok else None,
         "score_dist": {
             "min": round(min(scores), 1) if scores else None,
             "p25": round(_pct(scores, 25), 1) if scores else None,

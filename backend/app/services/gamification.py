@@ -127,12 +127,28 @@ def compute_stamps(features: SafetyFeatures) -> list[Stamp]:
 
 
 def compute_star_rating(safety_score: float) -> int:
-    """안전점수를 부모가 한눈에 볼 수 있는 1~3점 별점으로 변환."""
-    if safety_score >= 80:
+    """안전점수를 부모가 한눈에 볼 수 있는 1~3점 별점으로 변환.
+
+    컷은 강남 통학 캘리브 실측 분위수 기준 (중립≈62, 상단≈70).
+    """
+    from ..config import settings
+
+    if safety_score >= settings.safety_grade_high:
         return 3
-    if safety_score >= 55:
+    if safety_score >= settings.safety_grade_mid:
         return 2
     return 1
+
+
+def safety_grade_label(safety_score: float) -> str:
+    """UI용 등급 문구."""
+    from ..config import settings
+
+    if safety_score >= settings.safety_grade_high:
+        return "안전"
+    if safety_score >= settings.safety_grade_mid:
+        return "보통"
+    return "주의"
 
 
 def stamps_summary_text(stamps: list[Stamp]) -> str:

@@ -192,12 +192,12 @@ class Settings:
         "doc_risk": 14.0,
     }
     saturate_k = {
-        "cctv_density": 4.0,
-        "zone_cctv": 6.0,
-        "light_density": 12.0,
-        "guardian_density": 1.5,
-        "emergency_density": 3.0,
-        "speed_camera": 1.5,
+        "cctv_density": 1.9,
+        "zone_cctv": 8.0,
+        "light_density": 2.1,
+        "guardian_density": 0.9,
+        "emergency_density": 1.55,
+        "speed_camera": 2.5,
         "accident_hotspot": 1.5,
         "doc_risk": 1.5,
     }
@@ -207,6 +207,9 @@ class Settings:
     walk_soft_cap_minutes: float = 25.0
     walk_overtime_penalty_per_min: float = 0.8
     walk_overtime_penalty_max: float = 10.0
+    # 실측 분위수 기준 등급 (중립≈62)
+    safety_grade_high: float = float(os.getenv("SAFETY_GRADE_HIGH", "70"))
+    safety_grade_mid: float = float(os.getenv("SAFETY_GRADE_MID", "62"))
 
     buffer_radius_m: float = 40.0
     # 법정 어린이보호구역 근사: 주출입문 반경 300m (포인트 + 거리 감쇠)
