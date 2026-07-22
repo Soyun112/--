@@ -1451,7 +1451,7 @@ function docRiskInfoHtml(d) {
   return `<div style="padding:6px 8px;font-size:12px;line-height:1.45;max-width:260px;">${lines.join("<br>")}</div>`;
 }
 
-/** 문서 위험: 구간이면 해당 시작~끝만 선으로 연결(지점끼리 연쇄 연결 금지). */
+/** 문서 위험: pedestrian 폴리라인 우선, 없으면 시작~끝 직선은 그리지 않음(검증 실패분). */
 function drawDocRiskOverlays(points, { track, bounds, onBounds }) {
   let segmentCount = 0;
   points.forEach((d) => {
@@ -1461,13 +1461,16 @@ function drawDocRiskOverlays(points, { track, bounds, onBounds }) {
     bounds.extend(start);
     if (onBounds) onBounds();
 
-    if (docRiskHasSegment(d)) {
-      const end = new Tmapv2.LatLng(d.end_lat, d.end_lng);
-      bounds.extend(end);
-      if (onBounds) onBounds();
+    const poly = Array.isArray(d.polyline) ? d.polyline.filter((p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lng)) : [];
+    if (poly.length >= 2) {
+      const path = poly.map((p) => new Tmapv2.LatLng(p.lat, p.lng));
+      path.forEach((latlng) => {
+        bounds.extend(latlng);
+        if (onBounds) onBounds();
+      });
       track(
         new Tmapv2.Polyline({
-          path: [start, end],
+          path,
           strokeColor: color,
           strokeWeight: 5,
           strokeStyle: "solid",
@@ -1476,7 +1479,7 @@ function drawDocRiskOverlays(points, { track, bounds, onBounds }) {
         })
       );
       segmentCount += 1;
-      [start, end].forEach((latlng) => {
+      [path[0], path[path.length - 1]].forEach((latlng) => {
         const m = track(
           new Tmapv2.Marker({
             position: latlng,
@@ -1498,21 +1501,30 @@ function drawDocRiskOverlays(points, { track, bounds, onBounds }) {
       return;
     }
 
-    const m = track(
-      new Tmapv2.Marker({
-        position: start,
-        icon: tmapDotIcon(color),
-        iconSize: new Tmapv2.Size(18, 18),
-        map: state.tmap,
-      })
-    );
-    m.addListener("click", () => {
-      if (state.infoWindow) state.infoWindow.setMap(null);
-      state.infoWindow = new Tmapv2.InfoWindow({
-        position: start,
-        content: docRiskInfoHtml(d),
-        type: 2,
-        map: state.tmap,
+    // 폴리라인 없음: 시작 핀만 (직선 추정 금지). 끝점은 있을 때만 표시
+    const markers = [start];
+    if (docRiskHasSegment(d)) {
+      markers.push(new Tmapv2.LatLng(d.end_lat, d.end_lng));
+      bounds.extend(markers[1]);
+      if (onBounds) onBounds();
+    }
+    markers.forEach((latlng) => {
+      const m = track(
+        new Tmapv2.Marker({
+          position: latlng,
+          icon: tmapDotIcon(color),
+          iconSize: new Tmapv2.Size(14, 14),
+          map: state.tmap,
+        })
+      );
+      m.addListener("click", () => {
+        if (state.infoWindow) state.infoWindow.setMap(null);
+        state.infoWindow = new Tmapv2.InfoWindow({
+          position: latlng,
+          content: docRiskInfoHtml({ ...d, location_text: (d.location_text || "") + " · 구간 확인 필요" }),
+          type: 2,
+          map: state.tmap,
+        });
       });
     });
   });

@@ -240,6 +240,9 @@ class DocumentRiskPoint(BaseModel):
     report_date: Optional[str] = None
     recommendation: Optional[str] = None
     is_estimated: bool = False
+    polyline: Optional[List[LatLng]] = None
+    header_road: Optional[str] = None
+    verify_status: Optional[str] = None
 
 
 class PublicDataResponse(BaseModel):

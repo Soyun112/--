@@ -249,55 +249,28 @@ def _resolve_plot_coordinates(
     return None
 
 def _region_prefix(region_hint: str) -> str:
+    from .doc_address import gu_prefix_from_dong
+
     hint = (region_hint or "").strip()
     if "강남" in hint or "역삼" in hint or "도곡" in hint or "대치" in hint or "선릉" in hint:
-        return "서울 강남구"
+        return gu_prefix_from_dong(hint if hint.endswith("동") else "역삼동")
     if "서울" in hint:
-        return "서울"
-    return "서울 강남구"
-
-
-# 도로명+번지: 논현로76길21 · 테헤란로108길42 · 선릉로305
-# (짧은 '로+숫자'가 '로N길M'을 가로채지 않도록 긴 패턴 우선)
-_ROAD_TITLE_RE = (
-    r"(?:"
-    r"[가-힣A-Za-z0-9]+(?:로|대로)\d+길|"
-    r"[가-힣A-Za-z0-9]+\d+길|"
-    r"[가-힣A-Za-z0-9]+(?:로|길|대로)"
-    r")"
-)
-_ROAD_ADDR_RE = rf"(?:{_ROAD_TITLE_RE})\s*\d+"
+        return "서울특별시 강남구"
+    return "서울특별시 강남구"
 
 
 def _normalize_road_number(addr: str) -> str:
-    """논현로76길21 → 논현로76길 21, 선릉로305 → 선릉로 305."""
-    s = re.sub(r"\s+", "", (addr or "").strip())
-    if not s:
-        return ""
-    m = re.match(rf"^({_ROAD_TITLE_RE})(\d+)$", s)
-    if m:
-        return f"{m.group(1)} {m.group(2)}"
-    return (addr or "").strip()
+    from .doc_address import normalize_road_address
+
+    return normalize_road_address(addr)
 
 
 def _to_map_query(road_addr: str, region_hint: str = "") -> str:
-    """지도(Tmap 지오코딩/POI)가 읽기 쉬운 검색어로 정리."""
-    q = re.sub(r"\s+", " ", (road_addr or "").strip())
-    q = q.replace("～", "~").replace("〜", "~")
-    if not q:
-        return ""
-    # 이미 시·구가 있으면 도로명·번지만 정규화
-    prefix = _region_prefix(region_hint)
-    body = q
-    if q.startswith("서울"):
-        # "서울 강남구 논현로76길21" → prefix 유지 + body 정규화
-        rest = re.sub(r"^서울(?:\s*특별시)?(?:\s*강남구)?\s*", "", q).strip()
-        body = _normalize_road_number(rest) if rest else q
-        return f"{prefix} {body}".strip() if rest else q
-    body = _normalize_road_number(q)
-    if body.startswith(prefix):
-        return body
-    return f"{prefix} {body}"
+    from .doc_address import build_geocode_query
+
+    # region_hint가 동이면 동 기반, 아니면 강남구 기본
+    dong = region_hint if (region_hint or "").endswith("동") else ""
+    return build_geocode_query(road_addr, dong=dong)
 
 
 def _format_segment_location_text(
@@ -307,15 +280,12 @@ def _format_segment_location_text(
     end_addr: str,
     dong: str = "",
 ) -> str:
-    """표시용 제목: 선릉로(역삼로 314 ~ 선릉로 305, 역삼2동)"""
-    start_n = _normalize_road_number(start_addr)
-    end_n = _normalize_road_number(end_addr)
-    title = (road_title or "").strip() or (start_n.split()[0] if start_n else "공사구간")
-    # 제목에 도로명이 중복되지 않게 (논현로 논현로… 방지)
-    if title and start_n.startswith(title) and end_n.startswith(title):
-        inner = f"{start_n} ~ {end_n}"
-    else:
-        inner = f"{start_n} ~ {end_n}"
+    from .doc_address import normalize_road_address, normalize_road_title
+
+    start_n = normalize_road_address(start_addr)
+    end_n = normalize_road_address(end_addr)
+    title = normalize_road_title(road_title) or (start_n.split()[0] if start_n else "공사구간")
+    inner = f"{start_n} ~ {end_n}"
     if dong:
         return f"{title}({inner}, {dong})"
     return f"{title}({inner})"
@@ -326,55 +296,11 @@ def risk_points_from_location_map_text(
     *,
     region_hint: str = "",
 ) -> list[dict[str, Any]]:
-    """위치도 형식 구간 추출. 예) ① 선릉로 … 역삼로314 ~ 선릉로305"""
-    raw = text or ""
-    if not raw.strip():
-        return []
+    """위치도 형식 구간 추출. 헤더≠끝점, 띄어쓰기 재조립, 동→구."""
+    del region_hint  # 동은 본문에서 추출
+    from .doc_address import parse_location_map_segments
 
-    points: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    section_re = re.compile(
-        rf"[①②③④⑤⑥⑦⑧⑨⑩]?\s*"
-        rf"({_ROAD_TITLE_RE})"
-        rf"(?:\s*\(([^)]*)\))?"
-        rf"[^\n①②③④⑤⑥⑦⑧⑨⑩]{{0,120}}?"
-        rf"({_ROAD_ADDR_RE})"
-        rf"\s*[~～〜\-–—]\s*"
-        rf"({_ROAD_ADDR_RE})",
-        re.MULTILINE,
-    )
-    for match in section_re.finditer(raw):
-        road_title = match.group(1).strip()
-        dong = (match.group(2) or "").strip()
-        start_addr = match.group(3).strip()
-        end_addr = match.group(4).strip()
-        start_q = _to_map_query(start_addr, region_hint)
-        end_q = _to_map_query(end_addr, region_hint)
-        key = re.sub(r"\s+", "", f"{start_q}~{end_q}".lower())
-        if key in seen:
-            continue
-        seen.add(key)
-        loc = _format_segment_location_text(
-            road_title=road_title,
-            start_addr=start_addr,
-            end_addr=end_addr,
-            dong=dong,
-        )
-        points.append(
-            {
-                "location_text": loc,
-                "geocode_query": start_q,
-                "start_geocode_query": start_q,
-                "end_geocode_query": end_q,
-                "confidence": 0.9,
-                "normalize_note": "위치도 구간 규칙 추출",
-                "risk_type": "공사/정비 구간",
-                "is_risk": True,
-                "snippet": match.group(0).strip()[:200],
-                "recommendation": "공사 구간 통행 시 주의",
-            }
-        )
-    return points
+    return parse_location_map_segments(text)
 
 
 def _segment_queries_from_location_text(
@@ -384,21 +310,27 @@ def _segment_queries_from_location_text(
     fallback_query: str = "",
 ) -> tuple[str, str | None]:
     """'A ~ B' 형태면 시작·끝 검색어로 나눈다. 아니면 단일 점."""
+    from .doc_address import _BODY_RE, build_geocode_query, normalize_road_address
+
     text = (location_text or "").strip()
     fallback = (fallback_query or "").strip()
     if not text and not fallback:
         return "", None
 
-    m = re.search(
-        rf"({_ROAD_ADDR_RE})\s*[~～〜\-–—]\s*({_ROAD_ADDR_RE})",
-        text,
-    )
+    dong = ""
+    dm = re.search(r",\s*([가-힣0-9]+동)\s*\)?\s*$", text)
+    if dm:
+        dong = dm.group(1)
+    elif (region_hint or "").endswith("동"):
+        dong = region_hint
+
+    m = _BODY_RE.search(text)
     if m:
         return (
-            _to_map_query(m.group(1), region_hint),
-            _to_map_query(m.group(2), region_hint),
+            build_geocode_query(normalize_road_address(m.group("start")), dong=dong),
+            build_geocode_query(normalize_road_address(m.group("end")), dong=dong),
         )
-    return _to_map_query(fallback or text, region_hint), None
+    return build_geocode_query(normalize_road_address(fallback or text), dong=dong), None
 
 
 def _segment_dedupe_key(item: dict[str, Any]) -> str:
@@ -655,7 +587,10 @@ def ingest_document(
         f"(source={extracted.get('extract_source')})"
     )
 
-    # --- 3) 지오코딩 → DB 핀 ---
+    # --- 3) 지오코딩 → pedestrian 검증 → DB 핀 ---
+    from .doc_segment_geom import document_content_hash, resolve_segment_polyline
+
+    doc_hash = document_content_hash(file_bytes)
     db.init_db()
     created = 0
     created_points: list[dict[str, Any]] = []
@@ -667,6 +602,7 @@ def ingest_document(
             geocode_query = (rp.get("geocode_query") or location_text).strip()
             start_query = (rp.get("start_geocode_query") or "").strip()
             end_query = (rp.get("end_geocode_query") or "").strip()
+            header_road = (rp.get("header_road") or "").strip()
             if not start_query or not end_query:
                 parsed_start, parsed_end = _segment_queries_from_location_text(
                     location_text, region_hint=region_hint, fallback_query=geocode_query
@@ -680,6 +616,8 @@ def ingest_document(
             end_lat = end_lng = None
             matched_label = ""
             end_matched_label = ""
+            polyline_json = None
+            verify_status = ""
 
             if extracted.get("already_geocoded") and rp.get("lat") is not None:
                 lat, lng = rp["lat"], rp["lng"]
@@ -687,6 +625,7 @@ def ingest_document(
                 end_lng = rp.get("end_lng")
                 matched_label = rp.get("matched_label") or ""
                 confidence = max(confidence, 0.9)
+                verify_status = "mock"
             else:
                 start_hit = _resolve_plot_coordinates(
                     geocode_query=start_query or geocode_query,
@@ -724,7 +663,7 @@ def ingest_document(
                         plot_note = f"{plot_note} · 끝 {end_note}".strip(" ·")
                         confidence = min(confidence, end_cap)
                     else:
-                        plot_note = f"{plot_note} · 끝 검색 실패(시작만 표시)".strip(" ·")
+                        # 끝점 실패 → 선/핀 모두 올리지 않음 (추정 직선 금지)
                         pending = _pending_point_payload(
                             {
                                 **rp,
@@ -733,9 +672,54 @@ def ingest_document(
                                 "end_geocode_query": end_query,
                             },
                             filename=filename,
-                            reason="끝점 검색 실패 — 끝 주소 검색어를 확인해 주세요",
+                            reason="끝점 검색 실패 — 구간 확인 필요",
                         )
                         skipped_points.append(pending)
+                        continue
+
+                # 시점·종점 pedestrian + 헤더 도로명 검증
+                if end_lat is not None and end_lng is not None:
+                    if not header_road:
+                        pending = _pending_point_payload(
+                            {
+                                **rp,
+                                "geocode_query": start_query,
+                                "start_geocode_query": start_query,
+                                "end_geocode_query": end_query,
+                            },
+                            filename=filename,
+                            reason="구간 확인 필요 (헤더 도로명 없음)",
+                        )
+                        skipped_points.append(pending)
+                        continue
+                    geom = resolve_segment_polyline(
+                        start=(float(lat), float(lng)),
+                        end=(float(end_lat), float(end_lng)),
+                        header_road=header_road,
+                        doc_hash=doc_hash,
+                        segment_index=idx,
+                        start_road=rp.get("start_raw") or "",
+                        end_road=rp.get("end_raw") or "",
+                    )
+                    verify_status = "ok" if geom.get("verified") else (geom.get("reason") or "fail")
+                    if geom.get("verified") and geom.get("polyline"):
+                        polyline_json = json.dumps(geom["polyline"], ensure_ascii=False)
+                        plot_note = f"{plot_note} · pedestrian검증OK".strip(" ·")
+                    else:
+                        # 검증 실패: 핀/선 올리지 않고 사용자 수정 대기
+                        pending = _pending_point_payload(
+                            {
+                                **rp,
+                                "geocode_query": start_query,
+                                "start_geocode_query": start_query,
+                                "end_geocode_query": end_query,
+                            },
+                            filename=filename,
+                            reason=f"구간 확인 필요 ({verify_status})",
+                        )
+                        skipped_points.append(pending)
+                        safe_print(f"[문서] 구간 검증 실패 idx={idx}: {verify_status}")
+                        continue
 
             is_estimated = False
             label_for_store = matched_label
@@ -759,6 +743,9 @@ def ingest_document(
                 report_date=rp.get("report_date"),
                 recommendation=rp.get("recommendation"),
                 is_estimated=is_estimated,
+                polyline_json=polyline_json,
+                header_road=header_road or None,
+                verify_status=verify_status or None,
             )
             created += 1
             created_points.append(
@@ -777,6 +764,9 @@ def ingest_document(
                     "is_risk": bool(rp.get("is_risk", True)),
                     "is_estimated": is_estimated,
                     "note": plot_note,
+                    "header_road": header_road,
+                    "verify_status": verify_status,
+                    "has_polyline": bool(polyline_json),
                 }
             )
 

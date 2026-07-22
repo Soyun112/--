@@ -1,15 +1,7 @@
 """건물명·역이름·주소 -> 좌표(위경도) 지오코딩.
 
-사용자가 위/경도 숫자 대신 "강남역", "코엑스", "OO초등학교" 같은 이름을 입력할 수 있게
-한다. 여러 제공자를 순서대로 시도하며, 하나라도 성공하면 그 결과를 사용한다:
-
-  1) 내장 사전(DEMO_PLACES + STATION_DICT) — 데모 좌표/서울 주요 역은 API 없이 즉시 응답
-  2) 카카오 로컬 키워드 검색 (KAKAO_REST_API_KEY) — 건물·상호·역 이름에 가장 강함
-  3) 네이버 지역 검색 (NAVER_SEARCH_CLIENT_ID/SECRET)
-  4) Tmap POI·주소 지오코딩 (TMAP_APP_KEY) — 캐시·일일 한도 적용
-
-키가 하나도 없거나 모두 실패하면 사전에 없는 이름은 None을 반환한다. 백엔드에서
-호출하므로 브라우저 CORS 문제 없이 안전하게 시크릿 키를 쓸 수 있다.
+  일반: 내장 사전 → Kakao keyword → Naver → Tmap
+  문서 도로명주소: juso.go.kr → Kakao address.json → Kakao keyword.json
 """
 from __future__ import annotations
 
@@ -20,6 +12,7 @@ from typing import Optional
 import requests
 
 from ..config import settings
+from ..console_safe import safe_print
 from .tmap_geo import geocode_full_address, search_poi
 
 
@@ -31,8 +24,6 @@ class GeocodeResult:
     source: str
 
 
-# 데모 시나리오용 좌표(샘플 공공데이터가 몰려 있는 강남 일대). 실제 지오코딩보다 우선해
-# 데모에서 이름을 입력해도 안전점수/스탬프가 제대로 나오도록 한다.
 DEMO_PLACES: dict[str, tuple[float, float, str]] = {
     "우리집": (37.5012, 127.0499, "개나리SK뷰5차아파트"),
     "집": (37.5012, 127.0499, "개나리SK뷰5차아파트"),
@@ -53,7 +44,6 @@ DEMO_PLACES: dict[str, tuple[float, float, str]] = {
     "OO초등학교 후문": (37.5011, 127.0493, "도성초등학교 후문"),
 }
 
-# 서울 주요 역(실제 이름 입력 시 키 없이도 동작하도록 최소 사전 제공).
 STATION_DICT: dict[str, tuple[float, float, str]] = {
     "강남역": (37.497942, 127.027621, "강남역 (서울 강남구)"),
     "역삼역": (37.500628, 127.036455, "역삼역"),
@@ -93,13 +83,76 @@ def _lookup_dict(query: str) -> Optional[GeocodeResult]:
     key = query.strip().replace(" ", "")
     key_lower = key.lower()
     for table, src in ((DEMO_PLACES, "DEMO_DICT"), (STATION_DICT, "STATION_DICT")):
-        # 정확 일치 우선, 없으면 "역" 유무·대소문자를 보정해 재시도
         for candidate in (key, key.rstrip("역"), key + "역", key_lower):
             for table_key, value in table.items():
                 if table_key == candidate or table_key.lower() == candidate.lower():
                     lat, lng, label = value
                     return GeocodeResult(lat=lat, lng=lng, label=label, source=src)
     return None
+
+
+def _kakao_address(query: str) -> Optional[GeocodeResult]:
+    if not settings.kakao_rest_api_key:
+        return None
+    try:
+        resp = requests.get(
+            "https://dapi.kakao.com/v2/local/search/address.json",
+            params={"query": query, "size": 1},
+            headers={"Authorization": f"KakaoAK {settings.kakao_rest_api_key}"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        docs = resp.json().get("documents", [])
+        if not docs:
+            return None
+        d = docs[0]
+        road = d.get("road_address") or {}
+        addr = d.get("address") or {}
+        lat = float(road.get("y") or addr.get("y") or d.get("y"))
+        lng = float(road.get("x") or addr.get("x") or d.get("x"))
+        if not _in_korea(lat, lng):
+            return None
+        label = (road.get("address_name") if road else None) or d.get("address_name") or query
+        return GeocodeResult(lat=lat, lng=lng, label=label, source="KAKAO_ADDRESS")
+    except Exception:
+        return None
+
+
+def _juso_address(query: str) -> Optional[GeocodeResult]:
+    """도로명주소 API → 표준 roadAddr → Kakao address로 좌표."""
+    if not settings.juso_confm_key:
+        return None
+    try:
+        resp = requests.get(
+            "https://business.juso.go.kr/addrlink/addrLinkApi.do",
+            params={
+                "confmKey": settings.juso_confm_key,
+                "currentPage": 1,
+                "countPerPage": 1,
+                "keyword": query,
+                "resultType": "json",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        common = (data.get("results") or {}).get("common") or {}
+        if str(common.get("errorCode", "0")) not in ("0", "000"):
+            safe_print(f"[지오코딩] juso 오류: {common.get('errorMessage')}")
+            return None
+        rows = (data.get("results") or {}).get("juso") or []
+        if not rows:
+            return None
+        road = (rows[0].get("roadAddr") or rows[0].get("roadAddrPart1") or "").strip()
+        if not road:
+            return None
+        hit = _kakao_address(road)
+        if hit:
+            return GeocodeResult(lat=hit.lat, lng=hit.lng, label=road, source="JUSO+KAKAO_ADDRESS")
+        return None
+    except Exception as exc:
+        safe_print(f"[지오코딩] juso 실패: {exc}")
+        return None
 
 
 def _kakao_keyword(query: str) -> Optional[GeocodeResult]:
@@ -121,7 +174,7 @@ def _kakao_keyword(query: str) -> Optional[GeocodeResult]:
         if not _in_korea(lat, lng):
             return None
         label = d.get("place_name") or d.get("road_address_name") or query
-        return GeocodeResult(lat=lat, lng=lng, label=label, source="KAKAO_LOCAL")
+        return GeocodeResult(lat=lat, lng=lng, label=label, source="KAKAO_KEYWORD")
     except Exception:
         return None
 
@@ -144,7 +197,6 @@ def _naver_local(query: str) -> Optional[GeocodeResult]:
         if not items:
             return None
         it = items[0]
-        # 지역검색 mapx/mapy는 WGS84 경위도 * 1e7 정수
         lng, lat = float(it["mapx"]) / 1e7, float(it["mapy"]) / 1e7
         if not _in_korea(lat, lng):
             return None
@@ -153,19 +205,12 @@ def _naver_local(query: str) -> Optional[GeocodeResult]:
         return None
 
 
-def _tmap_poi(query: str, near: tuple[float, float] | None = None) -> Optional[GeocodeResult]:
-    center = near or (settings.demo_center_lat, settings.demo_center_lng)
-    hit = search_poi(query, near=center)
-    return GeocodeResult(hit.lat, hit.lng, hit.label, hit.source) if hit else None
-
-
 def _tmap_fulladdr(query: str) -> Optional[GeocodeResult]:
     hit = geocode_full_address(query)
     return GeocodeResult(hit.lat, hit.lng, hit.label, hit.source) if hit else None
 
 
 def looks_like_road_address(query: str) -> bool:
-    """도로명+번지 형태면 주소 지오코딩을 우선한다."""
     q = (query or "").strip()
     if not q:
         return False
@@ -178,16 +223,10 @@ def geocode(
     *,
     prefer_address: bool | None = None,
 ) -> Optional[GeocodeResult]:
-    """이름/주소 문자열을 좌표로 변환.
-
-    prefer_address=True 이거나 도로명+번지 형태면 Tmap fullAddr를 POI/키워드보다 먼저 시도한다.
-    (문서 공사 구간 정확도용)
-    """
     q = (query or "").strip()
     if not q:
         return None
 
-    # 데모·역 사전은 API 호출 없이 즉시 응답 (Free 티어 절약)
     hit = _lookup_dict(q)
     if hit:
         return hit
@@ -195,10 +234,24 @@ def geocode(
     use_address_first = prefer_address if prefer_address is not None else looks_like_road_address(q)
     poi_near = near or (settings.demo_center_lat, settings.demo_center_lng)
 
-    if use_address_first and settings.tmap_app_key:
-        result = _tmap_fulladdr(q)
-        if result:
-            return result
+    if use_address_first:
+        for name, provider in (
+            ("juso", _juso_address),
+            ("kakao_address", _kakao_address),
+            ("tmap_fulladdr", _tmap_fulladdr),
+            ("kakao_keyword", _kakao_keyword),
+        ):
+            if name == "tmap_fulladdr" and not settings.tmap_app_key:
+                continue
+            result = provider(q)
+            if result:
+                safe_print(f"[지오코딩] '{q}' → {result.source}")
+                return result
+        if settings.tmap_app_key:
+            poi = search_poi(q, near=poi_near)
+            if poi:
+                return GeocodeResult(poi.lat, poi.lng, poi.label, poi.source)
+        return None
 
     for provider in (_kakao_keyword, _naver_local):
         result = provider(q)
@@ -206,22 +259,46 @@ def geocode(
             return result
 
     if settings.tmap_app_key:
-        if not use_address_first:
-            poi = search_poi(q, near=poi_near)
-            if poi:
-                return GeocodeResult(poi.lat, poi.lng, poi.label, poi.source)
-            result = _tmap_fulladdr(q)
-            if result:
-                return result
-        else:
-            # 주소 우선이었는데 fullAddr 실패 → POI 최후 시도
-            poi = search_poi(q, near=poi_near)
-            if poi:
-                return GeocodeResult(poi.lat, poi.lng, poi.label, poi.source)
-
+        poi = search_poi(q, near=poi_near)
+        if poi:
+            return GeocodeResult(poi.lat, poi.lng, poi.label, poi.source)
+        result = _tmap_fulladdr(q)
+        if result:
+            return result
     return None
 
 
 def geocode_document_address(query: str) -> Optional[GeocodeResult]:
-    """문서 위험 구간용: 도로명주소를 최대한 정확히."""
-    return geocode(query, prefer_address=True)
+    """문서 구간 폴백 체인.
+
+    1) juso.go.kr  2) Kakao address.json  3) Kakao keyword.json  4) Tmap fullAddr
+    (Kakao 앱에 로컬 권한이 없으면 3에서 떨어지고 Tmap이 받음)
+    """
+    q = (query or "").strip()
+    if not q:
+        return None
+
+    variants = [q]
+    # 서울특별시 ↔ 서울 표기 차이
+    if "서울특별시" in q:
+        variants.append(q.replace("서울특별시", "서울", 1))
+    elif q.startswith("서울 "):
+        variants.append(q.replace("서울 ", "서울특별시 ", 1))
+
+    chain = [
+        ("juso", _juso_address),
+        ("kakao_address", _kakao_address),
+        ("kakao_keyword", _kakao_keyword),
+        ("tmap_fulladdr", _tmap_fulladdr),
+    ]
+    for variant in variants:
+        for name, provider in chain:
+            if name == "tmap_fulladdr" and not settings.tmap_app_key:
+                continue
+            result = provider(variant)
+            if result:
+                safe_print(f"[문서지오코딩] '{variant}' → {result.source} (단계={name})")
+                return result
+            safe_print(f"[문서지오코딩] '{variant}' 단계={name} 실패")
+    safe_print(f"[문서지오코딩] '{q}' 전부 실패")
+    return None

@@ -95,6 +95,9 @@ CREATE TABLE IF NOT EXISTS doc_risk_points (
     report_date TEXT,
     recommendation TEXT,
     is_estimated INTEGER DEFAULT 0,
+    polyline_json TEXT,
+    header_road TEXT,
+    verify_status TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 """
@@ -128,6 +131,9 @@ def _ensure_doc_risk_columns(conn: sqlite3.Connection) -> None:
         "geocode_query": "ALTER TABLE doc_risk_points ADD COLUMN geocode_query TEXT",
         "end_geocode_query": "ALTER TABLE doc_risk_points ADD COLUMN end_geocode_query TEXT",
         "matched_label": "ALTER TABLE doc_risk_points ADD COLUMN matched_label TEXT",
+        "polyline_json": "ALTER TABLE doc_risk_points ADD COLUMN polyline_json TEXT",
+        "header_road": "ALTER TABLE doc_risk_points ADD COLUMN header_road TEXT",
+        "verify_status": "ALTER TABLE doc_risk_points ADD COLUMN verify_status TEXT",
     }
     for name, sql in migrations.items():
         if name not in cols:
@@ -202,12 +208,16 @@ def insert_doc_risk_point(
     geocode_query: str | None = None,
     end_geocode_query: str | None = None,
     matched_label: str | None = None,
+    polyline_json: str | None = None,
+    header_road: str | None = None,
+    verify_status: str | None = None,
 ):
     conn.execute(
         "INSERT INTO doc_risk_points "
         "(lat, lng, end_lat, end_lng, location_text, geocode_query, end_geocode_query, matched_label, "
-        "risk_type, is_risk, snippet, source_doc, page, report_date, recommendation, is_estimated) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "risk_type, is_risk, snippet, source_doc, page, report_date, recommendation, is_estimated, "
+        "polyline_json, header_road, verify_status) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             lat,
             lng,
@@ -225,6 +235,9 @@ def insert_doc_risk_point(
             report_date,
             recommendation,
             int(bool(is_estimated)),
+            polyline_json,
+            header_road,
+            verify_status,
         ),
     )
 

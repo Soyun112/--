@@ -28,6 +28,8 @@ class Settings:
 
     # 건물명/역이름 -> 좌표 지오코딩용 키 (없으면 Tmap POI + 내장 사전으로 폴백)
     kakao_rest_api_key: str = os.getenv("KAKAO_REST_API_KEY", "").strip()
+    # 행정안전부 도로명주소 API (https://www.juso.go.kr) — 없으면 Kakao address로 스킵
+    juso_confm_key: str = os.getenv("JUSO_API_KEY", os.getenv("JUSO_CONFM_KEY", "")).strip()
     naver_search_client_id: str = os.getenv("NAVER_SEARCH_CLIENT_ID", "").strip()
     naver_search_client_secret: str = os.getenv("NAVER_SEARCH_CLIENT_SECRET", "").strip()
 

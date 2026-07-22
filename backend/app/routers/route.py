@@ -39,6 +39,24 @@ from ..services.time_context import build_time_context, is_nighttime
 router = APIRouter(prefix="/api", tags=["route"])
 
 
+def _parse_doc_polyline(raw) -> list[LatLng] | None:
+    if not raw:
+        return None
+    try:
+        import json
+
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(data, list) or len(data) < 2:
+            return None
+        out: list[LatLng] = []
+        for p in data:
+            if isinstance(p, dict) and "lat" in p and "lng" in p:
+                out.append(LatLng(lat=float(p["lat"]), lng=float(p["lng"])))
+        return out if len(out) >= 2 else None
+    except Exception:
+        return None
+
+
 @router.get("/geocode", response_model=GeocodeResponse)
 def geocode_place(q: str = Query(..., min_length=1, description="건물명/역이름/주소")) -> GeocodeResponse:
     """이름/주소를 좌표로 변환. 위경도 대신 이름으로 검색할 때 사용."""
@@ -99,6 +117,9 @@ def get_public_data_layers() -> PublicDataResponse:
                 report_date=d.get("report_date"),
                 recommendation=d.get("recommendation"),
                 is_estimated=bool(d.get("is_estimated")),
+                polyline=_parse_doc_polyline(d.get("polyline_json")),
+                header_road=d.get("header_road"),
+                verify_status=d.get("verify_status"),
             )
             for d in public_data.get_doc_risk_points()
         ],
