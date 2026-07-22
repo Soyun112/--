@@ -37,11 +37,23 @@ const DEMO_SCENARIOS = {
     age: 8,
     note: "도성초등학교에서 필수학학원으로 이동하는 길의 안전시설을 비교해 보여줍니다.",
   },
-  cheongdam_to_eonbuk: {
-    origin: "삼성청담파크아파트",
-    destination: "언북초등학교",
+  daehyun_safe: {
+    origin: "대현초 안심출발",
+    destination: "역삼로98길 16",
     age: 8,
-    note: "청담·언북초 통학로 — 사고다발 인근에서 우회·점수 비교를 보여줍니다.",
+    note: "같은 대현초(역삼로98길 16)라도 출발지에 따라 점수가 갈립니다 — 안심 출발(~93점).",
+  },
+  daehyun_mid: {
+    origin: "대현초 보통출발",
+    destination: "역삼로98길 16",
+    age: 8,
+    note: "같은 대현초라도 출발지에 따라 점수가 갈립니다 — 보통 출발(~69점).",
+  },
+  daehyun_caution: {
+    origin: "대현초 주의출발",
+    destination: "역삼로98길 16",
+    age: 8,
+    note: "같은 대현초라도 출발지에 따라 점수가 갈립니다 — 주의 출발(~59점). 세 출발지를 바꿔 비교하세요.",
   },
 };
 
@@ -733,7 +745,7 @@ function renderCandidates(data) {
       return `
         <div class="candidate-card ${isRecommended ? "recommended" : ""} ${isActive ? "selected" : ""}" data-route-id="${c.id}" role="button" tabindex="0" aria-pressed="${isActive}">
           <h4>
-            <span>${routeName}${isRecommended ? '<span class="recommended-tag">★ 가장 안전한 길</span>' : ""}</span>
+            <span>${routeName}${isRecommended ? '<span class="recommended-tag">추천 경로</span>' : ""}</span>
             <span class="score-pill" style="background:${scoreColor(c.safety_score)}">${c.safety_score}점</span>
           </h4>
           <div class="star-rating" title="안전 등급 ${c.star_rating}/3">${stars}</div>

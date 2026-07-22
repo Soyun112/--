@@ -203,7 +203,8 @@ class Settings:
         "accident_hotspot": 1.5,
         "doc_risk": 1.5,
     }
-    bidirectional_night_features = ("cctv_density", "light_density")
+    # 야간 CCTV·조명은 단방향 가점만 (데이터 공백을 감점으로 쓰지 않음)
+    bidirectional_night_features = ()
     score_length_floor_km: float = 0.3
     detour_penalty_max: float = 12.0
     # 최단 대비 초과분 중 이만큼(km)은 페널티 없음 — 짧은 통학로 우회 3분 허용

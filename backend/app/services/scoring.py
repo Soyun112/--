@@ -228,7 +228,6 @@ def absolute_score(
 ) -> float:
     w = scoring_weights(is_night)
     k_table = settings.saturate_k
-    bi = set(settings.bidirectional_night_features)
     L = _eff_km(features.distance_km)
 
     vals = {
@@ -253,11 +252,10 @@ def absolute_score(
             term = weight * raw
         else:
             s = saturate(raw, float(k_table.get(key, 1.0)))
-            if is_night and key in bi:
-                term = weight * (2.0 * s - 1.0)
-            elif key in ("accident_hotspot", "doc_risk"):
+            if key in ("accident_hotspot", "doc_risk"):
                 term = -weight * s
             else:
+                # 야간 CCTV·조명도 단방향: 있으면 가점, 없어도(데이터 공백) 감점하지 않음
                 term = weight * s
         score += term
 

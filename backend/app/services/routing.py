@@ -1003,21 +1003,40 @@ def _snap_to_pedestrian_network(
     return pt
 
 
+def _max_backtrack_waste_m(
+    coords: List[Tuple[float, float]],
+    *,
+    tol_m: float = 5.0,
+    min_gap: int = 3,
+) -> float:
+    """5m 안에 재방문하는 (i,j) 쌍 중 경로 호 길이가 가장 큰 값(왕복 낭비 m)."""
+    n = len(coords)
+    if n < min_gap + 1:
+        return 0.0
+    max_arc = 0.0
+    for i in range(n):
+        for j in range(i + min_gap, n):
+            if _point_distance_m(coords[i], coords[j]) < tol_m:
+                arc = route_length_m(coords[i : j + 1])
+                if arc > max_arc:
+                    max_arc = arc
+    return float(max_arc)
+
+
 def _has_backtrack(
     coords: List[Tuple[float, float]],
     *,
     tol_m: float = 5.0,
     min_gap: int = 3,
+    min_waste_m: float = 60.0,
+    waste_ratio: float = 0.10,
 ) -> bool:
-    """갔다가 되돌아오는 왕복 스파이크가 있으면 True (via가 도로 밖일 때 전형적)."""
-    n = len(coords)
-    if n < min_gap + 1:
+    """의미 있는 왕복 낭비면 True. 스냅 오차(수십 m)는 통과, via 아티팩트·선릉로급은 기각."""
+    total = route_length_m(coords)
+    if total <= 0:
         return False
-    for i in range(n):
-        for j in range(i + min_gap, n):
-            if _point_distance_m(coords[i], coords[j]) < tol_m:
-                return True
-    return False
+    wasted = _max_backtrack_waste_m(coords, tol_m=tol_m, min_gap=min_gap)
+    return wasted > max(min_waste_m, waste_ratio * total)
 
 
 def _is_detour_candidate(candidate: RouteCandidateRaw) -> bool:
@@ -1034,7 +1053,13 @@ def _drop_backtracking_candidates(candidates: List[RouteCandidateRaw]) -> List[R
     for c in candidates:
         if _is_detour_candidate(c) and _has_backtrack(c.coordinates):
             dropped += 1
-            print(f"[경로] 왕복 우회 후보 제외: {c.id}")
+            total = route_length_m(c.coordinates)
+            wasted = _max_backtrack_waste_m(c.coordinates)
+            thr = max(60.0, 0.10 * total) if total > 0 else 60.0
+            print(
+                f"[경로] 왕복 우회 후보 제외: {c.id} "
+                f"(낭비 {wasted:.0f}m / 전체 {total:.0f}m, 임계 {thr:.0f}m)"
+            )
             continue
         kept.append(c)
     if dropped:
@@ -1303,71 +1328,86 @@ def _append_avoid_point_detours(
     print(f"[경로] 우회 지점 {len(near)}곳이 기본 경로 {trigger:.0f}m 이내 → 우회 후보 요청")
     out = list(candidates)
     max_pts = max(1, settings.avoid_detour_max_points)
+    # 수직 오프셋: 좌/우 × 100/140/180m (via가 막다른 골목이면 왕복 아티팩트 생김)
+    via_offsets_m = (100.0, 140.0, 180.0)
+    accept_waste_m = 30.0
     for i, (dist0, d) in enumerate(near[:max_pts]):
         risk_pt = (d["lat"], d["lng"])
         placed = False
         kind = d.get("kind") or "avoid"
         for side in (1.0, -1.0):
-            via = _detour_via_for_risk(
-                base.coordinates,
-                risk_pt,
-                side=side,
-                offset_m=settings.avoid_detour_offset_m,
-            )
-            if via is None:
-                continue
-            if not _via_is_reachable(via, origin, search_option=search_option):
-                continue
-            detour = _call_tmap(
-                origin,
-                destination,
-                pass_point=via,
-                search_option=search_option,
-                route_suffix=f"avoid-{kind}-{i + 1}",
-            )
-            if not detour:
-                continue
-            new_dist = min_distance_to_route(detour.coordinates, risk_pt)
-            # 채점 버퍼(40m) 밖으로 나가야 함 — dist0 대비 소폭 개선만으로는 부족
-            if new_dist <= settings.buffer_radius_m:
-                print(
-                    f"[경로] 우회 후보 기각: {d['label']}까지 {new_dist:.0f}m "
-                    f"(채점 버퍼 {settings.buffer_radius_m:.0f}m 미달, 기존 {dist0:.0f}m)"
+            for offset_m in via_offsets_m:
+                via = _detour_via_for_risk(
+                    base.coordinates,
+                    risk_pt,
+                    side=side,
+                    offset_m=offset_m,
                 )
-                continue
-            # 같은 종류의 위험 노출이 줄지 않으면 폐기 (다른 사고다발을 그대로 밟는 우회 방지)
-            buffer = settings.buffer_radius_m
-            kind_risks = [r for r in risks if (r.get("kind") or "avoid") == kind]
-            base_rs = resampled
-            detour_rs = resample_route(detour.coordinates, interval_m=settings.resample_interval_m)
+                if via is None:
+                    continue
+                if not _via_is_reachable(via, origin, search_option=search_option):
+                    continue
+                detour = _call_tmap(
+                    origin,
+                    destination,
+                    pass_point=via,
+                    search_option=search_option,
+                    route_suffix=f"avoid-{kind}-{i + 1}",
+                )
+                if not detour:
+                    continue
+                waste = _max_backtrack_waste_m(detour.coordinates)
+                if waste >= accept_waste_m:
+                    print(
+                        f"[경로] 우회 via 기각: 왕복 낭비 {waste:.0f}m ≥ {accept_waste_m:.0f}m "
+                        f"(side={side:+.0f}, offset={offset_m:.0f}m, via={via[0]:.5f},{via[1]:.5f})"
+                    )
+                    continue
+                new_dist = min_distance_to_route(detour.coordinates, risk_pt)
+                # 채점 버퍼(40m) 밖으로 나가야 함 — dist0 대비 소폭 개선만으로는 부족
+                if new_dist <= settings.buffer_radius_m:
+                    print(
+                        f"[경로] 우회 후보 기각: {d['label']}까지 {new_dist:.0f}m "
+                        f"(채점 버퍼 {settings.buffer_radius_m:.0f}m 미달, 기존 {dist0:.0f}m)"
+                    )
+                    continue
+                # 같은 종류의 위험 노출이 줄지 않으면 폐기 (다른 사고다발을 그대로 밟는 우회 방지)
+                buffer = settings.buffer_radius_m
+                kind_risks = [r for r in risks if (r.get("kind") or "avoid") == kind]
+                base_rs = resampled
+                detour_rs = resample_route(detour.coordinates, interval_m=settings.resample_interval_m)
 
-            def _hits(rs: List[Tuple[float, float]]) -> int:
-                return sum(
-                    1
-                    for r in kind_risks
-                    if min_distance_to_route(rs, (r["lat"], r["lng"])) <= buffer
-                )
+                def _hits(rs: List[Tuple[float, float]]) -> int:
+                    return sum(
+                        1
+                        for r in kind_risks
+                        if min_distance_to_route(rs, (r["lat"], r["lng"])) <= buffer
+                    )
 
-            base_hits = _hits(base_rs)
-            detour_hits = _hits(detour_rs)
-            if detour_hits >= base_hits:
+                base_hits = _hits(base_rs)
+                detour_hits = _hits(detour_rs)
+                if detour_hits >= base_hits:
+                    print(
+                        f"[경로] 우회 후보 기각: {kind} 노출 {base_hits}→{detour_hits} "
+                        f"(대상 {dist0:.0f}m→{new_dist:.0f}m이나 다른 지점 잔존)"
+                    )
+                    continue
+                if kind == "hotspot":
+                    detour.label = f"사고다발 우회 · {d['label']}"
+                else:
+                    detour.label = f"문서 위험 우회 · {d['label']}"
+                out.append(detour)
                 print(
-                    f"[경로] 우회 후보 기각: {kind} 노출 {base_hits}→{detour_hits} "
-                    f"(대상 {dist0:.0f}m→{new_dist:.0f}m이나 다른 지점 잔존)"
+                    f"[경로] 우회 후보 추가: {detour.id} "
+                    f"({d['source']} {dist0:.0f}m → {new_dist:.0f}m, "
+                    f"{kind} 노출 {base_hits}→{detour_hits}, "
+                    f"낭비 {waste:.0f}m, via={via[0]:.5f},{via[1]:.5f}, "
+                    f"side={side:+.0f}, offset={offset_m:.0f}m)"
                 )
-                continue
-            if kind == "hotspot":
-                detour.label = f"사고다발 우회 · {d['label']}"
-            else:
-                detour.label = f"문서 위험 우회 · {d['label']}"
-            out.append(detour)
-            print(
-                f"[경로] 우회 후보 추가: {detour.id} "
-                f"({d['source']} {dist0:.0f}m → {new_dist:.0f}m, "
-                f"{kind} 노출 {base_hits}→{detour_hits}, via={via[0]:.5f},{via[1]:.5f})"
-            )
-            placed = True
-            break
+                placed = True
+                break
+            if placed:
+                break
         if not placed:
             print(f"[경로] 우회 후보 생성 실패: {d.get('source')} / {d.get('label')}")
     return out

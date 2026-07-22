@@ -38,11 +38,23 @@ const DEMO_SCENARIOS = {
     age: 8,
     note: "도성초등학교에서 필수학학원으로 이동하는 길의 안전시설을 비교해 보여줍니다.",
   },
-  cheongdam_to_eonbuk: {
-    origin: "삼성청담파크아파트",
-    destination: "언북초등학교",
+  daehyun_safe: {
+    origin: "대현초 안심출발",
+    destination: "역삼로98길 16",
     age: 8,
-    note: "청담·언북초 통학로 — 사고다발 인근에서 우회·점수 비교를 보여줍니다.",
+    note: "같은 대현초(역삼로98길 16)라도 출발지에 따라 점수가 갈립니다 — 안심 출발(~93점).",
+  },
+  daehyun_mid: {
+    origin: "대현초 보통출발",
+    destination: "역삼로98길 16",
+    age: 8,
+    note: "같은 대현초라도 출발지에 따라 점수가 갈립니다 — 보통 출발(~69점).",
+  },
+  daehyun_caution: {
+    origin: "대현초 주의출발",
+    destination: "역삼로98길 16",
+    age: 8,
+    note: "같은 대현초라도 출발지에 따라 점수가 갈립니다 — 주의 출발(~59점). 세 출발지를 바꿔 비교하세요.",
   },
 };
 
@@ -259,6 +271,7 @@ function buildGroundedWhySummary(candidate, routeData = null) {
   let paragraphs = [];
 
   const gapMsg = isRecommended ? scoreGapCompareMessage(candidate, routeData) : null;
+  const multiCandidate = (routeData?.candidates?.length || 0) > 1;
   if (gapMsg) {
     paragraphs.push(
       `${gapMsg} 약 ${km}km · ${mins}분, 안전점수 ${candidate.safety_score}점입니다.`
@@ -266,6 +279,10 @@ function buildGroundedWhySummary(candidate, routeData = null) {
   } else if (isDetour && (hotspot > 0 || docCount > 0)) {
     paragraphs.push(
       `위험·공사 구간을 피해 아이가 혼자 가도록 잡은 길입니다. 거리는 약 ${km}km, ${mins}분 정도입니다. (안전점수 ${candidate.safety_score}점)`
+    );
+  } else if (!multiCandidate) {
+    paragraphs.push(
+      `이 경로의 안전 요소를 정리했습니다. 약 ${km}km · ${mins}분, 안전점수 ${candidate.safety_score}점입니다.`
     );
   } else if (goodPoints.length >= 2) {
     paragraphs.push(
@@ -1060,7 +1077,9 @@ function renderCandidates(data) {
       const gapMsg = isRecommended ? scoreGapCompareMessage(c, data) : null;
       let recommendTag = "";
       if (isRecommended) {
-        if (gapMsg && gapMsg.includes("비슷")) {
+        if (displayCandidates.length < 2) {
+          recommendTag = '<span class="recommended-tag">추천 경로</span>';
+        } else if (gapMsg && gapMsg.includes("비슷")) {
           recommendTag = '<span class="recommended-tag">★ 추천 (안전도 비슷 · 짧은 길)</span>';
         } else if (gapMsg && gapMsg.includes("약간")) {
           recommendTag = '<span class="recommended-tag">★ 조금 더 안전</span>';

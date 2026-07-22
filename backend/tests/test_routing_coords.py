@@ -149,19 +149,34 @@ def test_academy_home_names_do_not_trigger_special_demo_route():
     assert all(c.source == "MOCK_ROUTING" for c in candidates)
 
 
-def test_has_backtrack_detects_out_and_back():
-    from app.services.routing import _has_backtrack
+def test_has_backtrack_detects_meaningful_waste():
+    from app.services.routing import _has_backtrack, _max_backtrack_waste_m
 
-    # idx0 == idx4 style spike
-    coords = [
-        (37.50040, 127.050689),
-        (37.50035, 127.050500),
-        (37.50030, 127.050366),
-        (37.50019, 127.050044),
-        (37.50030, 127.050366),
-        (37.50040, 127.050689),
-    ]
+    # ~150m 나갔다가 같은 점으로 되돌아오는 via 아티팩트
+    coords = [(37.5000, 127.0500)]
+    for i in range(1, 16):
+        coords.append((37.5000 + i * 0.0001, 127.0500))  # ~11m steps north
+    for i in range(14, -1, -1):
+        coords.append((37.5000 + i * 0.0001, 127.0500))
+    assert _max_backtrack_waste_m(coords) > 100
     assert _has_backtrack(coords) is True
+
+
+def test_has_backtrack_ignores_short_snap_loop():
+    from app.services.routing import _has_backtrack, _max_backtrack_waste_m
+
+    # 본선 남하 중 ~20m 튀었다 돌아오는 스냅급 스파이크
+    coords = [
+        (37.5020, 127.0500),
+        (37.5015, 127.0500),
+        (37.5010, 127.0500),  # junction
+        (37.5010, 127.05018),  # ~16m east
+        (37.5010, 127.0500),  # back
+        (37.5005, 127.0500),
+        (37.5000, 127.0500),
+    ]
+    assert _max_backtrack_waste_m(coords) < 60
+    assert _has_backtrack(coords) is False
 
 
 def test_has_backtrack_clean_path():
@@ -180,14 +195,12 @@ def test_has_backtrack_clean_path():
 def test_drop_backtrack_keeps_main_drops_detour():
     from app.services.routing import RouteCandidateRaw, _drop_backtracking_candidates
 
-    spike = [
-        (37.50040, 127.050689),
-        (37.50035, 127.050500),
-        (37.50030, 127.050366),
-        (37.50019, 127.050044),
-        (37.50030, 127.050366),
-        (37.50040, 127.050689),
-    ]
+    # 긴 왕복 스파이크 (낭비 > 임계)
+    spike = [(37.5000, 127.0500)]
+    for i in range(1, 16):
+        spike.append((37.5000 + i * 0.0001, 127.0500))
+    for i in range(14, -1, -1):
+        spike.append((37.5000 + i * 0.0001, 127.0500))
     clean = [
         (37.5012, 127.0499),
         (37.5008, 127.0502),

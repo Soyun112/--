@@ -134,6 +134,35 @@ def test_saturate_and_demo_od_score_shape():
     assert 55.0 <= score <= 70.0
 
 
+def test_night_does_not_penalize_missing_ansim_facilities():
+    """안심귀갓길 CCTV·보안등 0이어도 야간에 -40 감점하지 않음 (데이터 공백 ≠ 어두움)."""
+    from app.models import SafetyFeatures
+    from app.services.scoring import absolute_score
+
+    f = SafetyFeatures(
+        distance_km=0.43,
+        cctv_count=7,
+        cctv_density=0.0,
+        child_zone_coverage_pct=35.0,
+        accident_hotspot_count=1,
+        crime_risk_proxy=0.0,
+        guardian_house_count=1,
+        streetlight_count=0,
+        streetlight_density=0.0,
+        speed_camera_count=1,
+        doc_risk_count=0,
+        doc_safety_count=0,
+        zone_cctv_count=7,
+        safety_facility_cctv_count=0,
+        safety_facility_streetlight_count=0,
+    )
+    day = absolute_score(f, is_night=False, detour_penalty=0.0, walk_minutes=10.0)
+    night = absolute_score(f, is_night=True, detour_penalty=0.0, walk_minutes=10.0)
+    # 구 양방향이면 night ≈ day - 40. 단방향이면 야간 가중 차이만 (±수 점)
+    assert night >= 50.0
+    assert abs(night - day) < 15.0
+
+
 def test_safety_score_within_bounds():
     raw_candidates = get_route_candidates(ORIGIN, DESTINATION, force_mock=True)
     scored = score_candidates(raw_candidates)
