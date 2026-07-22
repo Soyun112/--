@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 from functools import lru_cache
 from typing import Any
 
@@ -19,6 +20,9 @@ import requests
 
 from .. import db
 from ..config import settings
+from ..console_safe import safe_print
+
+logger = logging.getLogger(__name__)
 
 # TODO(데이터 담당): data.go.kr에서 아래 데이터셋에 "활용신청" 후 발급되는 실제
 # 요청주소(Endpoint URL)로 교체할 것. 서비스키는 .env의 DATA_GO_KR_SERVICE_KEY 그대로 사용 가능
@@ -96,29 +100,44 @@ def _fetch_standard_api_items(url: str, num_of_rows: int = 1000) -> list[dict[st
     numOfRows는 1000을 넘기면 INVALID_REQUEST_PARAMETER_ERROR(resultCode 10)가 나는
     데이터셋이 있어 1000으로 고정한다(전국 단위라 totalCount가 수십만~수백만 건이라도
     페이지당 최대 1000건까지만 받아 데모용 부분 데이터로 사용)."""
-    resp = requests.get(
-        url,
-        params={
-            "serviceKey": settings.data_go_kr_service_key,
-            "pageNo": 1,
-            "numOfRows": min(num_of_rows, 1000),
-            "type": "json",
-        },
-        timeout=20,
-    )
-    resp.raise_for_status()
+    params = {
+        "serviceKey": settings.data_go_kr_service_key,
+        "pageNo": 1,
+        "numOfRows": min(num_of_rows, 1000),
+        "type": "json",
+    }
+    try:
+        resp = requests.get(url, params=params, timeout=20)
+    except requests.RequestException as exc:
+        logger.error("data.go.kr request failed url=%s err=%s", url, exc)
+        safe_print(f"[공공데이터] 요청 실패: {url} · {exc}")
+        raise
+    if resp.status_code >= 400:
+        body = (resp.text or "")[:500]
+        logger.error("data.go.kr HTTP %s url=%s body=%s", resp.status_code, url, body)
+        safe_print(f"[공공데이터] HTTP {resp.status_code}: {url}\n{body}")
+        resp.raise_for_status()
     data = resp.json()
     header = data.get("response", {}).get("header", {})
     if header and header.get("resultCode") not in (None, "00", "0"):
-        raise RuntimeError(f"data.go.kr API error: {header.get('resultCode')} {header.get('resultMsg')}")
+        msg = f"{header.get('resultCode')} {header.get('resultMsg')}"
+        logger.error("data.go.kr API error url=%s %s", url, msg)
+        safe_print(f"[공공데이터] API 오류: {url} · {msg}")
+        raise RuntimeError(f"data.go.kr API error: {msg}")
     items = data.get("response", {}).get("body", {}).get("items", None)
     if items is None:
-        # 일부 데이터셋은 감싸지 않은 형태로 응답하는 경우도 있어 방어적으로 처리
         items = data.get("items", data.get("data", []))
     if isinstance(items, dict):
-        # items가 단일 객체(레코드 1건)로 오는 경우도 있음
         items = [items]
     return items or []
+
+
+def _require_live_rows(source: str, rows: list[Any], *, mock: bool) -> None:
+    """LIVE인데 0건이면 조용히 넘어가지 않고 중단 (캘리브 오염 방지)."""
+    if mock:
+        return
+    if not rows:
+        raise RuntimeError(f"{source}: LIVE ingest returned 0 rows")
 
 
 def _load_child_zones_from_csv() -> list[dict[str, Any]] | None:
@@ -211,11 +230,18 @@ def fetch_child_zones() -> tuple[list[dict[str, Any]], bool]:
             params={"serviceKey": settings.data_go_kr_service_key, "page": 1, "perPage": 1000, "returnType": "JSON"},
             timeout=10,
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            body = (resp.text or "")[:500]
+            logger.error("child_zones HTTP %s body=%s", resp.status_code, body)
+            safe_print(f"[공공데이터] child_zones HTTP {resp.status_code}\n{body}")
+            resp.raise_for_status()
         data = resp.json()
         records = data.get("data", data.get("items", []))
         return records, False
-    except Exception:
+    except Exception as exc:
+        if not settings.public_data_mock:
+            logger.exception("child_zones LIVE fetch failed")
+            raise RuntimeError(f"child_zones: LIVE fetch failed: {exc}") from exc
         return _load_sample("sample_child_zones.json"), True
 
 
@@ -232,11 +258,18 @@ def fetch_accident_hotspots() -> tuple[list[dict[str, Any]], bool]:
             params={"serviceKey": settings.data_go_kr_service_key, "numOfRows": 1000, "pageNo": 1, "type": "json"},
             timeout=10,
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            body = (resp.text or "")[:500]
+            logger.error("accident_hotspots HTTP %s body=%s", resp.status_code, body)
+            safe_print(f"[공공데이터] accident_hotspots HTTP {resp.status_code}\n{body}")
+            resp.raise_for_status()
         data = resp.json()
         items = data.get("items", data.get("StanReginCd", []))
         return items, False
-    except Exception:
+    except Exception as exc:
+        if not settings.public_data_mock:
+            logger.exception("accident_hotspots LIVE fetch failed")
+            raise RuntimeError(f"accident_hotspots: LIVE fetch failed: {exc}") from exc
         return _load_sample("sample_accident_hotspots.json"), True
 
 
@@ -250,19 +283,30 @@ def fetch_guardian_houses() -> tuple[list[dict[str, Any]], bool]:
 
     try:
         return _fetch_standard_api_items(GUARDIAN_HOUSE_API_URL), False
-    except Exception:
+    except Exception as exc:
+        if not settings.public_data_mock:
+            logger.exception("guardian_houses LIVE fetch failed")
+            raise RuntimeError(f"guardian_houses: LIVE fetch failed: {exc}") from exc
         return _load_sample("sample_guardian_houses.json"), True
 
 
 def fetch_streetlights() -> tuple[list[dict[str, Any]], bool]:
-    """보안등/가로등 설치 현황 — 야간 통학로의 조도(가시성) 근사 지표로 사용."""
+    """보안등/가로등 — 점수 light_density는 안심귀갓길 305만 사용.
+
+    MOCK 샘플 8개는 DEMO_CENTER 근처에만 있어 캘리브/점수를 오염시키므로
+    MOCK 모드에서는 빈 목록을 반환한다. LIVE 전국 API는 page1이 강남 밖이라
+    강남 필터·페이지네이션 전까지는 점수에 합치지 않는다.
+    """
     if settings.public_data_mock:
-        return _load_sample("sample_streetlights.json"), True
+        return [], True
 
     try:
-        return _fetch_standard_api_items(STREETLIGHT_API_URL, num_of_rows=2000), False
-    except Exception:
-        return _load_sample("sample_streetlights.json"), True
+        return _fetch_standard_api_items(STREETLIGHT_API_URL, num_of_rows=1000), False
+    except Exception as exc:
+        if not settings.public_data_mock:
+            logger.exception("streetlights LIVE fetch failed")
+            raise RuntimeError(f"streetlights: LIVE fetch failed: {exc}") from exc
+        return [], True
 
 
 def fetch_speed_cameras() -> tuple[list[dict[str, Any]], bool]:
@@ -275,7 +319,10 @@ def fetch_speed_cameras() -> tuple[list[dict[str, Any]], bool]:
 
     try:
         return _fetch_standard_api_items(SPEED_CAMERA_API_URL), False
-    except Exception:
+    except Exception as exc:
+        if not settings.public_data_mock:
+            logger.exception("speed_cameras LIVE fetch failed")
+            raise RuntimeError(f"speed_cameras: LIVE fetch failed: {exc}") from exc
         return _load_sample("sample_speed_cameras.json"), True
 
 
@@ -295,6 +342,15 @@ def ingest_all() -> dict[str, Any]:
     guardian_houses, guardian_mock = fetch_guardian_houses()
     streetlights, streetlight_mock = fetch_streetlights()
     speed_cameras, speed_camera_mock = fetch_speed_cameras()
+
+    # LIVE인데 0건이면 샘플/빈 DB로 조용히 넘어가지 않음 (캘리브 오염 방지)
+    _require_live_rows("child_zones", child_zones, mock=child_mock)
+    _require_live_rows("accident_hotspots", hotspots, mock=hotspot_mock)
+    _require_live_rows("guardian_houses", guardian_houses, mock=guardian_mock)
+    # streetlights: MOCK은 빈 목록 허용 (점수에 안 씀). LIVE만 0건 금지.
+    if not streetlight_mock:
+        _require_live_rows("streetlights", streetlights, mock=False)
+    _require_live_rows("speed_cameras", speed_cameras, mock=speed_camera_mock)
 
     db.clear_table("child_zones")
     db.clear_table("accident_hotspots")
@@ -399,12 +455,54 @@ def ingest_all() -> dict[str, Any]:
             )
 
     return {
+        "public_data_mock": settings.public_data_mock,
         "child_zones": {"count": len(child_zones) - skipped.get("child_zones", 0), "mock": child_mock, "skipped": skipped.get("child_zones", 0)},
         "accident_hotspots": {"count": len(hotspots) - skipped.get("accident_hotspots", 0), "mock": hotspot_mock, "skipped": skipped.get("accident_hotspots", 0)},
         "crime_grid": {"count": len(crime_grid), "mock": crime_mock},
         "guardian_houses": {"count": len(guardian_houses) - skipped.get("guardian_houses", 0), "mock": guardian_mock, "skipped": skipped.get("guardian_houses", 0)},
         "streetlights": {"count": len(streetlights) - skipped.get("streetlights", 0), "mock": streetlight_mock, "skipped": skipped.get("streetlights", 0)},
         "speed_cameras": {"count": len(speed_cameras) - skipped.get("speed_cameras", 0), "mock": speed_camera_mock, "skipped": skipped.get("speed_cameras", 0)},
+    }
+
+
+def build_ingest_snapshot(ingest_summary: dict[str, Any] | None = None) -> dict[str, Any]:
+    """캘리브 결과 헤더용 소스 스냅샷 (MOCK 플래그·건수·시각·커밋)."""
+    from datetime import datetime, timezone
+    import subprocess
+
+    summary = ingest_summary
+    if summary is None:
+        summary = {
+            "public_data_mock": settings.public_data_mock,
+            "child_zones": {"count": len(get_child_zones())},
+            "accident_hotspots": {"count": len(get_accident_hotspots())},
+            "guardian_houses": {"count": len(get_guardian_houses())},
+            "streetlights": {"count": len(get_streetlights())},
+            "speed_cameras": {"count": len(get_speed_cameras())},
+        }
+    commit = "unknown"
+    try:
+        commit = (
+            subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=str(settings.repo_data_dir.parent))
+            .decode()
+            .strip()
+        )
+    except Exception:
+        pass
+    return {
+        "generated_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+        "git_commit": commit,
+        "public_data_mock": summary.get("public_data_mock", settings.public_data_mock),
+        "ingest_counts": {
+            k: (v.get("count") if isinstance(v, dict) else v)
+            for k, v in summary.items()
+            if k != "public_data_mock"
+        },
+        "ingest_mock_flags": {
+            k: v.get("mock")
+            for k, v in summary.items()
+            if isinstance(v, dict) and "mock" in v
+        },
     }
 
 
