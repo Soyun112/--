@@ -146,3 +146,55 @@ def test_academy_home_names_do_not_trigger_special_demo_route():
         destination_name="개나리SK뷰5차아파트",
     )
     assert all(c.id != "route-demo-night-main" for c in candidates)
+    assert all(c.source == "MOCK_ROUTING" for c in candidates)
+
+
+def test_seolleung_sidewalk_commute_detected_both_directions():
+    from app.services.routing import _is_seolleung_sidewalk_commute
+
+    assert _is_seolleung_sidewalk_commute(
+        (37.4989686, 127.0525688),
+        (37.5012, 127.0499),
+        "필수학학원",
+        "개나리SK뷰5차아파트",
+    )
+    assert _is_seolleung_sidewalk_commute(
+        (37.5012, 127.0499),
+        (37.4989686, 127.0525688),
+        "개나리SK뷰5차아파트",
+        "필수학학원",
+    )
+
+
+def test_force_densify_waypoints_fills_from_tmap(monkeypatch):
+    from app.services import routing
+
+    waypoints = [
+        (37.5012, 127.0499),
+        (37.5000, 127.0502),
+        (37.4989686, 127.0525688),
+    ]
+    dense_leg = [
+        (37.5012, 127.0499),
+        (37.5008, 127.0500),
+        (37.5004, 127.0501),
+        (37.5000, 127.0502),
+    ]
+
+    def fake_fetch(origin, destination, *, search_option, pass_list=None):
+        return {
+            "features": [
+                {
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": [[lng, lat] for lat, lng in dense_leg],
+                    },
+                    "properties": {"index": 1, "distance": 120, "time": 100},
+                }
+            ]
+        }
+
+    monkeypatch.setattr(routing, "_fetch_tmap_pedestrian_data", fake_fetch)
+    result = routing._force_densify_waypoints(waypoints[:2], "4")
+    assert len(result) >= 3
+    assert result[0] == waypoints[0]

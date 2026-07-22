@@ -187,6 +187,7 @@ function buildSelectedRouteSafetyText(candidate, routeData) {
 }
 
 function routeDisplayName(routeId) {
+  if (routeId.includes("seolleung-sidewalk") || routeId.includes("sidewalk")) return "선릉로 보도 경로";
   if (routeId.includes("avoid-hotspot") || routeId.includes("hotspot-avoid")) return "사고다발 우회 경로";
   if (routeId.includes("doc-avoid") || routeId.includes("avoid-doc")) return "문서 위험 우회 경로";
   if (routeId.includes("pedestrian-main") || routeId.includes("direct")) return "보행자 큰길 경로";
@@ -197,6 +198,7 @@ function routeDisplayName(routeId) {
 }
 
 function routeDisplaySortKey(routeId) {
+  if (routeId.includes("seolleung-sidewalk") || routeId.includes("sidewalk")) return 0;
   if (routeId.includes("pedestrian-main") || routeId.includes("direct")) return 0;
   if (routeId.includes("pedestrian-alt")) return 1;
   if (routeId.includes("avoid-hotspot") || routeId.includes("hotspot-avoid")) return 2;
@@ -1484,18 +1486,18 @@ function renderSvgMap(routeData, publicData) {
     });
   }
 
-  // 출발/목적지 라벨
+  // 출발/도착: 사진과 같은 물방울 핀 (SVG 폴백)
   [routeData.origin, routeData.destination].forEach((wp, idx) => {
     const p = project(wp, bounds, size, padding);
-    const text = document.createElementNS(ns, "text");
-    text.setAttribute("x", p.x);
-    text.setAttribute("y", p.y - 12);
-    text.setAttribute("text-anchor", "middle");
-    text.setAttribute("font-size", "13");
-    text.setAttribute("font-weight", "700");
-    text.setAttribute("fill", "#1c2733");
-    text.textContent = idx === 0 ? `🏠 ${wp.name || "출발"}` : `🏫 ${wp.name || "목적지"}`;
-    svg.appendChild(text);
+    const pin = waypointPinIcon(idx === 0 ? "origin" : "destination");
+    const img = document.createElementNS(ns, "image");
+    img.setAttribute("href", pin.url);
+    img.setAttributeNS("http://www.w3.org/1999/xlink", "href", pin.url);
+    img.setAttribute("width", String(pin.width));
+    img.setAttribute("height", String(pin.height));
+    img.setAttribute("x", String(p.x - pin.width / 2));
+    img.setAttribute("y", String(p.y - pin.height));
+    svg.appendChild(img);
   });
 }
 
@@ -1684,6 +1686,34 @@ function tmapDotIcon(color) {
   return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
 }
 
+/** 내비 앱과 같은 물방울 핀(원형 머리 + 뾰족한 끝 + 출발/도착 글자). */
+function waypointPinIcon(kind) {
+  const isOrigin = kind === "origin";
+  const fill = isOrigin ? "#2bb673" : "#e53935";
+  const label = isOrigin ? "출발" : "도착";
+  // 표시 크기는 작게, viewBox는 글자가 또렷하게 보이도록 여유 있게
+  const w = 30;
+  const h = 40;
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 40 52">` +
+    `<defs>` +
+    `<filter id="s" x="-20%" y="-10%" width="140%" height="140%">` +
+    `<feDropShadow dx="0" dy="1" stdDeviation="1.2" flood-opacity="0.35"/>` +
+    `</filter>` +
+    `</defs>` +
+    `<path filter="url(#s)" fill="${fill}" ` +
+    `d="M20 1.5C10.06 1.5 2 9.56 2 19.5c0 12.8 15.4 29.2 17.4 31.2a0.9 0.9 0 0 0 1.2 0C22.6 48.7 38 32.3 38 19.5 38 9.56 29.94 1.5 20 1.5z"/>` +
+    `<text x="20" y="23.5" text-anchor="middle" dominant-baseline="middle" ` +
+    `font-size="12" font-weight="800" letter-spacing="-0.5" ` +
+    `font-family="Apple SD Gothic Neo,Malgun Gothic,Pretendard,sans-serif" fill="#ffffff">${label}</text>` +
+    `</svg>`;
+  return {
+    url: "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg),
+    width: w,
+    height: h,
+  };
+}
+
 // Tmap은 layerGroup.clearLayers()가 없으므로, 다시 그리기 전 오버레이를 직접 지운다.
 function clearTmapOverlays() {
   (state.tmapOverlays || []).forEach((overlay) => overlay.setMap(null));
@@ -1757,6 +1787,36 @@ function renderTmapRoutes(routeData, publicData) {
     return m;
   }
 
+  function waypointMarker(pt, kind, title) {
+    const pin = waypointPinIcon(kind);
+    const latlng = new Tmapv2.LatLng(pt.lat, pt.lng);
+    bounds.extend(latlng);
+    hasPoint = true;
+    const m = track(
+      new Tmapv2.Marker({
+        position: latlng,
+        icon: pin.url,
+        iconSize: new Tmapv2.Size(pin.width, pin.height),
+        // 핀 끝이 좌표에 닿도록 하단 중앙을 앵커로 둔다.
+        offset: new Tmapv2.Point(pin.width / 2, pin.height),
+        map: state.tmap,
+      })
+    );
+    if (title) {
+      m.addListener("click", () => {
+        if (state.infoWindow) state.infoWindow.setMap(null);
+        state.infoWindow = new Tmapv2.InfoWindow({
+          position: latlng,
+          content: `<div style="padding:6px 8px;font-size:12px;max-width:220px">${title}</div>`,
+          type: 2,
+          border: "1px solid #888",
+          map: state.tmap,
+        });
+      });
+    }
+    return m;
+  }
+
   if (shouldShowPublicLayer("cctv")) {
     childZones.forEach((z) =>
       marker(z, CATEGORY_COLORS.cctv, `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`)
@@ -1784,10 +1844,9 @@ function renderTmapRoutes(routeData, publicData) {
     });
   }
 
-  const originName = routeData.origin.name || "출발";
-  const destName = routeData.destination.name || "목적지";
-  marker(routeData.origin, "#1c7c3b", `🏠 ${originName}`, `<span class="tmap-wp-label">🏠 ${originName}</span>`);
-  marker(routeData.destination, "#b3261e", `🏫 ${destName}`, `<span class="tmap-wp-label">🏫 ${destName}</span>`);
+  // 출발/도착: 초록·빨강 핀 아이콘
+  waypointMarker(routeData.origin, "origin", routeData.origin.name || "출발");
+  waypointMarker(routeData.destination, "destination", routeData.destination.name || "도착");
 
   if (hasPoint) {
     state.tmap.fitBounds(bounds);

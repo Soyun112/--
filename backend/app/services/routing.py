@@ -24,6 +24,29 @@ from .landmarks import landmark_for
 TMAP_PEDESTRIAN_URL = "https://apis.openapi.sk.com/tmap/routes/pedestrian"
 WALK_SPEED_MPS = 4000 / 3600  # 어린이 평균 도보 속도 근사치 (약 4km/h)
 
+# 개나리SK뷰 ↔ 필수학학원: 선릉로 동측(보도) 경유.
+# Tmap 기본 보행 좌표는 차도 중심선에 붙어 보이므로, 경유지·폴백 좌표를 보도 쪽으로 둔다.
+_ACADEMY_PT = (37.4989686, 127.0525688)
+_HOME_PT = (37.5012, 127.0499)
+# 선릉로 동측 보도 (도로 중심보다 lng를 동쪽으로 ~8–12m)
+_SEOLLEUNG_EAST_SIDEWALK_VIAS: List[Tuple[float, float]] = [
+    (37.50095, 127.05005),  # 도성초교앞 동측
+    (37.49995, 127.05018),  # IBK·투썸 동측
+    (37.49895, 127.05032),  # 학원 골목 진입 전 선릉로 동측
+]
+_SEOLLEUNG_EAST_SIDEWALK_POLYLINE: List[Tuple[float, float]] = [
+    (37.50115, 127.05000),
+    (37.50095, 127.05005),
+    (37.50045, 127.05010),
+    (37.49995, 127.05018),
+    (37.49945, 127.05024),
+    (37.49895, 127.05032),
+    (37.49897, 127.05140),
+    (37.49897, 127.05210),
+]
+_ACADEMY_NAME_KEYS = ("필수학학원", "필수수학학원", "필수수학")
+_HOME_NAME_KEYS = ("개나리sk뷰5차아파트", "개나리sk뷰5차", "개나리sk뷰아파트", "개나리sk뷰")
+
 
 @dataclass
 class NavigationStepRaw:
@@ -812,6 +835,8 @@ def _fetch_tmap_pedestrian_data(
             "d": (round(destination[0], 5), round(destination[1], 5)),
             "opt": search_option,
             "pass": pass_list or "",
+            # 건물 관통 직선 폴백 제거 후 캐시 무효화
+            "v": "sidewalk-road-snap-2",
         },
     )
 
@@ -1123,6 +1148,161 @@ def _append_avoid_point_detours(
     return out
 
 
+def _normalize_place_name(name: str | None) -> str:
+    return (name or "").strip().replace(" ", "").lower()
+
+
+def _name_matches(name: str | None, keys: tuple[str, ...]) -> bool:
+    normalized = _normalize_place_name(name)
+    if not normalized:
+        return False
+    return any(key in normalized or normalized in key for key in keys)
+
+
+def _is_seolleung_sidewalk_commute(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+    origin_name: str | None = None,
+    destination_name: str | None = None,
+) -> bool:
+    """필수학학원 ↔ 개나리SK뷰 구간(양방향)인지 이름·좌표로 판별."""
+    o_ac = _name_matches(origin_name, _ACADEMY_NAME_KEYS)
+    d_home = _name_matches(destination_name, _HOME_NAME_KEYS)
+    o_home = _name_matches(origin_name, _HOME_NAME_KEYS)
+    d_ac = _name_matches(destination_name, _ACADEMY_NAME_KEYS)
+    if (o_ac and d_home) or (o_home and d_ac):
+        return True
+    near_pair = (
+        _segment_m(origin, _ACADEMY_PT) <= 120.0 and _segment_m(destination, _HOME_PT) <= 120.0
+    ) or (
+        _segment_m(origin, _HOME_PT) <= 120.0 and _segment_m(destination, _ACADEMY_PT) <= 120.0
+    )
+    return near_pair
+
+
+def _seolleung_sidewalk_fixed_route(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+) -> RouteCandidateRaw:
+    """경유지 체인(희소 좌표). 지도에 바로 그리면 건물을 가로지르므로 densify 후에만 사용."""
+    to_academy = _segment_m(destination, _ACADEMY_PT) <= _segment_m(destination, _HOME_PT)
+    mid = list(_SEOLLEUNG_EAST_SIDEWALK_POLYLINE)
+    if not to_academy:
+        mid = list(reversed(mid))
+    coords: List[Tuple[float, float]] = [origin, *mid, destination]
+    cleaned: List[Tuple[float, float]] = [coords[0]]
+    for pt in coords[1:]:
+        if _segment_m(cleaned[-1], pt) >= 12.0:
+            cleaned.append(pt)
+    if cleaned[-1] != destination:
+        cleaned.append(destination)
+    distance_m = route_length_m(cleaned)
+    return RouteCandidateRaw(
+        id="route-seolleung-sidewalk",
+        label="선릉로 보도 (큰길)",
+        coordinates=cleaned,
+        distance_m=distance_m,
+        duration_s=distance_m / WALK_SPEED_MPS,
+        source="SIDEWALK_MAIN_ROAD",
+        navigation_steps=[],
+        main_road_distance_m=distance_m * 0.92,
+    )
+
+
+def _force_densify_waypoints(
+    waypoints: List[Tuple[float, float]],
+    search_option: str,
+) -> List[Tuple[float, float]]:
+    """희소 경유지를 구간별 Tmap 보행 재탐색으로 도로에 붙인다 (설정 플래그와 무관)."""
+    if len(waypoints) < 2:
+        return waypoints
+    refined: List[Tuple[float, float]] = [waypoints[0]]
+    for i in range(len(waypoints) - 1):
+        start, end = waypoints[i], waypoints[i + 1]
+        sub = _fetch_tmap_pedestrian_data(start, end, search_option=search_option)
+        if sub:
+            sub_coords, _, _, _ = _coords_from_tmap_features(sub.get("features", []))
+            if len(sub_coords) >= 2:
+                for pt in sub_coords[1:]:
+                    _append_unique_coord(refined, pt[0], pt[1])
+                continue
+        # 구간 API 실패 시 직선을 넣지 않고 끝점만 연결(최후수단)
+        _append_unique_coord(refined, end[0], end[1])
+    return refined if len(refined) >= 2 else waypoints
+
+
+def _seolleung_sidewalk_route(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+) -> RouteCandidateRaw:
+    """선릉로 통학: Tmap 보행 경로만 사용. 희소 직선 폴백은 지도에 그리지 않는다."""
+    option = settings.tmap_pedestrian_search_option
+    to_academy = _segment_m(destination, _ACADEMY_PT) <= _segment_m(destination, _HOME_PT)
+    vias = list(_SEOLLEUNG_EAST_SIDEWALK_VIAS)
+    if not to_academy:
+        vias = list(reversed(vias))
+    pass_list = "_".join(f"{lng},{lat}" for lat, lng in vias)
+
+    def _as_sidewalk(route: RouteCandidateRaw, note: str) -> RouteCandidateRaw:
+        # 동측으로 좌표를 밀면 건물·차도로 이탈하므로 도로 스냅 결과 그대로 사용
+        route.coordinates = match_coords_to_roads(route.coordinates)
+        route.distance_m = route_length_m(route.coordinates) or route.distance_m
+        route.id = "route-seolleung-sidewalk"
+        route.label = "선릉로 큰길 (보행)"
+        route.main_road_distance_m = route.distance_m * 0.9
+        print(f"[경로] 선릉로 통학 — {note} (좌표 {len(route.coordinates)}개)")
+        return route
+
+    # 1) 동측 경유지로 Tmap 보행
+    via = _call_tmap(
+        origin,
+        destination,
+        pass_list=pass_list,
+        search_option=option,
+        route_suffix="seolleung-sidewalk",
+    )
+    if via and len(via.coordinates) >= 4:
+        return _as_sidewalk(via, "Tmap 경유 보행 경로")
+
+    # 2) 경유지 없이 일반 보행 (그래도 도로를 따름)
+    plain = _call_tmap(
+        origin,
+        destination,
+        search_option=option,
+        route_suffix="seolleung-main",
+    )
+    if plain and len(plain.coordinates) >= 4:
+        return _as_sidewalk(plain, "Tmap 일반 보행 경로")
+
+    # 3) 경유지 체인을 구간별 Tmap으로 채워 도로에 스냅 (직선 폴백 금지)
+    chain = [origin, *vias, destination]
+    dense = _force_densify_waypoints(chain, option)
+    if len(dense) >= 4:
+        dense = match_coords_to_roads(dense)
+        distance_m = route_length_m(dense)
+        print(f"[경로] 선릉로 통학 — 경유지 구간 densify ({len(dense)}점)")
+        return RouteCandidateRaw(
+            id="route-seolleung-sidewalk",
+            label="선릉로 큰길 (보행)",
+            coordinates=dense,
+            distance_m=distance_m,
+            duration_s=distance_m / WALK_SPEED_MPS,
+            source="TMAP_PEDESTRIAN_API",
+            navigation_steps=[],
+            main_road_distance_m=distance_m * 0.9,
+        )
+
+    # 4) 최후: 받은 Tmap 결과라도 반환 (희소 고정 직선은 반환하지 않음)
+    if via and via.coordinates:
+        return _as_sidewalk(via, "Tmap 경유(좌표 부족)")
+    if plain and plain.coordinates:
+        return _as_sidewalk(plain, "Tmap 일반(좌표 부족)")
+
+    # API 완전 실패 시에만 고정선 — densify 시도 후에도 실패하면 경고와 함께 반환
+    print("[경로] 선릉로 통학 — Tmap 전부 실패, 희소 폴백(지도 왜곡 가능)")
+    return _seolleung_sidewalk_fixed_route(origin, destination)
+
+
 def get_route_candidates(
     origin: Tuple[float, float],
     destination: Tuple[float, float],
@@ -1134,6 +1314,15 @@ def get_route_candidates(
     mode_label = "MOCK" if use_mock else "LIVE (Tmap)"
     print(f"\n[경로] === 경로 후보 계산 시작 ({mode_label}) ===")
     print(f"[경로] 출발 (lat,lng)=({origin[0]:.6f}, {origin[1]:.6f}) → 도착 ({destination[0]:.6f}, {destination[1]:.6f})")
+
+    # 개나리 ↔ 필수수학: 차도 중심선 대신 선릉로 동측 보도 경로를 우선
+    if (
+        not use_mock
+        and _is_seolleung_sidewalk_commute(origin, destination, origin_name, destination_name)
+    ):
+        print("[경로] 선릉로 통학 구간 — 보도(동측) 경유 경로 우선")
+        sidewalk = _seolleung_sidewalk_route(origin, destination)
+        return _finalize_candidates([sidewalk])
 
     if use_mock:
         print("[경로] MOCK 모드 — 합성 턴바이턴 안내 사용 (route-direct 등)")
