@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 
 from .. import db
+from ..config import settings
 from ..models import (
     DocumentIngestResult,
     DocumentPointConfirmRequest,
@@ -17,6 +20,50 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 ALLOWED_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".hwp", ".hwpx", ".md", ".txt"}
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+_SAFE_NAME_RE = re.compile(r"[^\w.\-()\[\]\uac00-\ud7a3 ]+", re.UNICODE)
+
+
+def _safe_filename(filename: str) -> str:
+    name = Path(filename or "").name.strip() or "document"
+    name = _SAFE_NAME_RE.sub("_", name).strip(" ._")
+    if not name:
+        name = "document"
+    # 경로 조작 방지
+    return Path(name).name
+
+
+def _save_upload(contents: bytes, filename: str) -> str:
+    settings.uploads_dir.mkdir(parents=True, exist_ok=True)
+    safe = _safe_filename(filename)
+    path = settings.uploads_dir / safe
+    path.write_bytes(contents)
+    return safe
+
+
+def _clear_uploads() -> None:
+    uploads = settings.uploads_dir
+    if not uploads.is_dir():
+        return
+    for path in uploads.iterdir():
+        if path.is_file():
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+
+def _resolve_upload(filename: str) -> Path:
+    safe = _safe_filename(filename)
+    base = settings.uploads_dir.resolve()
+    path = (settings.uploads_dir / safe).resolve()
+    if path != base and base not in path.parents:
+        raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
+    if not path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="원본 파일이 없습니다. 문서를 다시 올려 주세요.",
+        )
+    return path
 
 
 def _to_risk_point(row) -> DocumentRiskPoint:
@@ -63,8 +110,17 @@ async def ingest(
     if len(contents) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=400, detail="파일 크기는 15MB 이하여야 합니다.")
 
+    saved_name = _save_upload(contents, file.filename)
+
     try:
-        result = ingest_document(contents, file.filename, region_hint=(region_hint or "").strip())
+        # 이전 핀은 DELETE /api/documents 또는 클라이언트가 이미 비운 뒤 호출한다.
+        # 여러 파일을 연속 올릴 때 앞 문서 핀이 지워지지 않도록 replace_existing=False.
+        result = ingest_document(
+            contents,
+            saved_name,
+            region_hint=(region_hint or "").strip(),
+            replace_existing=False,
+        )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"문서 파싱에 실패했습니다: {exc}") from exc
 
@@ -99,8 +155,24 @@ def confirm_point(body: DocumentPointConfirmRequest) -> DocumentPointConfirmResu
     return DocumentPointConfirmResult(**result)
 
 
+@router.get("/files/{filename}")
+def get_document_file(filename: str) -> FileResponse:
+    """업로드해 둔 원본 문서를 연다 (안전 리포트에서 클릭)."""
+    path = _resolve_upload(filename)
+    return FileResponse(path, filename=path.name)
+
+
 @router.get("", response_model=list[DocumentRiskPoint])
 def list_risk_points() -> list[DocumentRiskPoint]:
     db.init_db()
     rows = db.fetch_all("doc_risk_points")
     return [_to_risk_point(row) for row in rows]
+
+
+@router.delete("")
+def clear_risk_points() -> dict:
+    """문서 재분석 전 기존 위험 표시와 업로드 원본을 지운다."""
+    db.init_db()
+    db.clear_table("doc_risk_points")
+    _clear_uploads()
+    return {"ok": True}

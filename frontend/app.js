@@ -120,70 +120,327 @@ function scoreColor(score) {
   return "#d64545";
 }
 
-function scoreExplanation(candidate, routeData = null) {
-  const features = candidate.features || {};
-  const safetyFacilities =
-    (features.safety_facility_cctv_count || 0) +
-    (features.safety_facility_streetlight_count || 0) +
-    (features.safety_bell_count || 0) +
-    (features.emergency112_count || 0);
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** 업로드 원본 문서 URL (파일명 클릭 시 열기) */
+function documentFileUrl(filename) {
+  const name = String(filename || "").trim();
+  if (!name) return "";
+  return `${API_BASE}/api/documents/files/${encodeURIComponent(name)}`;
+}
+
+function documentLinkHtml(filename, label = "") {
+  const name = String(filename || "").trim();
+  const text = escapeHtml(label || name || "업로드 문서");
+  if (!name) return text;
+  const href = escapeHtml(documentFileUrl(name));
+  return `<a class="safety-doc-link" href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+}
+
+/** 데이터에 있는 사실만으로 부모용 설명 구성 (Solar 없음, 단정·과장 금지) */
+function buildGroundedWhySummary(candidate, routeData = null) {
+  const features = candidate?.features || {};
   const riskDocs = (features.matched_documents || []).filter((d) => d.is_risk);
-  const safeDocs = (features.matched_documents || []).filter((d) => !d.is_risk);
+  const km = ((candidate.distance_m || 0) / 1000).toFixed(2);
+  const mins = Math.max(1, Math.round((candidate.duration_s || 0) / 60));
   const isRecommended = routeData && candidate.id === routeData.recommended_id;
-  const parts = [];
+  const isDetour =
+    String(candidate.id || "").includes("doc-avoid") ||
+    String(candidate.id || "").includes("hotspot-avoid") ||
+    String(candidate.id || "").includes("avoid-");
 
-  if (isRecommended) {
-    parts.push(`이 길은 종합 안전점수 ${candidate.safety_score}점으로 가장 안전한 추천 경로예요.`);
-  } else {
-    parts.push(`이 길은 종합 안전점수 ${candidate.safety_score}점이에요.`);
-  }
+  const ansimCctv = features.safety_facility_cctv_count || 0;
+  const zoneCctv = features.cctv_count || 0;
+  const totalCctv = ansimCctv + zoneCctv;
+  const ansimLight = features.safety_facility_streetlight_count || 0;
+  const streetLight = features.streetlight_count || 0;
+  const zonePct = features.child_zone_coverage_pct || 0;
+  const guardian = features.guardian_house_count || 0;
+  const hotspot = features.accident_hotspot_count || 0;
+  const cameras = features.speed_camera_count || 0;
+  const bells = features.safety_bell_count || 0;
+  const docCount = features.doc_risk_count || riskDocs.length || 0;
 
-  if (candidate.id.includes("doc-avoid")) {
-    parts.push("문서에 나온 위험·공사 구간을 피해 가도록 만든 우회 경로예요.");
-  }
-
-  parts.push(
-    `안심시설 ${safetyFacilities}곳, 보호구역 통과 ${features.child_zone_coverage_pct ?? 0}%, 사고다발 ${features.accident_hotspot_count || 0}곳을 반영했어요.`
-  );
-
-  if (riskDocs.length) {
-    parts.push(
-      `문서 주의: ${riskDocs
-        .slice(0, 2)
-        .map((d) => d.risk_type || "위험구간")
-        .join(", ")}.`
+  // 부모에게 "그래서 뭐가 좋은지"가 보이게 — 수치는 반드시 포함
+  const goodPoints = [];
+  if (zonePct > 0) {
+    goodPoints.push(
+      `스쿨존(어린이보호구역)을 ${zonePct}% 지납니다. 이 구간은 차량 속도가 제한됩니다.`
     );
-  } else if (safeDocs.length) {
-    parts.push(`문서상 안전조치가 확인된 구간이 있어요.`);
+  }
+  if (totalCctv > 0) {
+    goodPoints.push(
+      `CCTV가 ${totalCctv}대 있습니다` +
+        (ansimCctv > 0 || zoneCctv > 0
+          ? ` (안심귀갓길 ${ansimCctv}대, 보호구역 ${zoneCctv}대). 아이 주변을 지켜보는 시설이 있습니다.`
+          : `.`)
+    );
+  }
+  if (ansimLight + streetLight > 0) {
+    goodPoints.push(
+      `보안등이 ${ansimLight + streetLight}개입니다` +
+        (ansimLight > 0 ? ` (안심귀갓길 ${ansimLight}개 포함). 어두운 시간대에 도움이 됩니다.` : `.`)
+    );
+  }
+  if (guardian > 0) {
+    goodPoints.push(
+      `아동안전지킴이집이 ${guardian}곳 있습니다. 아이가 위급할 때 가까운 가게·시설에 도움을 요청하도록 미리 알려 줄 수 있습니다.`
+    );
+  }
+  if (cameras > 0) {
+    goodPoints.push(`무인 단속카메라가 ${cameras}곳 있어 과속 단속이 이뤄지는 구간이 있습니다.`);
+  }
+  if (bells > 0) {
+    goodPoints.push(`안심벨이 ${bells}개 있습니다. 아이가 혼자 다닐 때 쓸 수 있다고 알려 두면 좋습니다.`);
   }
 
-  if (candidate.safety_score >= 70) {
-    parts.push("전반적으로 안심하고 걸을 수 있는 편이에요.");
-  } else if ((features.accident_hotspot_count || 0) > 0 || riskDocs.length) {
-    parts.push("주의 구간이 있으니 다른 경로와 비교해 보세요.");
+  const watchPoints = [];
+  if (hotspot > 0) {
+    watchPoints.push(
+      `사고다발지역이 ${hotspot}곳 경로 근처에 있습니다. 아이에게 그 구간에서는 뛰지 말고, 횡단보도에서 좌우를 꼭 보라고 말해 주세요.`
+    );
+  }
+  if (docCount > 0) {
+    if (riskDocs.length) {
+      const byDoc = new Map();
+      for (const d of riskDocs) {
+        const key = d.source_doc || "업로드 문서";
+        if (!byDoc.has(key)) byDoc.set(key, d);
+      }
+      for (const [src, first] of byDoc) {
+        const kind = first.risk_type || "주의 구간";
+        const link = documentLinkHtml(src);
+        watchPoints.push({
+          text: `올린 문서(${src})에 「${kind}」이 있습니다. 지도의 빨간 구간을 피한 우회 경로로 바꿔 아이에게 보내 주세요.`,
+          html:
+            `올린 문서(${link})에 「${escapeHtml(kind)}」이 있습니다. ` +
+            `지도의 빨간 구간을 피한 우회 경로로 바꿔 아이에게 보내 주세요.`,
+        });
+      }
+    } else {
+      watchPoints.push(
+        `문서에서 찾은 위험 지점이 ${docCount}곳 있습니다. 지도 표시를 확인한 뒤, 안전한 후보로 길을 정해 주세요.`
+      );
+    }
+  }
+  if (routeData?.weather?.is_rain) {
+    watchPoints.push(
+      `지금 목적지 날씨는 ${routeData.weather.description || "비"}입니다. 바닥이 미끄러울 수 있으니 아이에게 천천히 가라고 말해 주세요.`
+    );
   }
 
-  return parts.join(" ");
+  // 첫 문단: "왜 이 길인지" — 부모가 아이 혼자 갈 길을 고를 때
+  const title = isRecommended ? "추천하는 이유" : isDetour ? "우회 경로인 이유" : "이 경로 요약";
+  let paragraphs = [];
+
+  if (isDetour && (hotspot > 0 || docCount > 0)) {
+    paragraphs.push(
+      `위험·공사 구간을 피해 아이가 혼자 가도록 잡은 길입니다. 거리는 약 ${km}km, ${mins}분 정도입니다. (안전점수 ${candidate.safety_score}점)`
+    );
+  } else if (goodPoints.length >= 2) {
+    paragraphs.push(
+      `아이가 혼자 다닐 때 주변 시설이 더 많은 쪽을 골랐습니다. 약 ${km}km · ${mins}분, 안전점수 ${candidate.safety_score}점입니다.`
+    );
+  } else if (goodPoints.length === 1) {
+    paragraphs.push(
+      `아이가 혼자 걸을 때 약 ${km}km · ${mins}분 걸리는 길입니다. (안전점수 ${candidate.safety_score}점) 아래 ‘도움이 되는 점’을 확인해 주세요.`
+    );
+  } else {
+    paragraphs.push(
+      `약 ${km}km · ${mins}분, 안전점수 ${candidate.safety_score}점입니다. 시설 수치가 많지 않으니 ‘확인할 점’을 보고 길을 정해 주세요.`
+    );
+  }
+
+  if (watchPoints.length && goodPoints.length) {
+    paragraphs.push(
+      `좋은 점이 있어도 주의할 구간이 있습니다. 아래를 읽고, 출발 전에 아이에게 어디에 조심하라고 말해 주세요.`
+    );
+  } else if (watchPoints.length) {
+    paragraphs.push(`아래 ‘확인할 점’을 본 뒤 길을 정하고, 아이에게 미리 알려 주세요.`);
+  } else if (goodPoints.length) {
+    paragraphs.push(
+      `특별히 표시된 큰 위험은 거의 없습니다. 그래도 아이에게 횡단보도에서는 좌우를 확인하라고 말해 주세요.`
+    );
+  }
+
+  return { title, paragraphs, goodPoints, watchPoints };
+}
+
+/** 부모용 안전 리포트 모델 */
+function buildParentSafetyModel(candidate, routeData = null) {
+  const features = candidate?.features || {};
+  const weather = routeData?.weather || null;
+  const riskDocs = (features.matched_documents || []).filter((d) => d.is_risk);
+  const km = ((candidate.distance_m || 0) / 1000).toFixed(2);
+  const mins = Math.max(1, Math.round((candidate.duration_s || 0) / 60));
+  const isRecommended = routeData && candidate.id === routeData.recommended_id;
+  const isDetour =
+    String(candidate.id || "").includes("doc-avoid") ||
+    String(candidate.id || "").includes("hotspot-avoid") ||
+    String(candidate.id || "").includes("avoid-");
+
+  const why = buildGroundedWhySummary(candidate, routeData);
+
+  const safeRows = [
+    { label: "안심귀갓길 CCTV", value: `${features.safety_facility_cctv_count || 0}대` },
+    { label: "어린이보호구역 CCTV", value: `${features.cctv_count || 0}대` },
+    { label: "안심귀갓길 보안등", value: `${features.safety_facility_streetlight_count || 0}개` },
+    { label: "일반 보안등", value: `${features.streetlight_count || 0}개` },
+    { label: "안심벨", value: `${features.safety_bell_count || 0}개` },
+    { label: "112 신고장치", value: `${features.emergency112_count || 0}개` },
+    { label: "어린이보호구역 통과", value: `${features.child_zone_coverage_pct ?? 0}%` },
+    { label: "아동안전지킴이집", value: `${features.guardian_house_count || 0}곳` },
+    { label: "무인 단속카메라", value: `${features.speed_camera_count || 0}곳` },
+  ];
+
+  const cautionRows = [
+    { label: "사고다발지역", value: `${features.accident_hotspot_count || 0}곳` },
+    { label: "문서 위험 지점", value: `${features.doc_risk_count || riskDocs.length || 0}곳` },
+    { label: "범죄위험 지수", value: `${features.crime_risk_proxy ?? "-"}` },
+  ];
+  if (riskDocs.length) {
+    const byDoc = new Map();
+    for (const d of riskDocs) {
+      const key = d.source_doc || "업로드 문서";
+      if (!byDoc.has(key)) byDoc.set(key, d);
+    }
+    for (const [src, first] of byDoc) {
+      const kind = first.risk_type || "주의";
+      cautionRows.push({
+        label: "문서",
+        value: `${kind} · ${src}`,
+        html: `${escapeHtml(kind)} · ${documentLinkHtml(src)}`,
+      });
+    }
+  }
+  if (weather?.is_rain) {
+    cautionRows.push({ label: "날씨", value: weather.description || "비" });
+  }
+
+  let routeTag = "선택 경로";
+  if (isRecommended) routeTag = "추천 경로";
+  else if (isDetour) routeTag = "우회 경로";
+
+  return {
+    routeTag,
+    score: candidate.safety_score,
+    distance: `${km}km`,
+    duration: `${mins}분`,
+    stars: candidate.star_rating || 0,
+    whyTitle: why.title,
+    paragraphs: why.paragraphs,
+    whySummary: why.paragraphs.join(" "),
+    goodPoints: why.goodPoints,
+    watchPoints: why.watchPoints,
+    safeRows,
+    cautionRows,
+  };
+}
+
+function renderSafetyRows(rows) {
+  return rows
+    .map(
+      (row) => `
+      <tr>
+        <th scope="row">${escapeHtml(row.label)}</th>
+        <td>${row.html || escapeHtml(row.value)}</td>
+      </tr>`
+    )
+    .join("");
+}
+
+function renderBulletList(items, emptyText) {
+  if (!items?.length) {
+    return `<p class="safety-empty">${escapeHtml(emptyText)}</p>`;
+  }
+  return `<ul class="safety-bullets">${items
+    .map((t) => {
+      if (t && typeof t === "object" && t.html) {
+        return `<li>${t.html}</li>`;
+      }
+      return `<li>${escapeHtml(t)}</li>`;
+    })
+    .join("")}</ul>`;
+}
+
+function renderParentSafetyHtml(model) {
+  if (!model) return "";
+  const paras = (model.paragraphs || [model.whySummary])
+    .filter(Boolean)
+    .map((p) => `<p class="safety-lead">${escapeHtml(p)}</p>`)
+    .join("");
+
+  return `
+    <div class="safety-brief">
+      <header class="safety-head">
+        <p class="safety-kicker">${escapeHtml(model.routeTag)}</p>
+        <h4 class="safety-title">${escapeHtml(model.whyTitle || "왜 이 길인가요?")}</h4>
+        <p class="safety-meta">
+          안전점수 <strong>${escapeHtml(model.score)}</strong>점
+          <span aria-hidden="true">·</span> ${escapeHtml(model.distance)}
+          <span aria-hidden="true">·</span> 약 ${escapeHtml(model.duration)}
+        </p>
+      </header>
+
+      <div class="safety-lead-block">${paras}</div>
+
+      <section class="safety-block" aria-labelledby="safety-good-label">
+        <h5 id="safety-good-label" class="safety-block-title">도움이 되는 점</h5>
+        ${renderBulletList(model.goodPoints, "표시할 안전 시설 수치가 거의 없습니다.")}
+      </section>
+
+      <section class="safety-block is-caution" aria-labelledby="safety-watch-label">
+        <h5 id="safety-watch-label" class="safety-block-title">확인할 점 (아이에게 미리 말해 줄 것)</h5>
+        ${renderBulletList(
+          model.watchPoints,
+          "특별히 표시된 주의 구간은 없습니다. 아이에게 횡단보도에서는 좌우를 확인하라고 말해 주세요."
+        )}
+      </section>
+
+      <details class="safety-more">
+        <summary>시설·주의 수치 표</summary>
+        <div class="safety-tables">
+          <table class="safety-table">
+            <caption>경로 주변 안전 시설</caption>
+            <tbody>${renderSafetyRows(model.safeRows)}</tbody>
+          </table>
+          <table class="safety-table">
+            <caption>주의 수치</caption>
+            <tbody>${renderSafetyRows(model.cautionRows)}</tbody>
+          </table>
+        </div>
+      </details>
+    </div>`;
+}
+
+function scoreExplanation(candidate, routeData = null) {
+  const why = buildGroundedWhySummary(candidate, routeData);
+  return why.paragraphs.join(" ");
 }
 
 function buildSelectedRouteSafetyText(candidate, routeData) {
   if (!candidate) return "";
-  if (candidate.id === routeData.recommended_id && routeData.parent_report) {
-    return routeData.parent_report;
-  }
-  const features = candidate.features || {};
-  const docs = (features.matched_documents || [])
-    .slice(0, 3)
-    .map((d) => `- ${d.is_risk ? "주의" : "양호"} ${d.risk_type} (${d.source_doc})`)
-    .join("\n");
+  const model = buildParentSafetyModel(candidate, routeData);
   return [
-    scoreExplanation(candidate, routeData),
+    `${model.whyTitle} (${model.routeTag})`,
+    `안전 ${model.score}점 · ${model.distance} · ${model.duration}`,
     "",
-    `거리 ${(candidate.distance_m / 1000).toFixed(2)}km · 약 ${Math.round(candidate.duration_s / 60)}분 · 안전등급 ${"⭐".repeat(candidate.star_rating || 0)}`,
-    docs ? `\n문서 근거\n${docs}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+    ...model.paragraphs,
+    "",
+    "도움이 되는 점",
+    ...(model.goodPoints.length ? model.goodPoints.map((g) => `- ${g}`) : ["- 없음"]),
+    "",
+    "확인할 점",
+    ...(model.watchPoints.length
+      ? model.watchPoints.map((g) => `- ${typeof g === "object" ? g.text || "" : g}`)
+      : ["- 없음"]),
+  ].join("\n");
 }
 
 function routeDisplayName(routeId) {
@@ -747,26 +1004,15 @@ function renderParentReport(routeData) {
   const el = document.getElementById("parent-report");
   if (!el) return;
   const selected = activeRoute(routeData);
-  // 설명1: 기존(선택 경로별 설명 또는 Solar 리포트)
-  const text1 = selected
-    ? buildSelectedRouteSafetyText(selected, routeData)
-    : routeData && routeData.parent_report;
-  // 설명2: 좋은점·우회 2그룹만 반영 (비교용)
-  const text2 = routeData && routeData.parent_report_v2;
-  if (!text1 && !text2) {
-    el.textContent = "경로를 찾으면 시간대 맞춤 안전 리포트가 표시됩니다.";
-    el.classList.add("placeholder");
+  if (!selected) {
+    el.className = "ai-text placeholder";
+    el.textContent =
+      "경로를 고르면, 아이가 혼자 가도 괜찮은지와 미리 말해 줄 주의점을 여기에 보여 줍니다.";
     return;
   }
-  const parts = [];
-  if (text1) {
-    parts.push(`【설명1 (기존)】\n${text1}`);
-  }
-  if (text2) {
-    parts.push(`【설명2 (좋은점·우회 2그룹 반영)】\n${text2}`);
-  }
-  el.textContent = parts.join("\n\n──────────────\n\n");
-  el.classList.remove("placeholder");
+  const model = buildParentSafetyModel(selected, routeData);
+  el.className = "ai-text safety-report";
+  el.innerHTML = renderParentSafetyHtml(model);
 }
 
 function startLiveClock() {
@@ -784,10 +1030,15 @@ function renderCandidates(data) {
       const isActive = c.id === activeRouteId(data);
       const routeName = isRecommended ? "추천 경로" : routeDisplayName(c.id);
       const docsHtml = (c.features.matched_documents || [])
-        .map(
-          (d) =>
-            `<div class="doc-evidence">${d.is_risk ? "⚠️" : "✅"} <strong>${d.risk_type}</strong> (${d.source_doc}, 경로에서 ${Math.round(d.distance_m)}m) — "${d.snippet}"</div>`
-        )
+        .map((d) => {
+          const src = d.source_doc || "";
+          const srcHtml = src ? documentLinkHtml(src) : escapeHtml("문서");
+          return `<div class="doc-evidence">${d.is_risk ? "⚠️" : "✅"} <strong>${escapeHtml(
+            d.risk_type
+          )}</strong> (${srcHtml}, 경로에서 ${Math.round(d.distance_m)}m) — "${escapeHtml(
+            d.snippet
+          )}"</div>`;
+        })
         .join("");
       const stars = "⭐".repeat(c.star_rating) + "☆".repeat(3 - c.star_rating);
       const stampsHtml = (c.stamps || [])
@@ -796,7 +1047,6 @@ function renderCandidates(data) {
             `<span class="stamp-chip" title="${s.description}">${s.emoji} ${s.label}${s.count > 1 ? ` x${s.count}` : ""}</span>`
         )
         .join("");
-      const explain = scoreExplanation(c, data);
       return `
         <div class="candidate-card ${isRecommended ? "recommended" : ""} ${isActive ? "selected" : ""}" data-route-id="${c.id}" role="button" tabindex="0" aria-pressed="${isActive}">
           <h4>
@@ -810,26 +1060,11 @@ function renderCandidates(data) {
             <span>예상 소요: ${Math.round(c.duration_s / 60)}분</span>
           </div>
           ${stampsHtml ? `<div class="stamps-row">${stampsHtml}</div>` : ""}
-          <details class="candidate-details">
-            <summary>상세보기 · 안전 설명</summary>
-            <div class="safety-explain-block">
-              <p class="safety-explain-label">안전 설명</p>
-              <p class="score-explanation">💬 ${explain}</p>
-            </div>
-            <div class="candidate-meta detail-meta">
-              <span>안심귀갓길 CCTV: ${c.features.safety_facility_cctv_count || 0}대</span>
-              <span>안심귀갓길 보안등: ${c.features.safety_facility_streetlight_count || 0}개</span>
-              <span>안심벨: ${c.features.safety_bell_count || 0} · 112: ${c.features.emergency112_count || 0}</span>
-              <span>보호구역 통과율: ${c.features.child_zone_coverage_pct}%</span>
-              <span>사고다발지역: ${c.features.accident_hotspot_count}곳</span>
-              <span>범죄위험 근사지수: ${c.features.crime_risk_proxy}</span>
-              <span>안전지킴이집: ${c.features.guardian_house_count}곳</span>
-              <span>보안등: 1km당 ${c.features.streetlight_density}개</span>
-              <span>단속카메라: ${c.features.speed_camera_count}곳</span>
-              <span>문서 위험 지점: ${c.features.doc_risk_count || 0}곳</span>
-            </div>
-            ${docsHtml}
-          </details>
+          ${
+            docsHtml
+              ? `<details class="candidate-details"><summary>문서 근거</summary>${docsHtml}</details>`
+              : `<p class="candidate-report-hint">선택하면 아래 「안전 리포트」에 근거가 표시됩니다.</p>`
+          }
         </div>`;
     })
     .join("");
@@ -2341,6 +2576,16 @@ async function confirmDocumentQueue() {
     hideDocReviewPanel();
     hideDocPlacedPanel();
 
+    // 이전 문서 위험(직선으로 이어진 옛 점)을 지우고 다시 올린다
+    try {
+      await fetch(`${API_BASE}/api/documents`, {
+        method: "DELETE",
+        headers: { ...authHeaders() },
+      });
+    } catch (err) {
+      console.warn("이전 문서 위험 삭제 실패(계속 진행)", err);
+    }
+
     for (let i = 0; i < queue.length; i += 1) {
       const item = queue[i];
       setDocUploadStatus(
@@ -2467,7 +2712,9 @@ function setMode(mode) {
     : "안전 점수와 주변 시설을 비교해 가장 안전한 길을 골랐어요.";
   document.getElementById("guide-label").textContent = kidMode
     ? "오늘의 추천 길"
-    : "안전 설명";
+    : "안전 리포트";
+  const parentReportTitle = document.querySelector(".parent-report-card h3");
+  if (parentReportTitle) parentReportTitle.textContent = "안전 리포트";
   document.getElementById("results-label").textContent = kidMode
     ? "오늘의 추천 길"
     : "안전한 길 비교";

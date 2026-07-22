@@ -140,55 +140,85 @@ def _mock_parent_report(
     weather: Optional[dict[str, Any]] = None,
     time_context: Optional[dict[str, Any]] = None,
 ) -> str:
+    """부모용 안전 설명 — 경로 수치를 표처럼 정리 (AI 문장 없음)."""
     f = candidate.features
-    tc = time_context or {}
-    slower = [c for c in other_candidates if c.distance_m < candidate.distance_m]
-    time_note = ""
-    if slower:
-        fastest = min(other_candidates, key=lambda c: c.distance_m)
-        delta_min = round((candidate.duration_s - fastest.duration_s) / 60, 1)
-        if delta_min > 0:
-            time_note = f"최단 경로보다 약 {delta_min}분 더 걸리지만, "
-    doc_note = ""
-    safe_docs = [d for d in f.matched_documents if not d.is_risk]
     risk_docs = [d for d in f.matched_documents if d.is_risk]
-    if safe_docs:
-        doc_note += f" 실제로 '{safe_docs[0].source_doc}'에 따르면 이 구간은 안전조치가 완료된 곳입니다."
-    if risk_docs:
-        doc_note += f" 다만 '{risk_docs[0].source_doc}'에서 '{risk_docs[0].risk_type}'이 지적된 구간이 있어 해당 지점은 주의가 필요합니다."
-    extra_note = ""
+    km = f.distance_km if f.distance_km else round(candidate.distance_m / 1000, 2)
+    mins = max(1, round(candidate.duration_s / 60))
+
+    plus: list[str] = []
+    if f.child_zone_coverage_pct > 0:
+        plus.append(f"어린이보호구역 통과 {f.child_zone_coverage_pct}%")
+    total_cctv = f.safety_facility_cctv_count + f.cctv_count
+    if total_cctv > 0:
+        parts = []
+        if f.safety_facility_cctv_count > 0:
+            parts.append(f"안심귀갓길 {f.safety_facility_cctv_count}")
+        if f.cctv_count > 0:
+            parts.append(f"보호구역 {f.cctv_count}")
+        plus.append(f"CCTV {total_cctv}대({', '.join(parts)})")
+    if f.safety_facility_streetlight_count > 0:
+        plus.append(f"안심귀갓길 보안등 {f.safety_facility_streetlight_count}개")
     if f.guardian_house_count > 0:
-        extra_note += f" 아동안전지킴이집도 {f.guardian_house_count}곳 있어 위험 시 대피할 수 있습니다."
+        plus.append(f"아동안전지킴이집 {f.guardian_house_count}곳")
     if f.speed_camera_count > 0:
-        extra_note += f" 무인단속카메라({f.speed_camera_count}곳)로 차량 감속도 유도됩니다."
-    stars = "⭐" * candidate.star_rating
-    period_note = tc.get("recommendation_message", "")
-    scoring_ctx = tc.get("scoring_context", "시간대 기준 안전도")
-    eta = tc.get("eta_message", "")
-    current = tc.get("current_time", "")
-    night_tip = ""
-    if tc.get("is_night"):
-        night_tip = (
-            f" 현재 {current}({scoring_ctx})이므로 보안등 {f.safety_facility_streetlight_count}개·"
-            f"안심귀갓길 CCTV {f.safety_facility_cctv_count}대·안심벨 {f.safety_bell_count}개를 "
-            f"우선 반영해 추천했습니다."
+        plus.append(f"무인 단속카메라 {f.speed_camera_count}곳")
+    if f.safety_bell_count > 0:
+        plus.append(f"안심벨 {f.safety_bell_count}개")
+
+    caution: list[str] = []
+    if f.accident_hotspot_count > 0:
+        caution.append(f"사고다발지역 {f.accident_hotspot_count}곳")
+    if f.doc_risk_count > 0 or risk_docs:
+        if risk_docs:
+            first = risk_docs[0]
+            caution.append(
+                f"문서 {first.source_doc or '업로드 문서'} · {first.risk_type or '위험 구간'}"
+            )
+        else:
+            caution.append(f"문서 위험 지점 {f.doc_risk_count}곳")
+
+    why_bits = [
+        "추천 경로",
+        f"안전 {candidate.safety_score}점",
+        f"{km}km",
+        f"{mins}분",
+    ]
+    if plus:
+        why_bits.append(f"반영 근거: {', '.join(plus[:3])}")
+    if caution:
+        why_bits.append(f"주의 근거: {', '.join(caution[:2])}")
+    if not plus and not caution:
+        why_bits.append("표시할 추가 시설·주의 근거 없음")
+    why_line = " · ".join(why_bits)
+
+    lines = [
+        why_line,
+        "",
+        "경로 주변 안전 시설",
+        f"- 안심귀갓길 CCTV: {f.safety_facility_cctv_count}대",
+        f"- 어린이보호구역 CCTV: {f.cctv_count}대",
+        f"- 안심귀갓길 보안등: {f.safety_facility_streetlight_count}개",
+        f"- 일반 보안등: {f.streetlight_count}개",
+        f"- 안심벨: {f.safety_bell_count}개",
+        f"- 112 신고장치: {f.emergency112_count}개",
+        f"- 어린이보호구역 통과: {f.child_zone_coverage_pct}%",
+        f"- 아동안전지킴이집: {f.guardian_house_count}곳",
+        f"- 무인 단속카메라: {f.speed_camera_count}곳",
+        "",
+        "주의할 점",
+        f"- 사고다발지역: {f.accident_hotspot_count}곳",
+        f"- 문서 위험 지점: {f.doc_risk_count}곳",
+        f"- 범죄위험 지수: {f.crime_risk_proxy} (낮을수록 안전)",
+    ]
+    if risk_docs:
+        first = risk_docs[0]
+        lines.append(
+            f"- 문서 내용: {first.risk_type or '주의 구간'} · {first.source_doc or '업로드 문서'}"
         )
-    else:
-        night_tip = (
-            f" 현재 {current}({scoring_ctx})이므로 사고다발지역 {f.accident_hotspot_count}곳 회피와 "
-            f"교통 안전(단속카메라 {f.speed_camera_count}곳)을 우선 반영했습니다."
-        )
-    return (
-        f"### ✅ 한줄 결론\n{period_note}. {time_note}CCTV·어린이보호구역이 잘 갖춰져 다른 후보보다 안전한 추천 경로입니다.\n\n"
-        f"### 📊 안전 근거 ({scoring_ctx})\n"
-        f"CCTV {f.cctv_count}개 + 안심귀갓길 CCTV {f.safety_facility_cctv_count}대, "
-        f"보안등 {f.streetlight_count}개 + 안심귀갓길 보안등 {f.safety_facility_streetlight_count}개, "
-        f"안심벨 {f.safety_bell_count}개, 어린이보호구역 통과 {f.child_zone_coverage_pct}%, "
-        f"안전지킴이집 {f.guardian_house_count}곳.\n\n"
-        f"### ⚠️ 주의 구간\n사고다발지역 {f.accident_hotspot_count}곳, 범죄위험 근사지수 {f.crime_risk_proxy}.{doc_note}\n\n"
-        f"### 🕒 시간·날씨 팁\n{eta}.{night_tip}{extra_note}{_weather_parent_note(weather)} "
-        f"(종합 안전점수 {candidate.safety_score}/100, 안전등급 {stars})"
-    )
+    if weather and weather.get("is_rain"):
+        lines.append(f"- 날씨: {weather.get('description') or '비'} · 미끄럼 주의")
+    return "\n".join(lines)
 
 
 def _parent_report_v2_two_groups(
@@ -197,62 +227,8 @@ def _parent_report_v2_two_groups(
     weather: Optional[dict[str, Any]] = None,
     time_context: Optional[dict[str, Any]] = None,
 ) -> str:
-    """비교용 설명2: 좋은 점 4개 + 우회할 곳 2개만 사용."""
-    f = candidate.features
-    tc = time_context or {}
-    child_zone_cctv = f.cctv_count  # 어린이보호구역 CCTV (보호구역 매칭 기반)
-    good_ansim_cctv = f.safety_facility_cctv_count
-    good_ansim_light = f.safety_facility_streetlight_count
-    good_guardian = f.guardian_house_count
-    avoid_hotspot = f.accident_hotspot_count
-    avoid_doc = f.doc_risk_count
-
-    good_total = good_ansim_cctv + good_ansim_light + child_zone_cctv + good_guardian
-    avoid_total = avoid_hotspot + avoid_doc
-
-    risk_docs = [d for d in f.matched_documents if d.is_risk]
-    doc_detail = ""
-    if risk_docs:
-        first = risk_docs[0]
-        doc_detail = (
-            f" 문서 '{first.source_doc}'에서 '{first.risk_type}'이(가) "
-            f"지적된 지점이 경로 근처 {first.distance_m:.0f}m에 있습니다."
-        )
-
-    slower = []
-    if other_candidates:
-        slower = [c for c in other_candidates if c.distance_m < candidate.distance_m]
-    time_note = ""
-    if slower:
-        fastest = min(other_candidates, key=lambda c: c.distance_m)
-        delta_min = round((candidate.duration_s - fastest.duration_s) / 60, 1)
-        if delta_min > 0:
-            time_note = f"최단 경로보다 약 {delta_min}분 더 걸릴 수 있지만, "
-
-    if avoid_total == 0 and good_total > 0:
-        verdict = f"{time_note}좋은 안전시설이 많고 우회할 위험 지점이 거의 없어 추천합니다."
-    elif avoid_total > 0 and good_total > avoid_total:
-        verdict = f"{time_note}위험 지점은 있으나 주변 안전시설이 더 많아 상대적으로 안전한 길입니다."
-    elif avoid_total > good_total:
-        verdict = f"{time_note}우회가 필요한 위험 지점이 있어 주의가 필요합니다."
-    else:
-        verdict = f"{time_note}좋은 점과 우회할 곳을 함께 보고 고른 경로입니다."
-
-    period = tc.get("recommendation_message") or "시간대 맞춤 추천"
-    return (
-        f"### ✅ 한줄 결론\n{period}. {verdict}\n\n"
-        f"### 👍 좋은 점 (가점·선호)\n"
-        f"- 안심귀갓길 CCTV: {good_ansim_cctv}대\n"
-        f"- 안심귀갓길 보안등: {good_ansim_light}개\n"
-        f"- 어린이보호구역 CCTV: {child_zone_cctv}대\n"
-        f"- 아동안전지킴이집: {good_guardian}곳\n\n"
-        f"### ⛔ 우회할 곳 (감점·회피)\n"
-        f"- 교통사고다발지역: {avoid_hotspot}곳\n"
-        f"- 문서 기반 위험지역: {avoid_doc}곳.{doc_detail}\n\n"
-        f"### 📌 참고\n"
-        f"이 설명은 위 6가지만 봅니다. (기존 설명의 범죄지수·단속카메라 등은 넣지 않음)"
-        f"{_weather_parent_note(weather)}"
-    )
+    """하위 호환: 설명2도 동일 템플릿."""
+    return _mock_parent_report(candidate, other_candidates or [], weather, time_context)
 
 
 def _mock_kid_report(
@@ -292,12 +268,13 @@ def generate_reports(
     weather: Optional[dict[str, Any]] = None,
     time_context: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    # 설명2는 항상 2그룹 템플릿 (비교용). 기존 설명1은 삭제하지 않음.
-    parent_v2 = _parent_report_v2_two_groups(candidate, other_candidates, weather, time_context)
+    # 부모용은 템플릿만 사용 (AI 장문 제거). 아이용만 Solar 가능.
+    parent_report = _mock_parent_report(candidate, other_candidates, weather, time_context)
+    parent_v2 = parent_report
 
     if settings.upstage_mock:
         return {
-            "parent_report": _mock_parent_report(candidate, other_candidates, weather, time_context),
+            "parent_report": parent_report,
             "parent_report_v2": parent_v2,
             "kid_report": _mock_kid_report(candidate, audience_age, weather, time_context),
             "used_mock": True,
@@ -305,7 +282,6 @@ def generate_reports(
 
     prompts = _build_messages(candidate, other_candidates, audience_age, weather, time_context)
     try:
-        parent_report = _call_solar(prompts["parent_system"], prompts["shared_facts"], max_tokens=1100)
         kid_report = _call_solar(prompts["kid_system"], prompts["shared_facts"], max_tokens=700)
         return {
             "parent_report": parent_report,
@@ -314,11 +290,10 @@ def generate_reports(
             "used_mock": False,
         }
     except Exception as exc:  # 데모 안정성을 위해 API 실패 시 MOCK으로 폴백
-        fallback = {
-            "parent_report": _mock_parent_report(candidate, other_candidates, weather, time_context)
-            + f"\n\n(Solar 호출 실패로 템플릿 대체: {exc})",
+        return {
+            "parent_report": parent_report,
             "parent_report_v2": parent_v2,
             "kid_report": _mock_kid_report(candidate, audience_age, weather, time_context),
             "used_mock": True,
+            "fallback_note": str(exc),
         }
-        return fallback
