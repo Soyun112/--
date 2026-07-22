@@ -65,6 +65,7 @@ const state = {
   tmapReady: false,
   tmap: null,
   tmapOverlays: [],
+  lastMapFitKey: null,
   infoWindow: null,
   mode: "parent",
   selectedRouteId: null,
@@ -2031,7 +2032,28 @@ function clearTmapOverlays() {
   }
 }
 
-function renderTmapRoutes(routeData, publicData) {
+/** 경로(선택 후보·기하)가 바뀌었을 때만 fitBounds 하도록 지문. */
+function mapFitKey(routeData) {
+  const active = activeRoute(routeData);
+  if (!active?.coordinates?.length) return "";
+  const coords = active.coordinates;
+  const first = coords[0];
+  const mid = coords[Math.floor(coords.length / 2)];
+  const last = coords[coords.length - 1];
+  return [
+    active.id,
+    coords.length,
+    Math.round(Number(active.distance_m) || 0),
+    Number(first.lat).toFixed(5),
+    Number(first.lng).toFixed(5),
+    Number(mid.lat).toFixed(5),
+    Number(mid.lng).toFixed(5),
+    Number(last.lat).toFixed(5),
+    Number(last.lng).toFixed(5),
+  ].join("|");
+}
+
+function renderTmapRoutes(routeData, publicData, { fitToRoute = true } = {}) {
   if (!state.tmap) return;
   clearTmapOverlays();
   const bounds = new Tmapv2.LatLngBounds();
@@ -2155,17 +2177,20 @@ function renderTmapRoutes(routeData, publicData) {
   waypointMarker(routeData.origin, "origin", routeData.origin.name || "출발");
   waypointMarker(routeData.destination, "destination", routeData.destination.name || "도착");
 
-  if (hasPoint) {
+  if (hasPoint && fitToRoute) {
     state.tmap.fitBounds(bounds);
   }
 }
 
 function renderMap(routeData, publicData, refreshLegend = true) {
+  const fitKey = mapFitKey(routeData);
+  const fitToRoute = Boolean(fitKey) && fitKey !== state.lastMapFitKey;
   if (state.tmapReady) {
     setMapStatus("", false);
     document.getElementById("tmap").style.display = "block";
     document.getElementById("svg-map").style.display = "none";
-    renderTmapRoutes(routeData, publicData);
+    renderTmapRoutes(routeData, publicData, { fitToRoute });
+    if (fitToRoute) state.lastMapFitKey = fitKey;
   } else {
     document.getElementById("svg-map").style.display = "block";
     document.getElementById("tmap").style.display = "none";
