@@ -35,7 +35,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_origin_regex=r"https://([a-z0-9-]+\.)*vercel\.app",
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -78,14 +78,7 @@ def on_startup() -> None:
     else:
         print("[안심귀갓길] CSV를 찾지 못했습니다. kids/data/ 또는 backend/app/data/ 를 확인하세요.")
 
-    # MOCK 모드에서는 데모용 샘플 안전진단 문서를 자동으로 1건 선적재해
-    # /api/route 호출 시 문서기반 근거(grounding)가 바로 반영되도록 한다.
-    if settings.upstage_mock and not public_data.get_doc_risk_points():
-        from .services.document_pipeline import ingest_document
-
-        sample_path = settings.data_dir / "sample_documents" / "sample_report.md"
-        ingest_document(sample_path.read_bytes(), "OO구_2024_통학로_안전진단_보고서(SAMPLE).pdf")
-
+    # 문서 위험 핀은 사용자가 실제로 올린 파일만 사용 (샘플 자동 선적재 없음)
 
 @app.get("/api/config")
 def get_public_config() -> dict:
@@ -114,7 +107,7 @@ def health() -> dict:
     used = usage_snapshot()
     return {
         "status": "ok",
-        "api_version": "2026-07-21-route-safety-details",
+        "api_version": "2026-07-22-safety-brief-a",
         "tmap_usage": {k: {"used": used.get(k, 0), "limit": limits[k]} for k in limits},
     }
 
