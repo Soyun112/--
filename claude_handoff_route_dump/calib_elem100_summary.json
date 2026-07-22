@@ -1,0 +1,71 @@
+{
+  "snapshot": {
+    "generated_at": "2026-07-22T21:51:51+09:00",
+    "git_commit": "4ed79b8",
+    "public_data_mock": true,
+    "ingest_counts": {
+      "child_zones": 92,
+      "accident_hotspots": 85,
+      "crime_grid": 3,
+      "guardian_houses": 116,
+      "streetlights": 0,
+      "speed_cameras": 370
+    },
+    "ingest_mock_flags": {
+      "child_zones": false,
+      "accident_hotspots": false,
+      "crime_grid": true,
+      "guardian_houses": false,
+      "streetlights": true,
+      "speed_cameras": false
+    },
+    "streetlights_forced_empty": true,
+    "light_density_source": "ansim_305_only",
+    "n_pairs_requested": 100,
+    "search_option": "4",
+    "rng_seed": 42,
+    "elementary_only": true,
+    "dest_road_snap": true,
+    "max_detour_ratio": 2.5
+  },
+  "counts": {
+    "requested": 100,
+    "ok": 87,
+    "backtrack": 9,
+    "detour_ratio": 4,
+    "fail": 0
+  },
+  "nonzero_median_k": {
+    "sf_cctv_per_km": 2.0726932243786176,
+    "sf_light_per_km": 4.013377926421405,
+    "sf_emerg_per_km": 2.255639097744361,
+    "guardian_per_km": 1.1983223487118035,
+    "zone_cctv_count": 8.0
+  },
+  "coverage_median_all": 0.32,
+  "accident_dist": {
+    "pct_0": 58.6,
+    "pct_1": 32.2,
+    "pct_2plus": 9.2,
+    "max": 4
+  },
+  "camera_dist": {
+    "pct_0": 14.9,
+    "pct_1": 34.5,
+    "pct_2plus": 50.6,
+    "max": 9
+  },
+  "ansim_nonzero_ratio": 0.1954,
+  "score_dist": {
+    "min": 42.1,
+    "p25": 54.0,
+    "median": 60.1,
+    "p75": 65.5,
+    "max": 100.0,
+    "p75_minus_p25": 11.5
+  },
+  "files": {
+    "csv": "calib_elem100_routes.csv",
+    "summary": "calib_elem100_summary.json"
+  }
+}
