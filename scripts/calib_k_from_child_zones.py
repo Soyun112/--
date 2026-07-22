@@ -84,7 +84,8 @@ def main() -> None:
 
     zones = public_data.get_child_zones()
     if ELEMENTARY_ONLY:
-        zones = [z for z in zones if "초등학교" in str(z.get("name") or "")]
+        # 병설유치원·초등병설 제외 — 이름 끝이 '초등학교'인 경우만
+        zones = [z for z in zones if str(z.get("name") or "").endswith("초등학교")]
         print(f"[calib] elementary filter → {len(zones)} zones")
     if len(zones) < 5:
         raise RuntimeError(f"need child_zones, got {len(zones)}")
