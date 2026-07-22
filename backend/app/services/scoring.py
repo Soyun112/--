@@ -188,10 +188,19 @@ def _walk_overtime_penalty(walk_minutes: float) -> float:
 
 
 def _detour_penalty(distance_km: float, L_min: float) -> float:
+    """최단 대비 초과 거리에 페널티. 짧은 통학로에서 우회가 구조적으로 지도록 두지 않기 위해
+    grace(기본 200m ≈ 도보 3분)까지는 무료, 그 초과분만 비율 페널티.
+    """
     if L_min <= 0:
         return 0.0
-    ratio = distance_km / L_min
-    return settings.detour_penalty_max * min(max(ratio - 1.0, 0.0) / 0.5, 1.0)
+    extra_km = max(0.0, float(distance_km) - float(L_min))
+    grace = max(0.0, float(settings.detour_penalty_grace_km))
+    excess = max(0.0, extra_km - grace)
+    if excess <= 0:
+        return 0.0
+    # 기존과 같은 스케일: 0.5 * L_min 초과 시 최대치
+    scale = max(0.5 * float(L_min), 1e-6)
+    return settings.detour_penalty_max * min(excess / scale, 1.0)
 
 
 def _has_data_coverage(f: SafetyFeatures) -> bool:

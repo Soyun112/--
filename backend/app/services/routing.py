@@ -1114,8 +1114,34 @@ def _routes_are_equivalent(first: RouteCandidateRaw, second: RouteCandidateRaw, 
     return first_to_second <= tolerance_m and second_to_first <= tolerance_m
 
 
+def _route_overlap_ratio(
+    a: RouteCandidateRaw,
+    b: RouteCandidateRaw,
+    *,
+    tol_m: float | None = None,
+) -> float:
+    """A 리샘플 점 중 B에서 tol_m 이내인 비율 (0~1)."""
+    if len(a.coordinates) < 2 or len(b.coordinates) < 2:
+        return 0.0
+    tol = settings.route_overlap_tol_m if tol_m is None else tol_m
+    ra = resample_route(a.coordinates, interval_m=settings.resample_interval_m)
+    rb = resample_route(b.coordinates, interval_m=settings.resample_interval_m)
+    if not ra or not rb:
+        return 0.0
+    inside = sum(1 for p in ra if min_distance_to_route(rb, p) < tol)
+    return inside / len(ra)
+
+
+def _routes_highly_overlapping(first: RouteCandidateRaw, second: RouteCandidateRaw) -> bool:
+    """한 블록만 다른 유사 경로 — 양방향 overlap max가 임계 초과면 동일 취급."""
+    thr = settings.route_overlap_max_ratio
+    ab = _route_overlap_ratio(first, second)
+    ba = _route_overlap_ratio(second, first)
+    return max(ab, ba) > thr
+
+
 def _deduplicate_candidates(candidates: List[RouteCandidateRaw]) -> List[RouteCandidateRaw]:
-    """동일 경로는 기본 경로를 우선 보존하고 우회 경로는 A, B 순으로 반환한다."""
+    """해시·등가·기하 겹침(30m/70%)으로 유사 경로를 제거. main 우선."""
     unique: List[RouteCandidateRaw] = []
     seen_hashes: set[str] = set()
     for candidate in sorted(candidates, key=_candidate_sort_key):
@@ -1126,6 +1152,16 @@ def _deduplicate_candidates(candidates: List[RouteCandidateRaw]) -> List[RouteCa
         matching = next((existing for existing in unique if _routes_are_equivalent(existing, candidate)), None)
         if matching:
             print(f"[경로] 중복 후보 제외: {candidate.id} (기존 {matching.id}와 동일)")
+            continue
+        overlapping = next(
+            (existing for existing in unique if _routes_highly_overlapping(existing, candidate)),
+            None,
+        )
+        if overlapping:
+            print(
+                f"[경로] 기하 겹침 제외: {candidate.id} "
+                f"(기존 {overlapping.id}와 overlap>{settings.route_overlap_max_ratio:.0%})"
+            )
             continue
         if h:
             seen_hashes.add(h)
@@ -1292,10 +1328,32 @@ def _append_avoid_point_detours(
             if not detour:
                 continue
             new_dist = min_distance_to_route(detour.coordinates, risk_pt)
-            if new_dist <= max(settings.buffer_radius_m, dist0):
+            # 채점 버퍼(40m) 밖으로 나가야 함 — dist0 대비 소폭 개선만으로는 부족
+            if new_dist <= settings.buffer_radius_m:
                 print(
                     f"[경로] 우회 후보 기각: {d['label']}까지 {new_dist:.0f}m "
-                    f"(기존 {dist0:.0f}m)"
+                    f"(채점 버퍼 {settings.buffer_radius_m:.0f}m 미달, 기존 {dist0:.0f}m)"
+                )
+                continue
+            # 같은 종류의 위험 노출이 줄지 않으면 폐기 (다른 사고다발을 그대로 밟는 우회 방지)
+            buffer = settings.buffer_radius_m
+            kind_risks = [r for r in risks if (r.get("kind") or "avoid") == kind]
+            base_rs = resampled
+            detour_rs = resample_route(detour.coordinates, interval_m=settings.resample_interval_m)
+
+            def _hits(rs: List[Tuple[float, float]]) -> int:
+                return sum(
+                    1
+                    for r in kind_risks
+                    if min_distance_to_route(rs, (r["lat"], r["lng"])) <= buffer
+                )
+
+            base_hits = _hits(base_rs)
+            detour_hits = _hits(detour_rs)
+            if detour_hits >= base_hits:
+                print(
+                    f"[경로] 우회 후보 기각: {kind} 노출 {base_hits}→{detour_hits} "
+                    f"(대상 {dist0:.0f}m→{new_dist:.0f}m이나 다른 지점 잔존)"
                 )
                 continue
             if kind == "hotspot":
@@ -1305,7 +1363,8 @@ def _append_avoid_point_detours(
             out.append(detour)
             print(
                 f"[경로] 우회 후보 추가: {detour.id} "
-                f"({d['source']} {dist0:.0f}m → {new_dist:.0f}m, via={via[0]:.5f},{via[1]:.5f})"
+                f"({d['source']} {dist0:.0f}m → {new_dist:.0f}m, "
+                f"{kind} 노출 {base_hits}→{detour_hits}, via={via[0]:.5f},{via[1]:.5f})"
             )
             placed = True
             break

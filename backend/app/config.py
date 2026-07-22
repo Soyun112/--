@@ -206,9 +206,14 @@ class Settings:
     bidirectional_night_features = ("cctv_density", "light_density")
     score_length_floor_km: float = 0.3
     detour_penalty_max: float = 12.0
+    # 최단 대비 초과분 중 이만큼(km)은 페널티 없음 — 짧은 통학로 우회 3분 허용
+    detour_penalty_grace_km: float = float(os.getenv("DETOUR_PENALTY_GRACE_KM", "0.2"))
     walk_soft_cap_minutes: float = 25.0
     walk_overtime_penalty_per_min: float = 0.8
     walk_overtime_penalty_max: float = 10.0
+    # 기하 중복: 리샘플 점의 이 비율 이상이 상대 경로 30m 안이면 동일 경로로 폐기
+    route_overlap_tol_m: float = float(os.getenv("ROUTE_OVERLAP_TOL_M", "30"))
+    route_overlap_max_ratio: float = float(os.getenv("ROUTE_OVERLAP_MAX_RATIO", "0.7"))
     # 사고 유무 경계 기준 등급 (오탐 최소화: mid=55)
     safety_grade_high: float = float(os.getenv("SAFETY_GRADE_HIGH", "70"))
     safety_grade_mid: float = float(os.getenv("SAFETY_GRADE_MID", "55"))

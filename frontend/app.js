@@ -120,6 +120,19 @@ function scoreColor(score) {
   return "#d64545";
 }
 
+/** 추천 vs 차순위 점수 격차에 따른 정직한 비교 문구. */
+function scoreGapCompareMessage(candidate, routeData) {
+  if (!routeData?.candidates?.length || !candidate) return null;
+  const others = routeData.candidates.filter((c) => c.id !== candidate.id);
+  if (!others.length) return null;
+  const bestOther = [...others].sort((a, b) => b.safety_score - a.safety_score)[0];
+  const gap = Number(candidate.safety_score) - Number(bestOther.safety_score);
+  if (gap >= 8) return "이 경로가 더 안전합니다.";
+  if (gap >= 4) return "안전도가 약간 높습니다.";
+  // 비슷하면 짧은 쪽 권유 (점수가 같거나 근소)
+  return "두 경로의 안전도가 비슷합니다. 짧은 쪽을 추천합니다.";
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -239,7 +252,12 @@ function buildGroundedWhySummary(candidate, routeData = null) {
   const title = isRecommended ? "추천하는 이유" : isDetour ? "우회 경로인 이유" : "이 경로 요약";
   let paragraphs = [];
 
-  if (isDetour && (hotspot > 0 || docCount > 0)) {
+  const gapMsg = isRecommended ? scoreGapCompareMessage(candidate, routeData) : null;
+  if (gapMsg) {
+    paragraphs.push(
+      `${gapMsg} 약 ${km}km · ${mins}분, 안전점수 ${candidate.safety_score}점입니다.`
+    );
+  } else if (isDetour && (hotspot > 0 || docCount > 0)) {
     paragraphs.push(
       `위험·공사 구간을 피해 아이가 혼자 가도록 잡은 길입니다. 거리는 약 ${km}km, ${mins}분 정도입니다. (안전점수 ${candidate.safety_score}점)`
     );
@@ -1033,6 +1051,17 @@ function renderCandidates(data) {
       const isRecommended = c.id === displayCandidates[0]?.id;
       const isActive = c.id === activeRouteId(data);
       const routeName = isRecommended ? "추천 경로" : routeDisplayName(c.id);
+      const gapMsg = isRecommended ? scoreGapCompareMessage(c, data) : null;
+      let recommendTag = "";
+      if (isRecommended) {
+        if (gapMsg && gapMsg.includes("비슷")) {
+          recommendTag = '<span class="recommended-tag">★ 추천 (안전도 비슷 · 짧은 길)</span>';
+        } else if (gapMsg && gapMsg.includes("약간")) {
+          recommendTag = '<span class="recommended-tag">★ 조금 더 안전</span>';
+        } else {
+          recommendTag = '<span class="recommended-tag">★ 가장 안전한 길</span>';
+        }
+      }
       const docsHtml = (c.features.matched_documents || [])
         .map((d) => {
           const src = d.source_doc || "";
@@ -1054,9 +1083,10 @@ function renderCandidates(data) {
       return `
         <div class="candidate-card ${isRecommended ? "recommended" : ""} ${isActive ? "selected" : ""}" data-route-id="${c.id}" role="button" tabindex="0" aria-pressed="${isActive}">
           <h4>
-            <span>${routeName}${isRecommended ? '<span class="recommended-tag">★ 가장 안전한 길</span>' : ""}</span>
+            <span>${routeName}${recommendTag}</span>
             <span class="score-pill" style="background:${scoreColor(c.safety_score)}">${c.safety_score}점</span>
           </h4>
+          ${gapMsg && isRecommended ? `<div class="score-gap-note">${gapMsg}</div>` : ""}
           <div class="star-rating" title="안전 등급 ${c.star_rating}/3">${stars}</div>
           ${isRecommended ? `<div class="candidate-time">${routeTimeRange(c.duration_s)}</div>` : ""}
           <div class="candidate-meta candidate-summary">

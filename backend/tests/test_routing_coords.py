@@ -276,6 +276,61 @@ def test_access_warning_threshold():
     assert access_warning_for_ratio(2.6) is not None
 
 
+def test_geometric_overlap_drops_near_duplicate():
+    from app.services.routing import RouteCandidateRaw, _deduplicate_candidates
+
+    base_coords = [
+        (37.5012, 127.0499),
+        (37.5008, 127.0502),
+        (37.5004, 127.0505),
+        (37.5000, 127.0508),
+        (37.4995, 127.0512),
+    ]
+    # 한 점만 살짝 비켜 — 거리·시간은 다르지만 기하적으로 거의 동일
+    near_coords = [
+        (37.5012, 127.0499),
+        (37.50081, 127.05021),
+        (37.50041, 127.05051),
+        (37.50001, 127.05081),
+        (37.4995, 127.0512),
+    ]
+    far_coords = [
+        (37.5012, 127.0499),
+        (37.5010, 127.0515),
+        (37.5000, 127.0520),
+        (37.4995, 127.0512),
+    ]
+    main = RouteCandidateRaw(
+        id="route-tmap-pedestrian-main",
+        label="main",
+        coordinates=base_coords,
+        distance_m=400,
+        duration_s=360,
+        source="TEST",
+    )
+    twin = RouteCandidateRaw(
+        id="route-tmap-pedestrian-opt0",
+        label="opt0",
+        coordinates=near_coords,
+        distance_m=420,
+        duration_s=380,
+        source="TEST",
+    )
+    other = RouteCandidateRaw(
+        id="route-tmap-pedestrian-opt10",
+        label="opt10",
+        coordinates=far_coords,
+        distance_m=500,
+        duration_s=450,
+        source="TEST",
+    )
+    kept = _deduplicate_candidates([main, twin, other])
+    ids = [c.id for c in kept]
+    assert "route-tmap-pedestrian-main" in ids
+    assert "route-tmap-pedestrian-opt0" not in ids
+    assert "route-tmap-pedestrian-opt10" in ids
+
+
 def test_force_densify_waypoints_fills_from_tmap(monkeypatch):
     from app.services import routing
 

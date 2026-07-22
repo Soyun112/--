@@ -188,3 +188,16 @@ def test_soft_clip_preserves_rank_above_90():
     assert b <= 100.0
     assert a > b
     assert a < 100.0 or b < a  # 둘 다 100으로 뭉개지지 않음
+
+
+def test_detour_penalty_grace_200m():
+    from app.services.scoring import _detour_penalty
+
+    L_min = 0.433
+    # 172m 초과 → grace 200m 안이라 0
+    assert _detour_penalty(0.433 + 0.172, L_min) == 0.0
+    # 300m 초과 → excess 100m
+    pen = _detour_penalty(0.433 + 0.300, L_min)
+    assert pen > 0
+    # 예전 비율식이면 172m에서 이미 ~9.5였음
+    assert _detour_penalty(0.605, L_min) == 0.0

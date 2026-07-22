@@ -693,6 +693,12 @@ body.theme-dark .doc-review-skip {
   font-weight: 700;
 }
 .recommended-tag { font-size: 11px; color: var(--accent-green); font-weight: 700; margin-left: 8px; }
+.score-gap-note {
+  margin: 4px 0 2px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted, #5a6a7a);
+}
 .candidate-report-hint {
   margin: 8px 0 0;
   font-size: 11px;
