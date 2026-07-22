@@ -61,9 +61,9 @@ class Settings:
     tmap_daily_reserve_road: int = int(os.getenv("TMAP_DAILY_RESERVE_ROAD", "20"))
     tmap_cache_ttl_route_s: int = int(os.getenv("TMAP_CACHE_TTL_ROUTE_S", "21600"))  # 6h
     tmap_cache_ttl_geocode_s: int = int(os.getenv("TMAP_CACHE_TTL_GEOCODE_S", "86400"))  # 24h
-    # Road API는 좌표가 적을 때만 (1회/검색). 기본 30개 미만일 때만 호출
+    # Road API는 차량 도로망 스냅이라 보행 통학로에는 기본 OFF (짧은 경로에서만 켜지면 왜곡이 큼)
     tmap_road_match_min_coords: int = int(os.getenv("TMAP_ROAD_MATCH_MIN_COORDS", "30"))
-    tmap_road_match_enabled: bool = _bool_env("TMAP_ROAD_MATCH_ENABLED", True)
+    tmap_road_match_enabled: bool = _bool_env("TMAP_ROAD_MATCH_ENABLED", False)
     # 대안 보행 경로(추가 API 1회) — 한도 절약을 위해 기본 off
     tmap_pedestrian_alt_enabled: bool = _bool_env("TMAP_PEDESTRIAN_ALT_ENABLED", True)
     document_ingest_enabled: bool = _bool_env("DOCUMENT_INGEST_ENABLED", True)

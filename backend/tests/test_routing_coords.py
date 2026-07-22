@@ -149,21 +149,32 @@ def test_academy_home_names_do_not_trigger_special_demo_route():
     assert all(c.source == "MOCK_ROUTING" for c in candidates)
 
 
-def test_seolleung_sidewalk_commute_detected_both_directions():
-    from app.services.routing import _is_seolleung_sidewalk_commute
+def test_has_backtrack_detects_out_and_back():
+    from app.services.routing import _has_backtrack
 
-    assert _is_seolleung_sidewalk_commute(
-        (37.4989686, 127.0525688),
+    # idx0 == idx4 style spike
+    coords = [
+        (37.50040, 127.050689),
+        (37.50035, 127.050500),
+        (37.50030, 127.050366),
+        (37.50019, 127.050044),
+        (37.50030, 127.050366),
+        (37.50040, 127.050689),
+    ]
+    assert _has_backtrack(coords) is True
+
+
+def test_has_backtrack_clean_path():
+    from app.services.routing import _has_backtrack
+
+    coords = [
         (37.5012, 127.0499),
-        "필수학학원",
-        "개나리SK뷰5차아파트",
-    )
-    assert _is_seolleung_sidewalk_commute(
-        (37.5012, 127.0499),
-        (37.4989686, 127.0525688),
-        "개나리SK뷰5차아파트",
-        "필수학학원",
-    )
+        (37.5008, 127.0502),
+        (37.5004, 127.0505),
+        (37.5000, 127.0508),
+        (37.4995, 127.0512),
+    ]
+    assert _has_backtrack(coords) is False
 
 
 def test_force_densify_waypoints_fills_from_tmap(monkeypatch):

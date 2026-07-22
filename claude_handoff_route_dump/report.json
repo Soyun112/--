@@ -1,0 +1,104 @@
+{
+  "note": "Claude handoff — keys redacted",
+  "tmap_key_present": true,
+  "settings": {
+    "tmap_pedestrian_search_option": "4",
+    "tmap_road_match_enabled": false,
+    "tmap_pedestrian_alt_enabled": true,
+    "tmap_route_densify_enabled": false,
+    "routing_mock": false
+  },
+  "scenario": {
+    "origin_latlng": [
+      37.5012,
+      127.0499
+    ],
+    "destination_latlng": [
+      37.4989686,
+      127.0525688
+    ],
+    "origin_name": "개나리SK뷰5차아파트",
+    "destination_name": "필수학학원",
+    "is_seolleung_special_path": false,
+    "note": "선릉로 특수 경로 분기 제거됨 — 일반 main/alt/우회"
+  },
+  "request": {
+    "url": "https://apis.openapi.sk.com/tmap/routes/pedestrian",
+    "query_params": {
+      "version": "1",
+      "format": "json"
+    },
+    "body": {
+      "startX": 127.0499,
+      "startY": 37.5012,
+      "endX": 127.0525688,
+      "endY": 37.4989686,
+      "startName": "출발지",
+      "endName": "목적지",
+      "reqCoordType": "WGS84GEO",
+      "resCoordType": "WGS84GEO",
+      "searchOption": "4",
+      "sort": "index",
+      "speed": 4
+    },
+    "headers_note": "appKey REDACTED"
+  },
+  "response_summary": {
+    "feature_count": 12,
+    "Point": 6,
+    "LineString": 6,
+    "parsed_coord_count": 19,
+    "after_roadmatch_coord_count": 19,
+    "total_distance_m": 433.0,
+    "total_time_s": 399.0,
+    "coords_changed_by_roadmatch": false
+  },
+  "candidates": [
+    {
+      "id": "route-tmap-pedestrian-main",
+      "label": "보행자 큰길 경로 (대로 우선)",
+      "source": "TMAP_PEDESTRIAN_API",
+      "distance_m": 433.0,
+      "duration_s": 399.0,
+      "coord_count": 19,
+      "has_backtrack": false,
+      "safety_score": 61.3,
+      "is_recommended": true,
+      "geojson_file": "candidate_route-tmap-pedestrian-main.geojson",
+      "first3": [
+        [
+          37.50113856536146,
+          127.04992470133817
+        ],
+        [
+          37.501246893348416,
+          127.05032743939624
+        ],
+        [
+          37.501085802248156,
+          127.05039965960636
+        ]
+      ],
+      "last2": [
+        [
+          37.49895830435046,
+          127.05222177623291
+        ],
+        [
+          37.4990555206709,
+          127.05252174618191
+        ]
+      ]
+    }
+  ],
+  "files": [
+    "CLAUDE_ROUTE_HANDOFF.md",
+    "candidate_route-seolleung-sidewalk.geojson",
+    "candidate_route-tmap-pedestrian-main.geojson",
+    "pipeline_after_roadmatch.geojson",
+    "pipeline_before_roadmatch.geojson",
+    "report.json",
+    "tmap_pedestrian_raw.json",
+    "tmap_raw_linestrings.geojson"
+  ]
+}

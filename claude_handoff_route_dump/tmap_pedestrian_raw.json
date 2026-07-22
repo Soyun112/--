@@ -1,0 +1,373 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          127.04992470133817,
+          37.50113856536146
+        ]
+      },
+      "properties": {
+        "totalDistance": 433,
+        "totalTime": 399,
+        "index": 0,
+        "pointIndex": 0,
+        "name": "",
+        "description": "보행자도로를 따라 137m 이동",
+        "direction": "",
+        "nearPoiName": "",
+        "nearPoiX": "0.0",
+        "nearPoiY": "0.0",
+        "intersectionName": "",
+        "facilityType": "11",
+        "facilityName": "",
+        "turnType": 200,
+        "pointType": "SP"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            127.04992470133817,
+            37.50113856536146
+          ],
+          [
+            127.05032743939624,
+            37.501246893348416
+          ],
+          [
+            127.05039965960636,
+            37.501085802248156
+          ],
+          [
+            127.0505468779447,
+            37.50074973282174
+          ],
+          [
+            127.05060521123741,
+            37.50056364437556
+          ],
+          [
+            127.05068854162613,
+            37.50039977601963
+          ]
+        ]
+      },
+      "properties": {
+        "index": 1,
+        "lineIndex": 0,
+        "name": "보행자도로",
+        "description": "보행자도로, 137m",
+        "distance": 137,
+        "time": 155,
+        "roadType": 23,
+        "categoryRoadType": 0,
+        "facilityType": "15",
+        "facilityName": ""
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          127.05068854162613,
+          37.50039977601963
+        ]
+      },
+      "properties": {
+        "index": 2,
+        "pointIndex": 1,
+        "name": "",
+        "description": "좌회전 후 역삼로를 따라 16m 이동",
+        "direction": "",
+        "nearPoiName": "",
+        "nearPoiX": "0.0",
+        "nearPoiY": "0.0",
+        "intersectionName": "도성초교",
+        "facilityType": "11",
+        "facilityName": "",
+        "turnType": 12,
+        "pointType": "GP"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            127.05068854162613,
+            37.50039977601963
+          ],
+          [
+            127.05072187169026,
+            37.50040810898395
+          ],
+          [
+            127.0507940882051,
+            37.50037755827504
+          ],
+          [
+            127.05081353221668,
+            37.50033034188703
+          ]
+        ]
+      },
+      "properties": {
+        "index": 3,
+        "lineIndex": 1,
+        "name": "역삼로",
+        "description": "역삼로, 16m",
+        "distance": 16,
+        "time": 42,
+        "roadType": 21,
+        "categoryRoadType": 0,
+        "facilityType": "11",
+        "facilityName": ""
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          127.05081353221668,
+          37.50033034188703
+        ]
+      },
+      "properties": {
+        "index": 4,
+        "pointIndex": 2,
+        "name": "",
+        "description": "횡단보도 후 보행자도로를 따라 26m 이동",
+        "direction": "",
+        "nearPoiName": "",
+        "nearPoiX": "0.0",
+        "nearPoiY": "0.0",
+        "intersectionName": "도성초교",
+        "facilityType": "15",
+        "facilityName": "",
+        "turnType": 211,
+        "pointType": "GP"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            127.05081353221668,
+            37.50033034188703
+          ],
+          [
+            127.05108850483299,
+            37.500413670482196
+          ]
+        ]
+      },
+      "properties": {
+        "index": 5,
+        "lineIndex": 2,
+        "name": "보행자도로",
+        "description": "보행자도로, 26m",
+        "distance": 26,
+        "time": 17,
+        "roadType": 21,
+        "categoryRoadType": 0,
+        "facilityType": "15",
+        "facilityName": ""
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          127.05108850483299,
+          37.500413670482196
+        ]
+      },
+      "properties": {
+        "index": 6,
+        "pointIndex": 3,
+        "name": "오마뎅 대치도성초교점",
+        "description": "오마뎅 대치도성초교점에서 우회전 후 선릉로를 따라 54m 이동",
+        "direction": "",
+        "nearPoiName": "오마뎅 대치도성초교점",
+        "nearPoiX": "0.0",
+        "nearPoiY": "0.0",
+        "intersectionName": "도성초교",
+        "facilityType": "11",
+        "facilityName": "",
+        "turnType": 13,
+        "pointType": "GP"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            127.05108850483299,
+            37.500413670482196
+          ],
+          [
+            127.05116628032906,
+            37.50024424711612
+          ],
+          [
+            127.05128849858383,
+            37.49999150089432
+          ],
+          [
+            127.05129960970594,
+            37.499955394177114
+          ]
+        ]
+      },
+      "properties": {
+        "index": 7,
+        "lineIndex": 3,
+        "name": "선릉로",
+        "description": "선릉로, 54m",
+        "distance": 54,
+        "time": 39,
+        "roadType": 21,
+        "categoryRoadType": 0,
+        "facilityType": "11",
+        "facilityName": ""
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            127.05129960970594,
+            37.499955394177114
+          ],
+          [
+            127.05131072145701,
+            37.49989706781878
+          ],
+          [
+            127.05133849843673,
+            37.499835964304744
+          ],
+          [
+            127.05181348351623,
+            37.49883608898732
+          ]
+        ]
+      },
+      "properties": {
+        "index": 8,
+        "lineIndex": 4,
+        "name": "보행자도로",
+        "description": "보행자도로, 132m",
+        "distance": 132,
+        "time": 94,
+        "roadType": 21,
+        "categoryRoadType": 0,
+        "facilityType": "11",
+        "facilityName": ""
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          127.05181348351623,
+          37.49883608898732
+        ]
+      },
+      "properties": {
+        "index": 9,
+        "pointIndex": 4,
+        "name": "차백도 강남한티점",
+        "description": "차백도 강남한티점에서 좌회전 후 68m 이동",
+        "direction": "",
+        "nearPoiName": "차백도 강남한티점",
+        "nearPoiX": "0.0",
+        "nearPoiY": "0.0",
+        "intersectionName": "",
+        "facilityType": "11",
+        "facilityName": "",
+        "turnType": 12,
+        "pointType": "GP"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            127.05181348351623,
+            37.49883608898732
+          ],
+          [
+            127.05185236863045,
+            37.498844422051484
+          ],
+          [
+            127.05222177623291,
+            37.49895830435046
+          ],
+          [
+            127.05252174618191,
+            37.4990555206709
+          ]
+        ]
+      },
+      "properties": {
+        "index": 10,
+        "lineIndex": 5,
+        "name": "",
+        "description": ", 68m",
+        "distance": 68,
+        "time": 52,
+        "roadType": 21,
+        "categoryRoadType": 0,
+        "facilityType": "11",
+        "facilityName": ""
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          127.05252174618191,
+          37.4990555206709
+        ]
+      },
+      "properties": {
+        "index": 11,
+        "pointIndex": 5,
+        "name": "목적지",
+        "description": "도착",
+        "direction": "",
+        "nearPoiName": "목적지",
+        "nearPoiX": "0.0",
+        "nearPoiY": "0.0",
+        "intersectionName": "목적지",
+        "facilityType": "",
+        "facilityName": "",
+        "turnType": 201,
+        "pointType": "EP"
+      }
+    }
+  ]
+}
