@@ -48,9 +48,9 @@ class DocMatch(BaseModel):
 
 class SafetyFeatures(BaseModel):
     distance_km: float
-    cctv_count: int
-    cctv_density: float
-    child_zone_coverage_pct: float
+    cctv_count: int  # 표시용: 보호구역 CCTV + 안심 302
+    cctv_density: float  # 안심 302 폴 / km (점수 cctv_density)
+    child_zone_coverage_pct: float  # 거리감쇠 평균 × 100
     accident_hotspot_count: int
     crime_risk_proxy: float
     guardian_house_count: int = 0
@@ -60,11 +60,15 @@ class SafetyFeatures(BaseModel):
     doc_risk_count: int
     doc_safety_count: int
     matched_documents: List[DocMatch] = []
-    # 안심귀갓길 CSV — 경로 주변(40m) 시설물 개수
+    # 안심귀갓길 CSV — 경로 주변(40m) 시설물 개수 (폴 단위)
     safety_facility_cctv_count: int = 0
     safety_facility_streetlight_count: int = 0
     safety_bell_count: int = 0
     emergency112_count: int = 0
+    # 301∪307 폴 수 (점수 emergency_density용)
+    emergency_pole_count: int = 0
+    # 매칭된 보호구역이 보유한 CCTV 총합 (경로 길이로 나누지 않음)
+    zone_cctv_count: int = 0
 
 
 class StampOut(BaseModel):

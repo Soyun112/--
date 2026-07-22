@@ -167,25 +167,50 @@ class Settings:
     def upstage_mock(self) -> bool:
         return self.force_mock or not self.upstage_api_key
 
-    # 안전점수 가중치 (PROJECT_PLAN.md 5장 수식과 대응)
+    # 절대 스케일 안전점수 — 주간 (가점 74 / 감점 38)
+    # cctv_density=안심 302만(/km), zone_cctv=보호구역 CCTV 총합(count, 경로길이로 나누지 않음)
     weights = {
-        "cctv_density": 18.0,
-        "child_zone_coverage": 15.0,
-        "doc_safety": 10.0,
-        "guardian_house": 10.0,
-        "streetlight_density": 8.0,
-        "speed_camera": 6.0,
-        "accident_hotspot": 22.0,
-        "crime_risk": 12.0,
-        "doc_risk": 28.0,
-        # 안심귀갓길 CSV 시설물 (CCTV·보안등 가점 크게)
-        "safety_facility_cctv": 22.0,
-        "safety_facility_streetlight": 14.0,
-        "safety_bell": 6.0,
-        "emergency112": 5.0,
+        "cctv_density": 16.0,
+        "zone_cctv": 10.0,
+        "light_density": 12.0,
+        "child_zone_coverage": 16.0,
+        "guardian_density": 12.0,
+        "emergency_density": 6.0,
+        "speed_camera": 4.0,
+        "accident_hotspot": 24.0,
+        "doc_risk": 14.0,
     }
+    weights_night = {
+        "cctv_density": 20.0,
+        "zone_cctv": 10.0,
+        "light_density": 20.0,
+        "child_zone_coverage": 16.0,
+        "guardian_density": 12.0,
+        "emergency_density": 10.0,
+        "speed_camera": 2.0,
+        "accident_hotspot": 16.0,
+        "doc_risk": 14.0,
+    }
+    saturate_k = {
+        "cctv_density": 4.0,
+        "zone_cctv": 6.0,
+        "light_density": 12.0,
+        "guardian_density": 1.5,
+        "emergency_density": 3.0,
+        "speed_camera": 1.5,
+        "accident_hotspot": 1.5,
+        "doc_risk": 1.5,
+    }
+    bidirectional_night_features = ("cctv_density", "light_density")
+    score_length_floor_km: float = 0.3
+    detour_penalty_max: float = 12.0
+    walk_soft_cap_minutes: float = 25.0
+    walk_overtime_penalty_per_min: float = 0.8
+    walk_overtime_penalty_max: float = 10.0
 
     buffer_radius_m: float = 40.0
+    # 법정 어린이보호구역 근사: 주출입문 반경 300m (포인트 + 거리 감쇠)
+    child_zone_radius_m: float = float(os.getenv("CHILD_ZONE_RADIUS_M", "300"))
     # 안심귀갓길 시설물 매칭 반경 (30~50m 권장, 기본 40m)
     safety_facility_buffer_m: float = float(os.getenv("SAFETY_FACILITY_BUFFER_M", "40"))
     resample_interval_m: float = 20.0

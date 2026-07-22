@@ -121,8 +121,87 @@ def _fetch_standard_api_items(url: str, num_of_rows: int = 1000) -> list[dict[st
     return items or []
 
 
+def _load_child_zones_from_csv() -> list[dict[str, Any]] | None:
+    """강남구 어린이보호구역 CSV가 data/에 있으면 API/MOCK보다 우선.
+
+    파일명 예: 서울특별시_강남구_어린이보호구역_20260127.csv
+    """
+    names = (
+        "서울특별시_강남구_어린이보호구역_20260127.csv",
+        "서울특별시_강남구_어린이보호구역.csv",
+        "gangnam_child_zones.csv",
+    )
+    path = None
+    for root in (settings.data_dir, settings.repo_data_dir):
+        for name in names:
+            candidate = root / name
+            if candidate.exists():
+                path = candidate
+                break
+        if path:
+            break
+    # glob fallback: *어린이보호구역*.csv
+    if path is None:
+        for root in (settings.data_dir, settings.repo_data_dir):
+            matches = sorted(root.glob("*어린이보호구역*.csv")) + sorted(root.glob("*child*zone*.csv"))
+            if matches:
+                path = matches[0]
+                break
+    if path is None:
+        return None
+
+    rows: list[dict[str, Any]] = []
+    for encoding in ("utf-8-sig", "utf-8", "cp949", "euc-kr"):
+        try:
+            with open(path, "r", encoding=encoding, newline="") as f:
+                reader = csv.DictReader(f)
+                for rec in reader:
+                    lat = _to_float(rec.get("위도") or rec.get("LAT") or rec.get("lat"))
+                    lng = _to_float(rec.get("경도") or rec.get("LOT") or rec.get("lng"))
+                    if lat is None or lng is None:
+                        continue
+                    name = (
+                        rec.get("대상시설명")
+                        or rec.get("FCLT_NM")
+                        or rec.get("시설명")
+                        or rec.get("name")
+                        or "어린이보호구역"
+                    )
+                    cctv = rec.get("CCTV설치대수") or rec.get("CCTV_CNT") or rec.get("cctv_count") or 0
+                    try:
+                        cctv_n = int(float(str(cctv).strip() or 0))
+                    except (TypeError, ValueError):
+                        cctv_n = 0
+                    rows.append(
+                        {
+                            "대상시설명": name,
+                            "위도": lat,
+                            "경도": lng,
+                            "CCTV설치대수": cctv_n,
+                            "관리기관명": rec.get("관리기관명") or rec.get("MNG_INST_NM"),
+                            "관할경찰서명": rec.get("관할경찰서명") or rec.get("CMPTNC_POLSTN_NM"),
+                            "출처": f"local_csv:{path.name}",
+                        }
+                    )
+            break
+        except UnicodeDecodeError:
+            continue
+    return rows or None
+
+
 def fetch_child_zones() -> tuple[list[dict[str, Any]], bool]:
-    """(레코드 목록, mock 여부)를 반환."""
+    """(레코드 목록, mock 여부)를 반환.
+
+    우선순위: 로컬 CSV/JSON → (MOCK이면 샘플) → API → 샘플 폴백
+    """
+    local_csv = _load_child_zones_from_csv()
+    if local_csv is not None:
+        return local_csv, False
+
+    local_json = _load_local_dataset("gangnam_child_zones.json")
+    if local_json is not None:
+        return local_json, False
+
     if settings.public_data_mock:
         return _load_sample("sample_child_zones.json"), True
 
@@ -137,7 +216,6 @@ def fetch_child_zones() -> tuple[list[dict[str, Any]], bool]:
         records = data.get("data", data.get("items", []))
         return records, False
     except Exception:
-        # 네트워크/승인 이슈 시 샘플로 안전하게 폴백 (데모 안정성 우선)
         return _load_sample("sample_child_zones.json"), True
 
 

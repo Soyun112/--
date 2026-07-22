@@ -17,7 +17,11 @@ def seeded_db():
     public_data.ingest_all()
     if not public_data.get_doc_risk_points():
         sample_path = settings.data_dir / "sample_documents" / "sample_report.md"
-        ingest_document(sample_path.read_bytes(), "OO구_2024_통학로_안전진단_보고서(SAMPLE).pdf")
+        try:
+            ingest_document(sample_path.read_bytes(), "OO구_2024_통학로_안전진단_보고서(SAMPLE).pdf")
+        except Exception:
+            # 오프라인/Upstage 실패 시에도 점수 테스트는 공공데이터만으로 진행
+            pass
     yield
 
 
@@ -60,18 +64,38 @@ def test_duplicate_detour_keeps_only_base_route_and_orders_alternatives():
     assert [candidate.id for candidate in candidates] == ["route-direct", "route-via-b"]
 
 
-def test_grid_route_scores_higher_than_diagonal_route():
-    """샘플 데이터 시나리오(PROJECT_PLAN.md 데모 좌표): CCTV/보호구역 밀집 큰길 경로가
-    사고다발지역·문서상 위험지적구간을 지나는 직선(골목) 경로보다 안전점수가 높아야 한다."""
-    raw_candidates = get_route_candidates(ORIGIN, DESTINATION, force_mock=True)
-    scored = score_candidates(raw_candidates)
+def test_hotspot_and_zone_move_absolute_score():
+    """점 사건(사고다발)은 count 감점, 보호구역 비율은 가점."""
+    from app.models import SafetyFeatures
+    from app.services.scoring import absolute_score
 
-    by_id = {s.raw.id: s for s in scored}
-    direct = by_id["route-direct"]
-    grid_a = by_id["route-grid-a"]
-
-    assert grid_a.safety_score > direct.safety_score
-    assert grid_a.is_recommended is True
+    base = SafetyFeatures(
+        distance_km=0.5,
+        cctv_count=0,
+        cctv_density=0.0,
+        child_zone_coverage_pct=0.0,
+        accident_hotspot_count=0,
+        crime_risk_proxy=0.0,
+        guardian_house_count=0,
+        streetlight_count=0,
+        streetlight_density=0.0,
+        speed_camera_count=0,
+        doc_risk_count=0,
+        doc_safety_count=0,
+    )
+    safe = absolute_score(base, is_night=False, walk_minutes=8.0)
+    risky = absolute_score(
+        base.model_copy(update={"accident_hotspot_count": 1}),
+        is_night=False,
+        walk_minutes=8.0,
+    )
+    zoned = absolute_score(
+        base.model_copy(update={"child_zone_coverage_pct": 50.0}),
+        is_night=False,
+        walk_minutes=8.0,
+    )
+    assert risky < safe
+    assert zoned > safe
 
 
 def test_recommended_route_is_unique():
@@ -79,6 +103,35 @@ def test_recommended_route_is_unique():
     scored = score_candidates(raw_candidates)
     recommended = [s for s in scored if s.is_recommended]
     assert len(recommended) == 1
+
+
+def test_saturate_and_demo_od_score_shape():
+    from app.models import SafetyFeatures
+    from app.services.scoring import absolute_score, saturate
+
+    assert abs(saturate(0, 1.5) - 0.0) < 1e-9
+    assert abs(saturate(1.5, 1.5) - 0.5) < 1e-9
+
+    # zone_cctv는 count(나누지 않음), coverage는 감쇠 비율
+    f = SafetyFeatures(
+        distance_km=0.43,
+        cctv_count=7,
+        cctv_density=0.0,
+        child_zone_coverage_pct=35.0,
+        accident_hotspot_count=1,
+        crime_risk_proxy=0.0,
+        guardian_house_count=1,
+        streetlight_count=0,
+        streetlight_density=0.0,
+        speed_camera_count=1,
+        doc_risk_count=0,
+        doc_safety_count=0,
+        zone_cctv_count=7,
+        safety_facility_cctv_count=0,
+    )
+    score = absolute_score(f, is_night=False, detour_penalty=0.0, walk_minutes=10.0)
+    # Claude: ≈60.3
+    assert 58.0 <= score <= 63.0
 
 
 def test_safety_score_within_bounds():

@@ -153,10 +153,18 @@ def main() -> None:
 
     # Full candidate path (main/alt/detour) + safety scores
     from app import db
+    from app.services import public_data
     from app.services.routing import get_route_candidates, _has_backtrack
     from app.services.scoring import score_candidates
 
     db.init_db()
+    # SQLite 계열(child_zones 등)은 ingest 없으면 비어 점수가 전부 0으로 나옴
+    ingest_summary = public_data.ingest_all()
+    report["ingest"] = {
+        k: {"count": v.get("count"), "mock": v.get("mock")}
+        for k, v in ingest_summary.items()
+        if isinstance(v, dict)
+    }
 
     # Windows console encoding safety for routing prints
     try:
