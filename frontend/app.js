@@ -116,7 +116,7 @@ function swapLocations() {
 
 function scoreColor(score) {
   if (score >= 70) return "#2e9e5b";
-  if (score >= 45) return "#e08a2c";
+  if (score >= 55) return "#e08a2c";
   return "#d64545";
 }
 
@@ -159,7 +159,7 @@ function scoreExplanation(candidate, routeData = null) {
 
   if (candidate.safety_score >= 70) {
     parts.push("전반적으로 안심하고 걸을 수 있는 편이에요.");
-  } else if ((features.accident_hotspot_count || 0) > 0 || riskDocs.length) {
+  } else if (candidate.safety_score < 55 || (features.accident_hotspot_count || 0) > 0 || riskDocs.length) {
     parts.push("주의 구간이 있으니 다른 경로와 비교해 보세요.");
   }
 
@@ -191,7 +191,9 @@ function routeDisplayName(routeId) {
   if (routeId.includes("avoid-hotspot") || routeId.includes("hotspot-avoid")) return "사고다발 우회 경로";
   if (routeId.includes("doc-avoid") || routeId.includes("avoid-doc")) return "문서 위험 우회 경로";
   if (routeId.includes("pedestrian-main") || routeId.includes("direct")) return "보행자 큰길 경로";
-  if (routeId.includes("pedestrian-alt")) return "보행자 대안 경로";
+  if (routeId.includes("opt0")) return "보행자 추천 경로";
+  if (routeId.includes("opt4") || routeId.includes("pedestrian-alt")) return "보행자 큰길 경로";
+  if (routeId.includes("opt10")) return "보행자 최단 경로";
   if (routeId.endsWith("-a") || routeId.includes("grid-a")) return "우회 경로 A";
   if (routeId.endsWith("-b") || routeId.includes("grid-b")) return "우회 경로 B";
   return "보행자 경로";
@@ -200,12 +202,14 @@ function routeDisplayName(routeId) {
 function routeDisplaySortKey(routeId) {
   if (routeId.includes("seolleung-sidewalk") || routeId.includes("sidewalk")) return 0;
   if (routeId.includes("pedestrian-main") || routeId.includes("direct")) return 0;
-  if (routeId.includes("pedestrian-alt")) return 1;
-  if (routeId.includes("avoid-hotspot") || routeId.includes("hotspot-avoid")) return 2;
-  if (routeId.includes("doc-avoid") || routeId.includes("avoid-doc")) return 3;
-  if (routeId.endsWith("-a") || routeId.includes("grid-a")) return 3;
-  if (routeId.endsWith("-b") || routeId.includes("grid-b")) return 4;
-  return 5;
+  if (routeId.includes("opt0")) return 1;
+  if (routeId.includes("opt4") || routeId.includes("pedestrian-alt")) return 2;
+  if (routeId.includes("opt10")) return 3;
+  if (routeId.includes("avoid-hotspot") || routeId.includes("hotspot-avoid")) return 4;
+  if (routeId.includes("doc-avoid") || routeId.includes("avoid-doc")) return 5;
+  if (routeId.endsWith("-a") || routeId.includes("grid-a")) return 5;
+  if (routeId.endsWith("-b") || routeId.includes("grid-b")) return 6;
+  return 7;
 }
 
 function isDuplicateRouteCard(first, second) {
@@ -809,6 +813,7 @@ function renderCandidates(data) {
             <span>거리: ${(c.distance_m / 1000).toFixed(2)}km</span>
             <span>예상 소요: ${Math.round(c.duration_s / 60)}분</span>
           </div>
+          ${c.access_warning ? `<div class="access-warning" role="status">${c.access_warning}</div>` : ""}
           ${stampsHtml ? `<div class="stamps-row">${stampsHtml}</div>` : ""}
           <details class="candidate-details">
             <summary>상세보기 · 안전 설명</summary>

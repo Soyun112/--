@@ -139,3 +139,52 @@ def test_safety_score_within_bounds():
     scored = score_candidates(raw_candidates)
     for s in scored:
         assert 0 <= s.safety_score <= 100
+
+
+def test_soft_clip_preserves_rank_above_90():
+    from app.models import SafetyFeatures
+    from app.services.scoring import absolute_score
+
+    # 가점이 과도하게 쌓여도 100으로 뭉개지지 않고 상단 압축
+    rich = SafetyFeatures(
+        distance_km=0.5,
+        cctv_count=0,
+        cctv_density=0.0,
+        child_zone_coverage_pct=80.0,
+        accident_hotspot_count=0,
+        crime_risk_proxy=0.0,
+        guardian_house_count=5,
+        streetlight_count=0,
+        streetlight_density=0.0,
+        speed_camera_count=8,
+        doc_risk_count=0,
+        doc_safety_count=0,
+        zone_cctv_count=20,
+        safety_facility_cctv_count=10,
+        safety_facility_streetlight_count=15,
+        emergency_pole_count=5,
+    )
+    lean = SafetyFeatures(
+        distance_km=0.5,
+        cctv_count=0,
+        cctv_density=0.0,
+        child_zone_coverage_pct=80.0,
+        accident_hotspot_count=0,
+        crime_risk_proxy=0.0,
+        guardian_house_count=4,
+        streetlight_count=0,
+        streetlight_density=0.0,
+        speed_camera_count=7,
+        doc_risk_count=0,
+        doc_safety_count=0,
+        zone_cctv_count=18,
+        safety_facility_cctv_count=8,
+        safety_facility_streetlight_count=12,
+        emergency_pole_count=4,
+    )
+    a = absolute_score(rich, is_night=False, walk_minutes=8.0)
+    b = absolute_score(lean, is_night=False, walk_minutes=8.0)
+    assert a <= 100.0
+    assert b <= 100.0
+    assert a > b
+    assert a < 100.0 or b < a  # 둘 다 100으로 뭉개지지 않음

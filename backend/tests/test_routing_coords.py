@@ -225,6 +225,57 @@ def test_drop_backtrack_keeps_main_drops_detour():
     assert "route-tmap-pedestrian-avoid-hotspot-1-via" not in ids
 
 
+def test_polyline_hash_dedupes_identical_search_options():
+    from app.services.routing import RouteCandidateRaw, _deduplicate_candidates
+
+    coords = [
+        (37.5012, 127.0499),
+        (37.5008, 127.0502),
+        (37.5004, 127.0505),
+        (37.4995, 127.0512),
+    ]
+    main = RouteCandidateRaw(
+        id="route-tmap-pedestrian-main",
+        label="main",
+        coordinates=coords,
+        distance_m=400,
+        duration_s=360,
+        source="TEST",
+    )
+    opt0 = RouteCandidateRaw(
+        id="route-tmap-pedestrian-opt0",
+        label="opt0",
+        coordinates=list(coords),
+        distance_m=402,
+        duration_s=365,
+        source="TEST",
+    )
+    different = RouteCandidateRaw(
+        id="route-tmap-pedestrian-opt10",
+        label="opt10",
+        coordinates=[
+            (37.5012, 127.0499),
+            (37.5010, 127.0510),
+            (37.4995, 127.0512),
+        ],
+        distance_m=480,
+        duration_s=420,
+        source="TEST",
+    )
+    kept = _deduplicate_candidates([main, opt0, different])
+    ids = [c.id for c in kept]
+    assert ids[0] == "route-tmap-pedestrian-main"
+    assert "route-tmap-pedestrian-opt0" not in ids
+    assert "route-tmap-pedestrian-opt10" in ids
+
+
+def test_access_warning_threshold():
+    from app.services.routing import access_warning_for_ratio
+
+    assert access_warning_for_ratio(2.4) is None
+    assert access_warning_for_ratio(2.6) is not None
+
+
 def test_force_densify_waypoints_fills_from_tmap(monkeypatch):
     from app.services import routing
 

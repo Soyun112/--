@@ -207,9 +207,11 @@ class Settings:
     walk_soft_cap_minutes: float = 25.0
     walk_overtime_penalty_per_min: float = 0.8
     walk_overtime_penalty_max: float = 10.0
-    # 실측 분위수 기준 등급 (중립≈62)
+    # 사고 유무 경계 기준 등급 (오탐 최소화: mid=55)
     safety_grade_high: float = float(os.getenv("SAFETY_GRADE_HIGH", "70"))
-    safety_grade_mid: float = float(os.getenv("SAFETY_GRADE_MID", "62"))
+    safety_grade_mid: float = float(os.getenv("SAFETY_GRADE_MID", "55"))
+    # 직선 대비 경로 길이 상한 — 초과 시 "도보 접근 어려움" 안내
+    max_detour_ratio: float = float(os.getenv("MAX_DETOUR_RATIO", "2.5"))
 
     buffer_radius_m: float = 40.0
     # 법정 어린이보호구역 근사: 주출입문 반경 300m (포인트 + 거리 감쇠)

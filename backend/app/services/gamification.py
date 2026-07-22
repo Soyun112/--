@@ -129,7 +129,7 @@ def compute_stamps(features: SafetyFeatures) -> list[Stamp]:
 def compute_star_rating(safety_score: float) -> int:
     """안전점수를 부모가 한눈에 볼 수 있는 1~3점 별점으로 변환.
 
-    컷은 강남 통학 캘리브 실측 분위수 기준 (중립≈62, 상단≈70).
+    컷은 사고다발 유무 경계 기준 (보통≥55, 안전≥70) — 오탐 최소화.
     """
     from ..config import settings
 

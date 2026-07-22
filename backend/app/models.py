@@ -100,6 +100,9 @@ class RouteCandidate(BaseModel):
     stamps: List[StampOut] = []
     star_rating: int = 1
     navigation_steps: List[NavigationStep] = []
+    # 경로길이 ÷ 직선거리. 2.5 초과면 access_warning 표시
+    detour_ratio: Optional[float] = None
+    access_warning: Optional[str] = None
 
 
 class TimeContext(BaseModel):

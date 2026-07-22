@@ -5,6 +5,7 @@ Free 티어 기준 검색 1회: 보행 1 + Road 0~1 + POI 0 (데모 사전命中
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -1067,16 +1068,38 @@ def _via_is_reachable(
 
 
 def _candidate_sort_key(candidate: RouteCandidateRaw) -> tuple[int, str]:
-    """기본 보행 경로를 먼저, 대안 경로는 식별자 순으로 정렬한다."""
-    if "main" in candidate.id or "direct" in candidate.id:
+    """기본 보행 경로를 먼저, searchOption·우회 후보는 식별자 순으로 정렬한다."""
+    cid = candidate.id
+    if "main" in cid or "direct" in cid:
         return (0, "")
-    return (1, candidate.id)
+    if "opt0" in cid:
+        return (1, cid)
+    if "opt4" in cid or "pedestrian-alt" in cid:
+        return (2, cid)
+    if "opt10" in cid:
+        return (3, cid)
+    return (4, cid)
+
+
+def _polyline_hash(coords: List[Tuple[float, float]], *, ndigits: int = 5) -> str:
+    """searchOption이 달라도 같은 보행 궤적이면 동일 해시가 나오도록 샘플링 해시."""
+    if len(coords) < 2:
+        return ""
+    step = max(1, len(coords) // 40)
+    samples = list(coords[::step])
+    if samples[-1] != coords[-1]:
+        samples.append(coords[-1])
+    payload = ";".join(f"{round(lat, ndigits)},{round(lng, ndigits)}" for lat, lng in samples)
+    return hashlib.md5(payload.encode("utf-8")).hexdigest()
 
 
 def _routes_are_equivalent(first: RouteCandidateRaw, second: RouteCandidateRaw, tolerance_m: float = 25.0) -> bool:
     """Tmap 응답 수치 또는 좌표 밀도를 비교해 같은 길인지 확인한다."""
     if not first.coordinates or not second.coordinates:
         return False
+    h1, h2 = _polyline_hash(first.coordinates), _polyline_hash(second.coordinates)
+    if h1 and h1 == h2:
+        return True
     distance_delta = abs(first.distance_m - second.distance_m)
     duration_delta = abs(first.duration_s - second.duration_s)
     # Tmap이 서로 다른 좌표 샘플링으로 같은 경로를 반환하는 경우가 있어,
@@ -1094,13 +1117,59 @@ def _routes_are_equivalent(first: RouteCandidateRaw, second: RouteCandidateRaw, 
 def _deduplicate_candidates(candidates: List[RouteCandidateRaw]) -> List[RouteCandidateRaw]:
     """동일 경로는 기본 경로를 우선 보존하고 우회 경로는 A, B 순으로 반환한다."""
     unique: List[RouteCandidateRaw] = []
+    seen_hashes: set[str] = set()
     for candidate in sorted(candidates, key=_candidate_sort_key):
+        h = _polyline_hash(candidate.coordinates)
+        if h and h in seen_hashes:
+            print(f"[경로] 폴리라인 해시 중복 제외: {candidate.id}")
+            continue
         matching = next((existing for existing in unique if _routes_are_equivalent(existing, candidate)), None)
         if matching:
             print(f"[경로] 중복 후보 제외: {candidate.id} (기존 {matching.id}와 동일)")
             continue
+        if h:
+            seen_hashes.add(h)
         unique.append(candidate)
     return unique
+
+
+def _straight_line_m(origin: Tuple[float, float], destination: Tuple[float, float]) -> float:
+    return float(
+        haversine_m(
+            np.array([origin[0]]),
+            np.array([origin[1]]),
+            np.array([destination[0]]),
+            np.array([destination[1]]),
+        )[0]
+    )
+
+
+def detour_ratio_for_route(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+    distance_m: float,
+) -> float:
+    """경로 길이 ÷ 직선거리."""
+    straight = max(_straight_line_m(origin, destination), 1.0)
+    return float(distance_m) / straight
+
+
+def access_warning_for_ratio(ratio: float) -> str | None:
+    """우회비 임계 초과 시 UI 안내 문구."""
+    if ratio > settings.max_detour_ratio:
+        return "도보 접근이 어려운 구간입니다. 이 목적지는 우회로가 거의 없어 선택지가 제한됩니다."
+    return None
+
+
+def _pedestrian_search_options(primary: str) -> list[str]:
+    """시연용 다중 후보: searchOption 0/4/10 (primary 먼저)."""
+    options = [primary]
+    if not settings.tmap_pedestrian_alt_enabled:
+        return options
+    for opt in ("0", "4", "10"):
+        if opt not in options:
+            options.append(opt)
+    return options
 
 
 def _detour_via_for_risk(
@@ -1286,31 +1355,22 @@ def get_route_candidates(
 
     candidates: List[RouteCandidateRaw] = []
 
-    # Tmap 보행자: 대로 우선(기본) + 선택적 alt + 사고다발·문서위험 우회 후보
+    # Tmap 보행자: searchOption 0/4/10 다중 후보 + 사고다발·문서위험 우회
     primary_option = settings.tmap_pedestrian_search_option
     # 건물·존 중심점이 도로 밖이면 왕복 스파이크가 나므로 보행망에 스냅
     origin_s = _snap_to_pedestrian_network(origin, search_option=primary_option)
     dest_s = _snap_to_pedestrian_network(destination, search_option=primary_option)
 
-    direct = _call_tmap(
-        origin_s,
-        dest_s,
-        search_option=primary_option,
-        route_suffix="main",
-    )
-    if direct:
-        candidates.append(direct)
-
-    if settings.tmap_pedestrian_alt_enabled:
-        alt_option = "10" if primary_option != "10" else "0"
-        alt = _call_tmap(
+    for i, opt in enumerate(_pedestrian_search_options(primary_option)):
+        suffix = "main" if i == 0 else f"opt{opt}"
+        cand = _call_tmap(
             origin_s,
             dest_s,
-            search_option=alt_option,
-            route_suffix="alt",
+            search_option=opt,
+            route_suffix=suffix,
         )
-        if alt:
-            candidates.append(alt)
+        if cand:
+            candidates.append(cand)
 
     candidates = _append_avoid_point_detours(
         origin_s,
@@ -1322,5 +1382,5 @@ def get_route_candidates(
     if not candidates:
         print("[경로] Tmap 보행자 API 전부 실패 - MOCK 폴백 없이 빈 결과 반환")
         return []
-    print(f"[경로] === Tmap 보행자 API 성공: 후보 {len(candidates)}개 ===")
+    print(f"[경로] === Tmap 보행자 API 성공: 후보 {len(candidates)}개 (옵션 {_pedestrian_search_options(primary_option)}) ===")
     return _finalize_candidates(_deduplicate_candidates(candidates))

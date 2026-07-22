@@ -26,7 +26,12 @@ from ..models import (
 )
 from ..services import gamification, geocoding, public_data, solar, weather
 from ..console_safe import safe_print
-from ..services.routing import ensure_navigation_steps_for_coords, get_route_candidates
+from ..services.routing import (
+    access_warning_for_ratio,
+    detour_ratio_for_route,
+    ensure_navigation_steps_for_coords,
+    get_route_candidates,
+)
 from ..services.safety_facilities import get_safety_facilities
 from ..services.scoring import score_candidates
 from ..services.time_context import build_time_context, is_nighttime
@@ -184,6 +189,8 @@ def compute_route(req: RouteRequest) -> RouteResponse:
             )
 
     candidates: list[RouteCandidate] = []
+    origin_pt = (origin.lat, origin.lng)
+    dest_pt = (destination.lat, destination.lng)
     for s in scored:
         raw_steps = s.raw.navigation_steps
         if not raw_steps and len(s.raw.coordinates) >= 2:
@@ -193,6 +200,7 @@ def compute_route(req: RouteRequest) -> RouteResponse:
                 f"-> 좌표 기반 합성 {len(raw_steps)}단계"
             )
 
+        ratio = round(detour_ratio_for_route(origin_pt, dest_pt, s.raw.distance_m), 2)
         candidates.append(
             RouteCandidate(
                 id=s.raw.id,
@@ -214,6 +222,8 @@ def compute_route(req: RouteRequest) -> RouteResponse:
                     )
                     for step in raw_steps
                 ],
+                detour_ratio=ratio,
+                access_warning=access_warning_for_ratio(ratio),
             )
         )
 

@@ -256,6 +256,9 @@ def absolute_score(
     if walk_minutes is None:
         walk_minutes = (features.distance_km / 4.0) * 60.0
     score -= _walk_overtime_penalty(walk_minutes)
+    # 상단 소프트 압축 — 안심 복도(삼릉초 등)에서 100 하드클립으로 순위가 뭉개지지 않게
+    if score > 90.0:
+        score = 90.0 + (score - 90.0) * 0.4
     return float(np.clip(score, 0, 100))
 
 
