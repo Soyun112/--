@@ -219,6 +219,12 @@ class DocumentRiskPoint(BaseModel):
     id: int
     lat: float
     lng: float
+    end_lat: Optional[float] = None
+    end_lng: Optional[float] = None
+    location_text: Optional[str] = None
+    geocode_query: Optional[str] = None
+    end_geocode_query: Optional[str] = None
+    matched_label: Optional[str] = None
     risk_type: str
     is_risk: bool
     snippet: str

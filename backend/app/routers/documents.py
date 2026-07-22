@@ -20,10 +20,17 @@ MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 
 
 def _to_risk_point(row) -> DocumentRiskPoint:
+    keys = set(row.keys())
     return DocumentRiskPoint(
         id=row["id"],
         lat=row["lat"],
         lng=row["lng"],
+        end_lat=row["end_lat"] if "end_lat" in keys else None,
+        end_lng=row["end_lng"] if "end_lng" in keys else None,
+        location_text=row["location_text"] if "location_text" in keys else None,
+        geocode_query=row["geocode_query"] if "geocode_query" in keys else None,
+        end_geocode_query=row["end_geocode_query"] if "end_geocode_query" in keys else None,
+        matched_label=row["matched_label"] if "matched_label" in keys else None,
         risk_type=row["risk_type"] or "",
         is_risk=bool(row["is_risk"]),
         snippet=row["snippet"] or "",
@@ -31,7 +38,7 @@ def _to_risk_point(row) -> DocumentRiskPoint:
         page=row["page"],
         report_date=row["report_date"],
         recommendation=row["recommendation"],
-        is_estimated=bool(row["is_estimated"]) if "is_estimated" in row.keys() else False,
+        is_estimated=bool(row["is_estimated"]) if "is_estimated" in keys else False,
     )
 
 

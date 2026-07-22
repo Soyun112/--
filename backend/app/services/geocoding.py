@@ -164,8 +164,25 @@ def _tmap_fulladdr(query: str) -> Optional[GeocodeResult]:
     return GeocodeResult(hit.lat, hit.lng, hit.label, hit.source) if hit else None
 
 
-def geocode(query: str, near: tuple[float, float] | None = None) -> Optional[GeocodeResult]:
-    """이름/주소 문자열을 좌표로 변환. near가 있으면 그 주변 POI를 우선한다."""
+def looks_like_road_address(query: str) -> bool:
+    """도로명+번지 형태면 주소 지오코딩을 우선한다."""
+    q = (query or "").strip()
+    if not q:
+        return False
+    return bool(re.search(r"(로|길|대로)\s*\d+", q))
+
+
+def geocode(
+    query: str,
+    near: tuple[float, float] | None = None,
+    *,
+    prefer_address: bool | None = None,
+) -> Optional[GeocodeResult]:
+    """이름/주소 문자열을 좌표로 변환.
+
+    prefer_address=True 이거나 도로명+번지 형태면 Tmap fullAddr를 POI/키워드보다 먼저 시도한다.
+    (문서 공사 구간 정확도용)
+    """
     q = (query or "").strip()
     if not q:
         return None
@@ -175,7 +192,13 @@ def geocode(query: str, near: tuple[float, float] | None = None) -> Optional[Geo
     if hit:
         return hit
 
+    use_address_first = prefer_address if prefer_address is not None else looks_like_road_address(q)
     poi_near = near or (settings.demo_center_lat, settings.demo_center_lng)
+
+    if use_address_first and settings.tmap_app_key:
+        result = _tmap_fulladdr(q)
+        if result:
+            return result
 
     for provider in (_kakao_keyword, _naver_local):
         result = provider(q)
@@ -183,11 +206,22 @@ def geocode(query: str, near: tuple[float, float] | None = None) -> Optional[Geo
             return result
 
     if settings.tmap_app_key:
-        hit = search_poi(q, near=poi_near)
-        if hit:
-            return GeocodeResult(hit.lat, hit.lng, hit.label, hit.source)
-        hit = geocode_full_address(q)
-        if hit:
-            return GeocodeResult(hit.lat, hit.lng, hit.label, hit.source)
+        if not use_address_first:
+            poi = search_poi(q, near=poi_near)
+            if poi:
+                return GeocodeResult(poi.lat, poi.lng, poi.label, poi.source)
+            result = _tmap_fulladdr(q)
+            if result:
+                return result
+        else:
+            # 주소 우선이었는데 fullAddr 실패 → POI 최후 시도
+            poi = search_poi(q, near=poi_near)
+            if poi:
+                return GeocodeResult(poi.lat, poi.lng, poi.label, poi.source)
 
     return None
+
+
+def geocode_document_address(query: str) -> Optional[GeocodeResult]:
+    """문서 위험 구간용: 도로명주소를 최대한 정확히."""
+    return geocode(query, prefer_address=True)

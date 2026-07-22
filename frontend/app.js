@@ -1145,7 +1145,7 @@ function renderLegend() {
       ([layer, color, label]) =>
         `<button type="button" class="legend-item" data-public-layer="${layer}"><span class="dot" style="background:${CATEGORY_COLORS[color]}"></span>${label}</button>`
     ).join("")}
-    <span class="legend-route-help">굵은 실선 = 선택한 경로</span>
+    <span class="legend-route-help">굵은 실선 = 선택한 경로 · 빨간 구간선 = 문서 위험(시작~끝)</span>
   `;
   el.querySelectorAll("[data-public-layer]").forEach((item) => {
     const showLayer = () => setActivePublicLayer(item.dataset.publicLayer);
@@ -1173,12 +1173,108 @@ function shouldShowPublicLayer(layer) {
 }
 
 function documentRiskPointsForMap(publicData, routeData) {
-  const all = (publicData?.doc_risk_points || []).filter((d) => d.is_risk);
+  const all = (publicData?.doc_risk_points || []).filter((d) => d.is_risk && !d.is_estimated);
   if (!all.length) return [];
-  // 문서 반영 직후면 경로 검색 전에도 전부 표시
+  // 문서 반영 직후면 경로 검색 전에도 전체 표시
   if (state.docMode === "analyzed" || !routeData || !activeRoute(routeData)) return all;
   const near = pointsNearRecommendedRoute(all, routeData, 220);
   return near.length ? near : all;
+}
+
+function docRiskHasSegment(d) {
+  return (
+    Number.isFinite(d?.end_lat) &&
+    Number.isFinite(d?.end_lng) &&
+    (Math.abs(d.end_lat - d.lat) > 1e-6 || Math.abs(d.end_lng - d.lng) > 1e-6)
+  );
+}
+
+function docRiskTitle(d) {
+  const prefix = d.is_estimated ? "[추정] " : "";
+  const label = d.location_text || d.risk_type || "위험";
+  const src = d.source_doc ? ` (${d.source_doc})` : "";
+  return `${prefix}[문서근거] ${label}${src}`;
+}
+
+function docRiskInfoHtml(d) {
+  const lines = [`<strong>${docRiskTitle(d)}</strong>`];
+  const startQ = d.geocode_query || "";
+  const endQ = d.end_geocode_query || "";
+  if (startQ && endQ) {
+    lines.push(`검색어: ${startQ} ~ ${endQ}`);
+  } else if (startQ) {
+    lines.push(`검색어: ${startQ}`);
+  }
+  if (d.matched_label) lines.push(`매칭: ${d.matched_label}`);
+  return `<div style="padding:6px 8px;font-size:12px;line-height:1.45;max-width:260px;">${lines.join("<br>")}</div>`;
+}
+
+/** 문서 위험: 구간이면 해당 시작~끝만 선으로 연결(지점끼리 연쇄 연결 금지). */
+function drawDocRiskOverlays(points, { track, bounds, onBounds }) {
+  let segmentCount = 0;
+  points.forEach((d) => {
+    const color = d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk;
+    const title = docRiskTitle(d);
+    const start = new Tmapv2.LatLng(d.lat, d.lng);
+    bounds.extend(start);
+    if (onBounds) onBounds();
+
+    if (docRiskHasSegment(d)) {
+      const end = new Tmapv2.LatLng(d.end_lat, d.end_lng);
+      bounds.extend(end);
+      if (onBounds) onBounds();
+      track(
+        new Tmapv2.Polyline({
+          path: [start, end],
+          strokeColor: color,
+          strokeWeight: 5,
+          strokeStyle: "solid",
+          strokeOpacity: 0.9,
+          map: state.tmap,
+        })
+      );
+      segmentCount += 1;
+      [start, end].forEach((latlng) => {
+        const m = track(
+          new Tmapv2.Marker({
+            position: latlng,
+            icon: tmapDotIcon(color),
+            iconSize: new Tmapv2.Size(14, 14),
+            map: state.tmap,
+          })
+        );
+        m.addListener("click", () => {
+          if (state.infoWindow) state.infoWindow.setMap(null);
+          state.infoWindow = new Tmapv2.InfoWindow({
+            position: latlng,
+            content: docRiskInfoHtml(d),
+            type: 2,
+            map: state.tmap,
+          });
+        });
+      });
+      return;
+    }
+
+    const m = track(
+      new Tmapv2.Marker({
+        position: start,
+        icon: tmapDotIcon(color),
+        iconSize: new Tmapv2.Size(18, 18),
+        map: state.tmap,
+      })
+    );
+    m.addListener("click", () => {
+      if (state.infoWindow) state.infoWindow.setMap(null);
+      state.infoWindow = new Tmapv2.InfoWindow({
+        position: start,
+        content: docRiskInfoHtml(d),
+        type: 2,
+        map: state.tmap,
+      });
+    });
+  });
+  return segmentCount;
 }
 
 function renderDocRiskOnlyMap(publicData) {
@@ -1203,32 +1299,13 @@ function renderDocRiskOnlyMap(publicData) {
     return overlay;
   };
 
-  points.forEach((d) => {
-    const latlng = new Tmapv2.LatLng(d.lat, d.lng);
-    bounds.extend(latlng);
-    const color = d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk;
-    const title = `${d.is_estimated ? "[추정] " : ""}[문서근거] ${d.risk_type || "위험"} (${d.source_doc || ""})`;
-    const m = track(
-      new Tmapv2.Marker({
-        position: latlng,
-        icon: tmapDotIcon(color),
-        iconSize: new Tmapv2.Size(18, 18),
-        map: state.tmap,
-      })
-    );
-    m.addListener("click", () => {
-      if (state.infoWindow) state.infoWindow.setMap(null);
-      state.infoWindow = new Tmapv2.InfoWindow({
-        position: latlng,
-        content: `<div style="padding:6px 8px;font-size:12px;">${title}</div>`,
-        type: 2,
-        map: state.tmap,
-      });
-    });
-  });
-
+  const segmentCount = drawDocRiskOverlays(points, { track, bounds });
   state.tmap.fitBounds(bounds);
-  setMapStatus(`문서 위험 핀 ${points.length}곳 표시`, false);
+  const pinOnly = points.length - segmentCount;
+  const parts = [];
+  if (segmentCount) parts.push(`구간 선 ${segmentCount}개`);
+  if (pinOnly > 0) parts.push(`핀 ${pinOnly}곳`);
+  setMapStatus(`문서 위험 ${parts.join(" · ") || `${points.length}곳`} 표시`, false);
   renderLegend();
 }
 
@@ -1269,9 +1346,15 @@ function distanceMeters(a, b) {
 function pointsNearRecommendedRoute(points, routeData, radiusM = 140) {
   const selected = activeRoute(routeData);
   if (!selected) return [];
-  return points.filter((point) =>
-    selected.coordinates.some((coordinate) => distanceMeters(point, coordinate) <= radiusM)
-  );
+  return points.filter((point) => {
+    const ends = [{ lat: point.lat, lng: point.lng }];
+    if (docRiskHasSegment(point)) {
+      ends.push({ lat: point.end_lat, lng: point.end_lng });
+    }
+    return ends.some((end) =>
+      selected.coordinates.some((coordinate) => distanceMeters(end, coordinate) <= radiusM)
+    );
+  });
 }
 
 function renderSvgMap(routeData, publicData) {
@@ -1292,7 +1375,14 @@ function renderSvgMap(routeData, publicData) {
     c.coordinates.forEach((pt) => allPoints.push(pt));
   });
   [childZones, accidentHotspots, guardianHouses, sf.cctv, sf.streetlight, documentPoints]
-    .forEach((points) => points.forEach((point) => allPoints.push(point)));
+    .forEach((points) =>
+      points.forEach((point) => {
+        allPoints.push(point);
+        if (docRiskHasSegment(point)) {
+          allPoints.push({ lat: point.end_lat, lng: point.end_lng });
+        }
+      })
+    );
   if (allPoints.length === 0) return;
 
   const bounds = computeBounds(allPoints);
@@ -1371,12 +1461,26 @@ function renderSvgMap(routeData, publicData) {
   if (shouldShowPublicLayer("doc-risk")) {
     documentPoints.forEach((d) => {
       const color = d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk;
-      drawMarker(
-        d,
-        color,
-        "square",
-        `${d.is_estimated ? "[추정] " : ""}[문서근거] ${d.risk_type} (${d.source_doc})`
-      );
+      const title = docRiskTitle(d);
+      if (docRiskHasSegment(d)) {
+        const a = project(d, bounds, size, padding);
+        const b = project({ lat: d.end_lat, lng: d.end_lng }, bounds, size, padding);
+        const path = document.createElementNS(ns, "polyline");
+        path.setAttribute("points", `${a.x},${a.y} ${b.x},${b.y}`);
+        path.setAttribute("fill", "none");
+        path.setAttribute("stroke", color);
+        path.setAttribute("stroke-width", 4);
+        path.setAttribute("stroke-opacity", 0.9);
+        path.setAttribute("stroke-linecap", "round");
+        const titleEl = document.createElementNS(ns, "title");
+        titleEl.textContent = title;
+        path.appendChild(titleEl);
+        svg.appendChild(path);
+        drawMarker(d, color, "square", title);
+        drawMarker({ lat: d.end_lat, lng: d.end_lng }, color, "square", title);
+      } else {
+        drawMarker(d, color, "square", title);
+      }
     });
   }
 
@@ -1671,13 +1775,13 @@ function renderTmapRoutes(routeData, publicData) {
     marker(g, CATEGORY_COLORS.guardian, `🏪 ${g.name || "아동안전지킴이집"}`)
   );
   if (shouldShowPublicLayer("doc-risk")) {
-    documentPoints.forEach((d) =>
-      marker(
-        d,
-        d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk,
-        `${d.is_estimated ? "[추정] " : ""}[문서근거] ${d.risk_type} (${d.source_doc})`
-      )
-    );
+    drawDocRiskOverlays(documentPoints, {
+      track,
+      bounds,
+      onBounds: () => {
+        hasPoint = true;
+      },
+    });
   }
 
   const originName = routeData.origin.name || "출발";
@@ -1807,6 +1911,44 @@ function hideDocReviewPanel() {
   if (list) list.innerHTML = "";
 }
 
+function hideDocPlacedPanel() {
+  const panel = document.getElementById("doc-placed-panel");
+  const list = document.getElementById("doc-placed-list");
+  if (panel) panel.hidden = true;
+  if (list) list.innerHTML = "";
+}
+
+function renderDocPlacedPanel(createdPoints) {
+  const panel = document.getElementById("doc-placed-panel");
+  const list = document.getElementById("doc-placed-list");
+  if (!panel || !list) return;
+
+  const points = Array.isArray(createdPoints) ? createdPoints : [];
+  if (!points.length) {
+    hideDocPlacedPanel();
+    return;
+  }
+
+  list.innerHTML = "";
+  points.forEach((pt) => {
+    const li = document.createElement("li");
+    li.className = "doc-review-item";
+    const title = document.createElement("p");
+    title.className = "doc-review-item-title";
+    title.textContent = pt.location_text || pt.geocode_query || "구간";
+    const meta = document.createElement("p");
+    meta.className = "doc-review-item-meta";
+    const startQ = pt.start_geocode_query || pt.geocode_query || "";
+    const endQ = pt.end_geocode_query || "";
+    const queryLine = endQ ? `${startQ} ~ ${endQ}` : startQ;
+    const match = pt.matched_label ? ` → ${pt.matched_label}` : "";
+    meta.textContent = `검색어: ${queryLine}${match}`;
+    li.append(title, meta);
+    list.appendChild(li);
+  });
+  panel.hidden = false;
+}
+
 function renderDocReviewPanel(pendingPoints) {
   const panel = document.getElementById("doc-review-panel");
   const list = document.getElementById("doc-review-list");
@@ -1836,13 +1978,25 @@ function renderDocReviewPanel(pendingPoints) {
 
     const label = document.createElement("label");
     label.setAttribute("for", `doc-review-query-${idx}`);
-    label.textContent = "지도 검색어";
+    label.textContent = "지도 검색어 (시작 또는 단일)";
 
     const input = document.createElement("input");
     input.type = "text";
     input.id = `doc-review-query-${idx}`;
     input.className = "doc-review-query";
-    input.value = pt.geocode_query || pt.location_text || "";
+    input.value = pt.start_geocode_query || pt.geocode_query || pt.location_text || "";
+    input.placeholder = "예: 서울 강남구 선릉로 305";
+
+    const endLabel = document.createElement("label");
+    endLabel.setAttribute("for", `doc-review-end-${idx}`);
+    endLabel.textContent = "끝 검색어 (구간일 때)";
+
+    const endInput = document.createElement("input");
+    endInput.type = "text";
+    endInput.id = `doc-review-end-${idx}`;
+    endInput.className = "doc-review-query";
+    endInput.value = pt.end_geocode_query || "";
+    endInput.placeholder = "예: 서울 강남구 역삼로 314";
 
     const actions = document.createElement("div");
     actions.className = "doc-review-actions";
@@ -1851,7 +2005,9 @@ function renderDocReviewPanel(pendingPoints) {
     confirmBtn.type = "button";
     confirmBtn.className = "doc-review-confirm";
     confirmBtn.textContent = "지도에 올리기";
-    confirmBtn.addEventListener("click", () => confirmPendingDocPoint(pt, input, confirmBtn, li));
+    confirmBtn.addEventListener("click", () =>
+      confirmPendingDocPoint(pt, input, endInput, confirmBtn, li)
+    );
 
     const skipBtn = document.createElement("button");
     skipBtn.type = "button";
@@ -1863,19 +2019,25 @@ function renderDocReviewPanel(pendingPoints) {
     });
 
     actions.append(confirmBtn, skipBtn);
-    li.append(title, meta, label, input, actions);
+    li.append(title, meta, label, input, endLabel, endInput, actions);
     list.appendChild(li);
   });
 
   panel.hidden = false;
 }
 
-async function confirmPendingDocPoint(pt, inputEl, btn, itemEl) {
+async function confirmPendingDocPoint(pt, inputEl, endInputEl, btn, itemEl) {
   const query = (inputEl?.value || "").trim();
+  const endQuery = (endInputEl?.value || "").trim();
   if (!query) {
     setDocUploadStatus("검색어를 입력한 뒤 다시 시도해 주세요.", "error");
     return;
   }
+
+  const locationText =
+    endQuery && !String(pt.location_text || "").includes("~")
+      ? `${query} ~ ${endQuery}`
+      : pt.location_text || (endQuery ? `${query} ~ ${endQuery}` : query);
 
   try {
     if (btn) {
@@ -1886,7 +2048,7 @@ async function confirmPendingDocPoint(pt, inputEl, btn, itemEl) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        location_text: pt.location_text || "",
+        location_text: locationText,
         geocode_query: query,
         risk_type: pt.risk_type || "",
         is_risk: pt.is_risk !== false,
@@ -1904,7 +2066,7 @@ async function confirmPendingDocPoint(pt, inputEl, btn, itemEl) {
 
     const reran = await maybeRerunRouteAfterDocument();
     if (!reran) await refreshPublicDataAndMap({ focusDocRisk: true });
-    setDocUploadStatus(`「${query}」위치를 지도에 핀으로 올렸어요.`, "ok");
+    setDocUploadStatus(`「${query}${endQuery ? ` ~ ${endQuery}` : ""}」위치를 지도에 올렸어요.`, "ok");
   } catch (err) {
     console.error(err);
     setDocUploadStatus(err.message || "위치 확인에 실패했습니다.", "error");
@@ -2104,6 +2266,7 @@ async function confirmDocumentQueue() {
   const queue = [...state.docQueue];
   let totalCreated = 0;
   let allPending = [];
+  let allCreated = [];
   const errors = [];
 
   try {
@@ -2114,6 +2277,7 @@ async function confirmDocumentQueue() {
     if (addBtn) addBtn.disabled = true;
     if (skipBtn) skipBtn.disabled = true;
     hideDocReviewPanel();
+    hideDocPlacedPanel();
 
     for (let i = 0; i < queue.length; i += 1) {
       const item = queue[i];
@@ -2125,7 +2289,9 @@ async function confirmDocumentQueue() {
         const data = await ingestOneDocument(item.file);
         totalCreated += data?.risk_points_created ?? 0;
         const pending = data?.extracted?.skipped_points || [];
+        const created = data?.extracted?.created_points || [];
         allPending = allPending.concat(pending);
+        allCreated = allCreated.concat(created);
       } catch (err) {
         console.error(err);
         errors.push(`${item.name}: ${err.message || "실패"}`);
@@ -2147,16 +2313,17 @@ async function confirmDocumentQueue() {
     state.docMode = "analyzed";
     syncRouteSubmitButton();
     renderDocReviewPanel(allPending);
+    renderDocPlacedPanel(allCreated);
 
     const errHint = errors.length ? ` · 일부 실패 ${errors.length}건` : "";
     if (totalCreated > 0) {
       setDocUploadStatus(
-        `이전 핀 지운 뒤 ①텍스트추출 → ②Solar/규칙 주소변환 → ③핀 ${totalCreated}개 표시${errHint}. 「안전 경로 찾기」하면 ④문서 위험 우회까지 반영돼요.`,
+        `이전 핀 지운 뒤 ①텍스트추출 → ②주소변환(도로명주소 우선) → ③구간 ${totalCreated}개 표시${errHint}. 검색 실패한 곳은 아래에서 수정하세요.`,
         "ok"
       );
     } else if (allPending.length > 0) {
       setDocUploadStatus(
-        `①~②까지는 됐지만 ③핀을 바로 못 찍은 곳이 있어요. 아래 검색어를 확인하면 지도에 올라가요.${errHint}`,
+        `①~②까지는 됐지만 ③지도 검색에 실패한 곳이 있어요. 아래 검색어를 고치면 올라가요.${errHint}`,
         ""
       );
     } else {

@@ -81,6 +81,12 @@ CREATE TABLE IF NOT EXISTS doc_risk_points (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lat REAL NOT NULL,
     lng REAL NOT NULL,
+    end_lat REAL,
+    end_lng REAL,
+    location_text TEXT,
+    geocode_query TEXT,
+    end_geocode_query TEXT,
+    matched_label TEXT,
     risk_type TEXT,
     is_risk INTEGER DEFAULT 1,
     snippet TEXT,
@@ -112,16 +118,26 @@ def session() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def _ensure_doc_risk_estimated_column(conn: sqlite3.Connection) -> None:
+def _ensure_doc_risk_columns(conn: sqlite3.Connection) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(doc_risk_points)").fetchall()}
-    if "is_estimated" not in cols:
-        conn.execute("ALTER TABLE doc_risk_points ADD COLUMN is_estimated INTEGER DEFAULT 0")
+    migrations = {
+        "is_estimated": "ALTER TABLE doc_risk_points ADD COLUMN is_estimated INTEGER DEFAULT 0",
+        "end_lat": "ALTER TABLE doc_risk_points ADD COLUMN end_lat REAL",
+        "end_lng": "ALTER TABLE doc_risk_points ADD COLUMN end_lng REAL",
+        "location_text": "ALTER TABLE doc_risk_points ADD COLUMN location_text TEXT",
+        "geocode_query": "ALTER TABLE doc_risk_points ADD COLUMN geocode_query TEXT",
+        "end_geocode_query": "ALTER TABLE doc_risk_points ADD COLUMN end_geocode_query TEXT",
+        "matched_label": "ALTER TABLE doc_risk_points ADD COLUMN matched_label TEXT",
+    }
+    for name, sql in migrations.items():
+        if name not in cols:
+            conn.execute(sql)
 
 
 def init_db() -> None:
     with session() as conn:
         conn.executescript(SCHEMA)
-        _ensure_doc_risk_estimated_column(conn)
+        _ensure_doc_risk_columns(conn)
 
 
 def clear_table(table: str) -> None:
@@ -180,14 +196,27 @@ def insert_doc_risk_point(
     report_date,
     recommendation,
     is_estimated: bool = False,
+    end_lat=None,
+    end_lng=None,
+    location_text: str | None = None,
+    geocode_query: str | None = None,
+    end_geocode_query: str | None = None,
+    matched_label: str | None = None,
 ):
     conn.execute(
         "INSERT INTO doc_risk_points "
-        "(lat, lng, risk_type, is_risk, snippet, source_doc, page, report_date, recommendation, is_estimated) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "(lat, lng, end_lat, end_lng, location_text, geocode_query, end_geocode_query, matched_label, "
+        "risk_type, is_risk, snippet, source_doc, page, report_date, recommendation, is_estimated) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             lat,
             lng,
+            end_lat,
+            end_lng,
+            location_text,
+            geocode_query,
+            end_geocode_query,
+            matched_label,
             risk_type,
             int(is_risk),
             snippet,

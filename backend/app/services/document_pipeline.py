@@ -188,17 +188,19 @@ _MANUAL_GEOCODE_FALLBACK = {
 }
 
 
-def geocode_location_text(location_text: str) -> tuple[float, float] | None:
+def geocode_location_text(location_text: str):
+    """문서 주소 검색. (lat, lng, label, source) 또는 None."""
     if not location_text:
         return None
     if location_text in _MANUAL_GEOCODE_FALLBACK:
-        return _MANUAL_GEOCODE_FALLBACK[location_text]
+        lat, lng = _MANUAL_GEOCODE_FALLBACK[location_text]
+        return lat, lng, location_text, "manual-fallback"
 
-    from .geocoding import geocode
+    from .geocoding import geocode_document_address
 
-    result = geocode(location_text)
+    result = geocode_document_address(location_text)
     if result is not None:
-        return result.lat, result.lng
+        return result.lat, result.lng, result.label, result.source
     return None
 
 
@@ -208,8 +210,12 @@ def _resolve_plot_coordinates(
     location_text: str,
     region_hint: str,
     point_index: int,
-) -> tuple[float, float, str, float]:
-    """좌표를 최대한 찾아 반환. (lat, lng, note, confidence_cap)"""
+) -> tuple[float, float, str, float, str] | None:
+    """좌표를 찾아 반환. 실패 시 None (추정 핀을 찍지 않음).
+
+    성공: (lat, lng, note, confidence_cap, matched_label)
+    """
+    del point_index  # 추정 jitter 제거 후 미사용
     candidates: list[str] = []
     for raw in (geocode_query, location_text):
         q = (raw or "").strip()
@@ -220,26 +226,27 @@ def _resolve_plot_coordinates(
     hint_parts = [p.strip() for p in re.split(r"[,/|]", hint) if p.strip()]
     primary_hint = hint_parts[0] if hint_parts else hint
 
+    # 힌트만으로 찍는 건 부정확 → 후보에서 제외. 힌트+주소 조합만 허용
     if primary_hint:
         for q in list(candidates):
+            if q == primary_hint:
+                continue
             combo = f"{primary_hint} {q}".strip()
             if combo not in candidates:
                 candidates.append(combo)
-        if primary_hint not in candidates:
-            candidates.append(primary_hint)
 
     for q in candidates:
+        if primary_hint and q == primary_hint:
+            continue
         geocoded = geocode_location_text(q)
         if geocoded is not None:
-            if q == primary_hint or (primary_hint and q.startswith(primary_hint)):
-                return geocoded[0], geocoded[1], f"검색어 보정 후 표시: {q}", 0.5
-            return geocoded[0], geocoded[1], f"검색 성공: {q}", 1.0
+            lat, lng, label, source = geocoded
+            note = f"검색 성공({source}): {q}"
+            if label and label != q:
+                note += f" → {label}"
+            return lat, lng, note, 1.0, label or q
 
-    jitter = ((point_index % 5) - 2) * 0.00035
-    lat = settings.demo_center_lat + jitter
-    lng = settings.demo_center_lng + jitter * 0.8
-    return lat, lng, "검색 실패 → 경로 지역 근처에 추정 표시", 0.25
-
+    return None
 
 def _region_prefix(region_hint: str) -> str:
     hint = (region_hint or "").strip()
@@ -256,6 +263,8 @@ def _to_map_query(road_addr: str, region_hint: str = "") -> str:
     q = q.replace("～", "~").replace("〜", "~")
     if not q:
         return ""
+    # 역삼로314 → 역삼로 314 (지오코딩 인식률)
+    q = re.sub(r"([로길대로])(\d)", r"\1 \2", q)
     if q.startswith("서울"):
         return q
     prefix = _region_prefix(region_hint)
@@ -291,10 +300,10 @@ def risk_points_from_location_map_text(
         dong = (match.group(2) or "").strip()
         start_addr = re.sub(r"\s+", " ", match.group(3).strip())
         end_addr = re.sub(r"\s+", " ", match.group(4).strip())
-        preferred = end_addr if road_title in end_addr else start_addr
-        if preferred in seen:
+        key = f"{start_addr}~{end_addr}"
+        if key in seen:
             continue
-        seen.add(preferred)
+        seen.add(key)
         loc = f"{road_title}"
         if dong:
             loc += f"({dong})"
@@ -302,7 +311,9 @@ def risk_points_from_location_map_text(
         points.append(
             {
                 "location_text": loc,
-                "geocode_query": _to_map_query(preferred, region_hint),
+                "geocode_query": _to_map_query(start_addr, region_hint),
+                "start_geocode_query": _to_map_query(start_addr, region_hint),
+                "end_geocode_query": _to_map_query(end_addr, region_hint),
                 "confidence": 0.85,
                 "normalize_note": "위치도 구간 규칙 추출",
                 "risk_type": "공사/정비 구간",
@@ -314,12 +325,49 @@ def risk_points_from_location_map_text(
     return points
 
 
+def _segment_queries_from_location_text(
+    location_text: str,
+    *,
+    region_hint: str = "",
+    fallback_query: str = "",
+) -> tuple[str, str | None]:
+    """'A ~ B' 형태면 시작·끝 검색어로 나눈다. 아니면 단일 점."""
+    text = (location_text or "").strip()
+    fallback = (fallback_query or "").strip()
+    if not text and not fallback:
+        return "", None
+
+    m = re.search(
+        r"([가-힣A-Za-z0-9]+(?:로|길|대로)\s*\d+)"
+        r"\s*[~～〜\-–—]\s*"
+        r"([가-힣A-Za-z0-9]+(?:로|길|대로)\s*\d+)",
+        text,
+    )
+    if m:
+        return (
+            _to_map_query(m.group(1), region_hint),
+            _to_map_query(m.group(2), region_hint),
+        )
+    return _to_map_query(fallback or text, region_hint), None
+
+
 def _merge_risk_points(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
     for group in groups:
         for item in group or []:
-            key = re.sub(r"\s+", "", (item.get("geocode_query") or item.get("location_text") or "").strip().lower())
+            key = re.sub(
+                r"\s+",
+                "",
+                (
+                    item.get("location_text")
+                    or item.get("geocode_query")
+                    or item.get("start_geocode_query")
+                    or ""
+                )
+                .strip()
+                .lower(),
+            )
             if not key or key in seen:
                 continue
             seen.add(key)
@@ -345,7 +393,7 @@ def solar_extract_map_points_from_text(
 
     system = (
         "당신은 한국 도로 공사·위치도·통학로 문서에서 "
-        "지도(Tmap 지오코딩/POI)에 핀을 찍을 주소를 만드는 도우미입니다. "
+        "지도(Tmap 지오코딩/POI)에 구간(시작~끝)을 올릴 주소를 만드는 도우미입니다. "
         "원문에 없는 주소·가상 학교명(OO초등학교 등)을 만들지 마세요. JSON만 출력하세요."
     )
     user = (
@@ -353,9 +401,10 @@ def solar_extract_map_points_from_text(
         f"지역 힌트: {region_hint or '(없음)'}\n\n"
         "할 일:\n"
         "1) 본문/위치도에서 공사·위험 구간을 모두 뽑으세요 (①②③④ 등).\n"
-        "2) location_text: 원문 표현에 가깝게\n"
-        "3) geocode_query: 지도가 바로 검색할 수 있는 형식만\n\n"
-        "【geocode_query 좋은 예시 — 이 형식을 따르세요】\n"
+        "2) location_text: 원문 표현에 가깝게 (가능하면 '시작~끝' 포함)\n"
+        "3) start_geocode_query / end_geocode_query: 구간의 양 끝 지도 검색어\n"
+        "4) geocode_query: start와 동일하게 두어도 됨\n\n"
+        "【지도 검색어 좋은 예시 — 이 형식을 따르세요】\n"
         '- "서울 강남구 선릉로 305"\n'
         '- "서울 강남구 논현로76길 21"\n'
         '- "서울 강남구 도곡로 168"\n'
@@ -364,17 +413,19 @@ def solar_extract_map_points_from_text(
         "【위치도 원문 → 변환 예시】\n"
         '원문: "① 선릉로 (역삼2동) 역삼로314 ~ 선릉로305"\n'
         '→ location_text: "선릉로(역삼2동) 역삼로314~선릉로305"\n'
-        '→ geocode_query: "서울 강남구 선릉로 305"\n\n'
+        '→ start_geocode_query: "서울 강남구 역삼로 314"\n'
+        '→ end_geocode_query: "서울 강남구 선릉로 305"\n\n'
         '원문: "② 논현로76길 (역삼2동) 논현로412 ~ 논현로76길21"\n'
-        '→ geocode_query: "서울 강남구 논현로76길 21"\n\n'
+        '→ start_geocode_query: "서울 강남구 논현로 412"\n'
+        '→ end_geocode_query: "서울 강남구 논현로76길 21"\n\n'
         "【나쁜 예 — 쓰지 마세요】\n"
         '- "OO초등학교 서측 골목" / "정문 앞"만 단독 / 샘플·가상 지명\n\n'
-        "구간(A ~ B)이면 지도 검색되는 도로명+번지 하나를 geocode_query로 넣으세요.\n"
-        "구·동이 없으면 '서울 강남구'를 앞에 붙이세요.\n"
+        "구간(A ~ B)이면 시작·끝 둘 다 넣으세요. 구·동이 없으면 '서울 강남구'를 앞에 붙이세요.\n"
         "confidence, risk_type, is_risk=true(공사/위험), snippet, recommendation\n"
         "위치가 없으면 risk_points=[]\n"
         "출력 JSON만:\n"
-        '{"risk_points":[{"location_text":"...","geocode_query":"...","confidence":0.0,'
+        '{"risk_points":[{"location_text":"...","geocode_query":"...","start_geocode_query":"...",'
+        '"end_geocode_query":"...","confidence":0.0,'
         '"risk_type":"...","is_risk":true,"snippet":"...","recommendation":"..."}]}\n\n'
         f"본문:\n{text[:8000]}"
     )
@@ -404,15 +455,25 @@ def solar_extract_map_points_from_text(
                 continue
             loc = str(raw.get("location_text") or "").strip()
             query = str(raw.get("geocode_query") or loc).strip()
-            if not loc and not query:
+            start_q = str(raw.get("start_geocode_query") or "").strip()
+            end_q = str(raw.get("end_geocode_query") or "").strip()
+            if not loc and not query and not start_q:
                 continue
             if not loc:
-                loc = query
+                loc = query or start_q
             if not query:
-                query = loc
+                query = start_q or loc
             if "OO초등" in loc or "OO초등" in query or "샘플" in loc:
                 continue
-            query = _to_map_query(query, region_hint)
+            if not start_q or not end_q:
+                parsed_start, parsed_end = _segment_queries_from_location_text(
+                    loc, region_hint=region_hint, fallback_query=query
+                )
+                start_q = start_q or parsed_start
+                end_q = end_q or (parsed_end or "")
+            start_q = _to_map_query(start_q or query, region_hint)
+            end_q = _to_map_query(end_q, region_hint) if end_q else ""
+            query = start_q or _to_map_query(query, region_hint)
             try:
                 conf = float(raw.get("confidence", 0.6))
             except (TypeError, ValueError):
@@ -422,6 +483,8 @@ def solar_extract_map_points_from_text(
                 {
                     "location_text": loc,
                     "geocode_query": query,
+                    "start_geocode_query": start_q,
+                    "end_geocode_query": end_q or None,
                     "confidence": conf,
                     "normalize_note": "Document Parse → Solar 주소화",
                     "risk_type": str(raw.get("risk_type") or "공사/정비 구간"),
@@ -445,7 +508,7 @@ def ingest_document(
     region_hint: str = "",
     replace_existing: bool = True,
 ) -> dict[str, Any]:
-    """1) 텍스트 추출 → 2) Solar/규칙 주소화 → 3) 핀 → (4는 안전경로 찾기에서 반영)."""
+    """1) 텍스트 추출 → 2) Solar/규칙 주소화 → 3) 구간 핀·선 → (4는 안전경로 찾기에서 반영)."""
     stages: list[dict[str, str]] = []
 
     if replace_existing:
@@ -492,7 +555,8 @@ def ingest_document(
             region_hint=region_hint,
         )
         from_rules = risk_points_from_location_map_text(markdown, region_hint=region_hint)
-        normalized = _merge_risk_points(from_solar, from_rules)
+        # 위치도 A~B 규칙은 Solar보다 안정적이라 규칙 우선
+        normalized = _merge_risk_points(from_rules, from_solar)
         source = "document-parse+solar+rules"
         if not normalized:
             normalized = risk_points_from_filename(filename)
@@ -533,29 +597,92 @@ def ingest_document(
         for idx, rp in enumerate(normalized):
             location_text = (rp.get("location_text") or "").strip()
             geocode_query = (rp.get("geocode_query") or location_text).strip()
+            start_query = (rp.get("start_geocode_query") or "").strip()
+            end_query = (rp.get("end_geocode_query") or "").strip()
+            if not start_query or not end_query:
+                parsed_start, parsed_end = _segment_queries_from_location_text(
+                    location_text, region_hint=region_hint, fallback_query=geocode_query
+                )
+                start_query = start_query or parsed_start
+                end_query = end_query or (parsed_end or "")
+            if not start_query:
+                start_query = geocode_query
             confidence = float(rp.get("confidence") or 0)
             plot_note = rp.get("normalize_note") or ""
-            used_fallback_plot = False
+            end_lat = end_lng = None
+            matched_label = ""
+            end_matched_label = ""
 
             if extracted.get("already_geocoded") and rp.get("lat") is not None:
                 lat, lng = rp["lat"], rp["lng"]
+                end_lat = rp.get("end_lat")
+                end_lng = rp.get("end_lng")
+                matched_label = rp.get("matched_label") or ""
                 confidence = max(confidence, 0.9)
             else:
-                lat, lng, resolve_note, conf_cap = _resolve_plot_coordinates(
-                    geocode_query=geocode_query,
+                start_hit = _resolve_plot_coordinates(
+                    geocode_query=start_query or geocode_query,
                     location_text=location_text,
                     region_hint=region_hint,
                     point_index=idx,
                 )
-                confidence = min(confidence if confidence > 0 else conf_cap, conf_cap)
-                plot_note = f"{plot_note} · {resolve_note}".strip(" ·")
-                used_fallback_plot = conf_cap <= 0.5
+                if start_hit is None:
+                    pending = _pending_point_payload(
+                        {
+                            **rp,
+                            "geocode_query": start_query or geocode_query or location_text,
+                            "start_geocode_query": start_query,
+                            "end_geocode_query": end_query or None,
+                        },
+                        filename=filename,
+                        reason="지도에서 못 찾았어요 — 검색어를 고친 뒤 「지도에 올리기」",
+                    )
+                    skipped_points.append(pending)
+                    continue
 
-            is_estimated = confidence < ESTIMATED_CONFIDENCE_THRESHOLD
+                lat, lng, resolve_note, conf_cap, matched_label = start_hit
+                confidence = min(confidence if confidence > 0 else conf_cap, conf_cap)
+                plot_note = f"{plot_note} · 시작 {resolve_note}".strip(" ·")
+
+                if end_query:
+                    end_hit = _resolve_plot_coordinates(
+                        geocode_query=end_query,
+                        location_text=location_text,
+                        region_hint=region_hint,
+                        point_index=idx,
+                    )
+                    if end_hit is not None:
+                        end_lat, end_lng, end_note, end_cap, end_matched_label = end_hit
+                        plot_note = f"{plot_note} · 끝 {end_note}".strip(" ·")
+                        confidence = min(confidence, end_cap)
+                    else:
+                        plot_note = f"{plot_note} · 끝 검색 실패(시작만 표시)".strip(" ·")
+                        pending = _pending_point_payload(
+                            {
+                                **rp,
+                                "geocode_query": end_query,
+                                "start_geocode_query": start_query,
+                                "end_geocode_query": end_query,
+                            },
+                            filename=filename,
+                            reason="끝점 검색 실패 — 끝 주소 검색어를 확인해 주세요",
+                        )
+                        skipped_points.append(pending)
+
+            is_estimated = False
+            label_for_store = matched_label
+            if end_matched_label:
+                label_for_store = f"{matched_label} ~ {end_matched_label}".strip(" ~")
             db.insert_doc_risk_point(
                 conn,
                 lat=lat,
                 lng=lng,
+                end_lat=end_lat,
+                end_lng=end_lng,
+                location_text=location_text or None,
+                geocode_query=start_query or geocode_query or None,
+                end_geocode_query=end_query or None,
+                matched_label=label_for_store or None,
                 risk_type=rp.get("risk_type", "") or "문서 위험지점",
                 is_risk=rp.get("is_risk", True),
                 snippet=rp.get("snippet", ""),
@@ -569,31 +696,27 @@ def ingest_document(
             created_points.append(
                 {
                     "location_text": location_text,
-                    "geocode_query": geocode_query,
+                    "geocode_query": start_query or geocode_query,
+                    "start_geocode_query": start_query,
+                    "end_geocode_query": end_query or None,
+                    "matched_label": label_for_store,
                     "confidence": confidence,
                     "lat": lat,
                     "lng": lng,
+                    "end_lat": end_lat,
+                    "end_lng": end_lng,
                     "risk_type": rp.get("risk_type", ""),
                     "is_risk": bool(rp.get("is_risk", True)),
                     "is_estimated": is_estimated,
                     "note": plot_note,
                 }
             )
-            if used_fallback_plot:
-                pending = _pending_point_payload(
-                    {**rp, "geocode_query": geocode_query or location_text or region_hint},
-                    filename=filename,
-                    reason="추정 위치로 표시됨 — 검색어를 고치면 더 정확해져요",
-                )
-                pending["lat"] = lat
-                pending["lng"] = lng
-                skipped_points.append(pending)
 
     stages.append(
         _pipeline_stage(
             "3_map_pins",
             "ok" if created else "empty",
-            f"지도 핀 {created}개 · 추정/보류 {len(skipped_points)}개",
+            f"지도 구간/핀 {created}개 · 추정/보류 {len(skipped_points)}개",
         )
     )
     stages.append(
@@ -645,13 +768,30 @@ def confirm_document_point(
     if geocoded is None:
         raise ValueError(f"위치를 찾지 못했습니다: {query}")
 
-    lat, lng = geocoded
+    lat, lng, matched_label, _source = geocoded
+    # 구간 끝 검색어가 location_text에 A~B로 있으면 함께 시도
+    end_lat = end_lng = None
+    end_query = None
+    _start_q, parsed_end = _segment_queries_from_location_text(location_text, fallback_query=query)
+    if parsed_end and parsed_end != query:
+        end_hit = geocode_location_text(parsed_end)
+        if end_hit is not None:
+            end_lat, end_lng, end_label, _ = end_hit
+            end_query = parsed_end
+            matched_label = f"{matched_label} ~ {end_label}"
+
     db.init_db()
     with db.session() as conn:
         db.insert_doc_risk_point(
             conn,
             lat=lat,
             lng=lng,
+            end_lat=end_lat,
+            end_lng=end_lng,
+            location_text=location_text or None,
+            geocode_query=query,
+            end_geocode_query=end_query,
+            matched_label=matched_label or None,
             risk_type=risk_type or "",
             is_risk=is_risk,
             snippet=snippet or "",
@@ -667,8 +807,11 @@ def confirm_document_point(
         "id": int(row_id),
         "lat": lat,
         "lng": lng,
+        "end_lat": end_lat,
+        "end_lng": end_lng,
         "risk_type": risk_type or "",
         "is_estimated": False,
         "source_doc": source_doc or "manual-confirm",
         "geocode_query": query,
+        "matched_label": matched_label,
     }
