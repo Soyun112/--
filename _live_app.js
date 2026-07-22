@@ -37,6 +37,12 @@ const DEMO_SCENARIOS = {
     age: 8,
     note: "도성초등학교에서 필수학학원으로 이동하는 길의 안전시설을 비교해 보여줍니다.",
   },
+  cheongdam_to_eonbuk: {
+    origin: "삼성청담파크아파트",
+    destination: "언북초등학교",
+    age: 8,
+    note: "청담·언북초 통학로 — 사고다발 인근에서 우회·점수 비교를 보여줍니다.",
+  },
 };
 
 const state = {
