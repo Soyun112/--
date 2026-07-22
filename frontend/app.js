@@ -2000,8 +2000,11 @@ function renderDocPlacedPanel(createdPoints) {
     const startQ = pt.start_geocode_query || pt.geocode_query || "";
     const endQ = pt.end_geocode_query || "";
     const queryLine = endQ ? `${startQ} ~ ${endQ}` : startQ;
-    const match = pt.matched_label ? ` → ${pt.matched_label}` : "";
-    meta.textContent = `검색어: ${queryLine}${match}`;
+    const match = pt.matched_label || "";
+    const matchClean = match.replace(/\s+/g, "");
+    const queryClean = queryLine.replace(/\s+/g, "");
+    const showMatch = match && matchClean && matchClean !== queryClean;
+    meta.textContent = showMatch ? `검색어: ${queryLine} → ${match}` : `검색어: ${queryLine}`;
     li.append(title, meta);
     list.appendChild(li);
   });

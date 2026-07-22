@@ -257,20 +257,68 @@ def _region_prefix(region_hint: str) -> str:
     return "서울 강남구"
 
 
+# 도로명+번지: 논현로76길21 · 테헤란로108길42 · 선릉로305
+# (짧은 '로+숫자'가 '로N길M'을 가로채지 않도록 긴 패턴 우선)
+_ROAD_TITLE_RE = (
+    r"(?:"
+    r"[가-힣A-Za-z0-9]+(?:로|대로)\d+길|"
+    r"[가-힣A-Za-z0-9]+\d+길|"
+    r"[가-힣A-Za-z0-9]+(?:로|길|대로)"
+    r")"
+)
+_ROAD_ADDR_RE = rf"(?:{_ROAD_TITLE_RE})\s*\d+"
+
+
+def _normalize_road_number(addr: str) -> str:
+    """논현로76길21 → 논현로76길 21, 선릉로305 → 선릉로 305."""
+    s = re.sub(r"\s+", "", (addr or "").strip())
+    if not s:
+        return ""
+    m = re.match(rf"^({_ROAD_TITLE_RE})(\d+)$", s)
+    if m:
+        return f"{m.group(1)} {m.group(2)}"
+    return (addr or "").strip()
+
+
 def _to_map_query(road_addr: str, region_hint: str = "") -> str:
     """지도(Tmap 지오코딩/POI)가 읽기 쉬운 검색어로 정리."""
     q = re.sub(r"\s+", " ", (road_addr or "").strip())
     q = q.replace("～", "~").replace("〜", "~")
     if not q:
         return ""
-    # 역삼로314 → 역삼로 314 (지오코딩 인식률)
-    q = re.sub(r"([로길대로])(\d)", r"\1 \2", q)
-    if q.startswith("서울"):
-        return q
+    # 이미 시·구가 있으면 도로명·번지만 정규화
     prefix = _region_prefix(region_hint)
-    if q.startswith(prefix):
-        return q
-    return f"{prefix} {q}"
+    body = q
+    if q.startswith("서울"):
+        # "서울 강남구 논현로76길21" → prefix 유지 + body 정규화
+        rest = re.sub(r"^서울(?:\s*특별시)?(?:\s*강남구)?\s*", "", q).strip()
+        body = _normalize_road_number(rest) if rest else q
+        return f"{prefix} {body}".strip() if rest else q
+    body = _normalize_road_number(q)
+    if body.startswith(prefix):
+        return body
+    return f"{prefix} {body}"
+
+
+def _format_segment_location_text(
+    *,
+    road_title: str,
+    start_addr: str,
+    end_addr: str,
+    dong: str = "",
+) -> str:
+    """표시용 제목: 선릉로(역삼로 314 ~ 선릉로 305, 역삼2동)"""
+    start_n = _normalize_road_number(start_addr)
+    end_n = _normalize_road_number(end_addr)
+    title = (road_title or "").strip() or (start_n.split()[0] if start_n else "공사구간")
+    # 제목에 도로명이 중복되지 않게 (논현로 논현로… 방지)
+    if title and start_n.startswith(title) and end_n.startswith(title):
+        inner = f"{start_n} ~ {end_n}"
+    else:
+        inner = f"{start_n} ~ {end_n}"
+    if dong:
+        return f"{title}({inner}, {dong})"
+    return f"{title}({inner})"
 
 
 def risk_points_from_location_map_text(
@@ -286,35 +334,39 @@ def risk_points_from_location_map_text(
     points: list[dict[str, Any]] = []
     seen: set[str] = set()
     section_re = re.compile(
-        r"[①②③④⑤⑥⑦⑧⑨⑩]?\s*"
-        r"([가-힣A-Za-z0-9]+(?:로|길|대로))"
-        r"(?:\s*\(([^)]*)\))?"
-        r"[^\n①②③④⑤⑥⑦⑧⑨⑩]{0,120}?"
-        r"([가-힣A-Za-z0-9]+(?:로|길|대로)\s*\d+)"
-        r"\s*[~～〜\-–—]\s*"
-        r"([가-힣A-Za-z0-9]+(?:로|길|대로)\s*\d+)",
+        rf"[①②③④⑤⑥⑦⑧⑨⑩]?\s*"
+        rf"({_ROAD_TITLE_RE})"
+        rf"(?:\s*\(([^)]*)\))?"
+        rf"[^\n①②③④⑤⑥⑦⑧⑨⑩]{{0,120}}?"
+        rf"({_ROAD_ADDR_RE})"
+        rf"\s*[~～〜\-–—]\s*"
+        rf"({_ROAD_ADDR_RE})",
         re.MULTILINE,
     )
     for match in section_re.finditer(raw):
         road_title = match.group(1).strip()
         dong = (match.group(2) or "").strip()
-        start_addr = re.sub(r"\s+", " ", match.group(3).strip())
-        end_addr = re.sub(r"\s+", " ", match.group(4).strip())
-        key = f"{start_addr}~{end_addr}"
+        start_addr = match.group(3).strip()
+        end_addr = match.group(4).strip()
+        start_q = _to_map_query(start_addr, region_hint)
+        end_q = _to_map_query(end_addr, region_hint)
+        key = re.sub(r"\s+", "", f"{start_q}~{end_q}".lower())
         if key in seen:
             continue
         seen.add(key)
-        loc = f"{road_title}"
-        if dong:
-            loc += f"({dong})"
-        loc += f" {start_addr}~{end_addr}"
+        loc = _format_segment_location_text(
+            road_title=road_title,
+            start_addr=start_addr,
+            end_addr=end_addr,
+            dong=dong,
+        )
         points.append(
             {
                 "location_text": loc,
-                "geocode_query": _to_map_query(start_addr, region_hint),
-                "start_geocode_query": _to_map_query(start_addr, region_hint),
-                "end_geocode_query": _to_map_query(end_addr, region_hint),
-                "confidence": 0.85,
+                "geocode_query": start_q,
+                "start_geocode_query": start_q,
+                "end_geocode_query": end_q,
+                "confidence": 0.9,
                 "normalize_note": "위치도 구간 규칙 추출",
                 "risk_type": "공사/정비 구간",
                 "is_risk": True,
@@ -338,9 +390,7 @@ def _segment_queries_from_location_text(
         return "", None
 
     m = re.search(
-        r"([가-힣A-Za-z0-9]+(?:로|길|대로)\s*\d+)"
-        r"\s*[~～〜\-–—]\s*"
-        r"([가-힣A-Za-z0-9]+(?:로|길|대로)\s*\d+)",
+        rf"({_ROAD_ADDR_RE})\s*[~～〜\-–—]\s*({_ROAD_ADDR_RE})",
         text,
     )
     if m:
@@ -351,24 +401,26 @@ def _segment_queries_from_location_text(
     return _to_map_query(fallback or text, region_hint), None
 
 
+def _segment_dedupe_key(item: dict[str, Any]) -> str:
+    """시작~끝 검색어 기준으로 중복 판별 (제목 표기 차이는 무시)."""
+    start = (item.get("start_geocode_query") or item.get("geocode_query") or "").strip()
+    end = (item.get("end_geocode_query") or "").strip()
+    if start or end:
+        return re.sub(r"\s+", "", f"{start}~{end}".lower())
+    return re.sub(
+        r"\s+",
+        "",
+        (item.get("location_text") or item.get("geocode_query") or "").strip().lower(),
+    )
+
+
 def _merge_risk_points(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
     for group in groups:
         for item in group or []:
-            key = re.sub(
-                r"\s+",
-                "",
-                (
-                    item.get("location_text")
-                    or item.get("geocode_query")
-                    or item.get("start_geocode_query")
-                    or ""
-                )
-                .strip()
-                .lower(),
-            )
-            if not key or key in seen:
+            key = _segment_dedupe_key(item)
+            if not key or key in seen or key == "~":
                 continue
             seen.add(key)
             merged.append(item)
@@ -392,37 +444,32 @@ def solar_extract_map_points_from_text(
         return []
 
     system = (
-        "당신은 한국 도로 공사·위치도·통학로 문서에서 "
-        "지도(Tmap 지오코딩/POI)에 구간(시작~끝)을 올릴 주소를 만드는 도우미입니다. "
-        "원문에 없는 주소·가상 학교명(OO초등학교 등)을 만들지 마세요. JSON만 출력하세요."
+        "당신은 한국 도로 공사·위치도 문서에서 공사 구간(시작~끝)만 뽑는 도우미입니다. "
+        "원문에 없는 주소·가상 지명(OO초등학교 등)을 만들지 마세요. "
+        "같은 구간을 중복으로 넣지 마세요. JSON만 출력하세요."
     )
     user = (
         f"문서명: {filename}\n"
         f"지역 힌트: {region_hint or '(없음)'}\n\n"
         "할 일:\n"
-        "1) 본문/위치도에서 공사·위험 구간을 모두 뽑으세요 (①②③④ 등).\n"
-        "2) location_text: 원문 표현에 가깝게 (가능하면 '시작~끝' 포함)\n"
-        "3) start_geocode_query / end_geocode_query: 구간의 양 끝 지도 검색어\n"
-        "4) geocode_query: start와 동일하게 두어도 됨\n\n"
-        "【지도 검색어 좋은 예시 — 이 형식을 따르세요】\n"
-        '- "서울 강남구 선릉로 305"\n'
-        '- "서울 강남구 논현로76길 21"\n'
-        '- "서울 강남구 도곡로 168"\n'
-        '- "서울 강남구 테헤란로108길 42"\n'
-        '- "서울 강남구 역삼로 314"\n\n'
-        "【위치도 원문 → 변환 예시】\n"
+        "1) 위치도 ①②③④ 등 공사 구간만 추출 (한 구간 = 한 항목).\n"
+        "2) location_text 형식: '도로명(시작번지 ~ 끝번지, 동)'\n"
+        "3) start_geocode_query / end_geocode_query: 지도 검색용 (시·구 + 도로명 + 번지)\n\n"
+        "【좋은 예시】\n"
         '원문: "① 선릉로 (역삼2동) 역삼로314 ~ 선릉로305"\n'
-        '→ location_text: "선릉로(역삼2동) 역삼로314~선릉로305"\n'
+        '→ location_text: "선릉로(역삼로 314 ~ 선릉로 305, 역삼2동)"\n'
         '→ start_geocode_query: "서울 강남구 역삼로 314"\n'
         '→ end_geocode_query: "서울 강남구 선릉로 305"\n\n'
         '원문: "② 논현로76길 (역삼2동) 논현로412 ~ 논현로76길21"\n'
+        '→ location_text: "논현로76길(논현로 412 ~ 논현로76길 21, 역삼2동)"\n'
         '→ start_geocode_query: "서울 강남구 논현로 412"\n'
         '→ end_geocode_query: "서울 강남구 논현로76길 21"\n\n'
-        "【나쁜 예 — 쓰지 마세요】\n"
-        '- "OO초등학교 서측 골목" / "정문 앞"만 단독 / 샘플·가상 지명\n\n'
-        "구간(A ~ B)이면 시작·끝 둘 다 넣으세요. 구·동이 없으면 '서울 강남구'를 앞에 붙이세요.\n"
-        "confidence, risk_type, is_risk=true(공사/위험), snippet, recommendation\n"
-        "위치가 없으면 risk_points=[]\n"
+        "【나쁜 예】\n"
+        '- "논현로 논현로 412"처럼 도로명 중복\n'
+        '- "논현로 76"처럼 길·번지 잘림 (논현로76길 21 이어야 함)\n'
+        "- 시작만 넣고 끝 생략 / OO초등학교\n\n"
+        "구·동이 없으면 '서울 강남구'를 붙이세요. confidence, risk_type, is_risk=true, snippet, recommendation\n"
+        "없으면 risk_points=[]\n"
         "출력 JSON만:\n"
         '{"risk_points":[{"location_text":"...","geocode_query":"...","start_geocode_query":"...",'
         '"end_geocode_query":"...","confidence":0.0,'
@@ -474,6 +521,23 @@ def solar_extract_map_points_from_text(
             start_q = _to_map_query(start_q or query, region_hint)
             end_q = _to_map_query(end_q, region_hint) if end_q else ""
             query = start_q or _to_map_query(query, region_hint)
+            # 제목 정규화 (도로명 중복·번지 잘림 방지)
+            if start_q and end_q:
+                road_guess = ""
+                m_title = re.match(rf"^({_ROAD_TITLE_RE})", loc.replace(" ", ""))
+                if m_title:
+                    road_guess = m_title.group(1)
+                dong_m = re.search(r"\(([^)]*[동가])\)", loc)
+                dong = (dong_m.group(1) if dong_m else "").strip()
+                # 괄호 안이 '시작~끝, 동' 형태면 동만 추출
+                if "," in dong:
+                    dong = dong.split(",")[-1].strip()
+                loc = _format_segment_location_text(
+                    road_title=road_guess,
+                    start_addr=start_q.replace(_region_prefix(region_hint), "").strip(),
+                    end_addr=end_q.replace(_region_prefix(region_hint), "").strip(),
+                    dong=dong,
+                )
             try:
                 conf = float(raw.get("confidence", 0.6))
             except (TypeError, ValueError):
@@ -549,15 +613,20 @@ def ingest_document(
             _pipeline_stage("2_solar_address", "ok", f"MOCK Solar 주소화 · {len(normalized)}곳")
         )
     else:
-        from_solar = solar_extract_map_points_from_text(
-            markdown,
-            filename=filename,
-            region_hint=region_hint,
-        )
         from_rules = risk_points_from_location_map_text(markdown, region_hint=region_hint)
-        # 위치도 A~B 규칙은 Solar보다 안정적이라 규칙 우선
-        normalized = _merge_risk_points(from_rules, from_solar)
-        source = "document-parse+solar+rules"
+        # 위치도 A~B 규칙이 잡히면 Solar는 보조용만(중복 제거). 규칙이 있으면 Solar 호출 생략.
+        if from_rules:
+            from_solar: list[dict[str, Any]] = []
+            normalized = from_rules
+            source = "document-parse+rules"
+        else:
+            from_solar = solar_extract_map_points_from_text(
+                markdown,
+                filename=filename,
+                region_hint=region_hint,
+            )
+            normalized = _merge_risk_points(from_solar)
+            source = "document-parse+solar"
         if not normalized:
             normalized = risk_points_from_filename(filename)
             source = "filename" if normalized else "empty"
@@ -565,17 +634,16 @@ def ingest_document(
                 _pipeline_stage(
                     "2_solar_address",
                     "fallback" if normalized else "empty",
-                    "Solar/규칙 없음 → 파일명 폴백" if normalized else "주소화할 지점 없음",
+                    "규칙/Solar 없음 → 파일명 폴백" if normalized else "주소화할 지점 없음",
                 )
             )
         else:
-            stages.append(
-                _pipeline_stage(
-                    "2_solar_address",
-                    "ok",
-                    f"Solar {len(from_solar)} + 규칙 {len(from_rules)} → 합 {len(normalized)}곳",
-                )
+            detail = (
+                f"규칙 {len(from_rules)}곳 (위치도 우선)"
+                if from_rules
+                else f"Solar {len(from_solar)}곳"
             )
+            stages.append(_pipeline_stage("2_solar_address", "ok", detail))
         extracted = {
             "risk_points": normalized,
             "mock": False,
