@@ -166,10 +166,35 @@ def test_seolleung_sidewalk_commute_detected_both_directions():
     )
 
 
-def test_bias_coords_shifts_corridor_east():
-    from app.services.routing import _bias_coords_to_east_sidewalk
+def test_force_densify_waypoints_fills_from_tmap(monkeypatch):
+    from app.services import routing
 
-    coords = [(37.5005, 127.0500), (37.4995, 127.0501)]
-    biased = _bias_coords_to_east_sidewalk(coords, shift_m=10.0)
-    assert biased[0][1] > coords[0][1]
-    assert biased[1][1] > coords[1][1]
+    waypoints = [
+        (37.5012, 127.0499),
+        (37.5000, 127.0502),
+        (37.4989686, 127.0525688),
+    ]
+    dense_leg = [
+        (37.5012, 127.0499),
+        (37.5008, 127.0500),
+        (37.5004, 127.0501),
+        (37.5000, 127.0502),
+    ]
+
+    def fake_fetch(origin, destination, *, search_option, pass_list=None):
+        return {
+            "features": [
+                {
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": [[lng, lat] for lat, lng in dense_leg],
+                    },
+                    "properties": {"index": 1, "distance": 120, "time": 100},
+                }
+            ]
+        }
+
+    monkeypatch.setattr(routing, "_fetch_tmap_pedestrian_data", fake_fetch)
+    result = routing._force_densify_waypoints(waypoints[:2], "4")
+    assert len(result) >= 3
+    assert result[0] == waypoints[0]
