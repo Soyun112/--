@@ -20,10 +20,10 @@ const PUBLIC_DATA_LEGEND = [
 
 const DEMO_SCENARIOS = {
   morning_school: {
-    origin: "역삼로 306",
+    origin: "선릉로 221",
     destination: "선릉로64길 33",
     age: 8,
-    note: "등교: 개나리래미안아파트(역삼로 306) → 도곡초등학교(선릉로64길 33).",
+    note: "등교: 도곡렉슬아파트(선릉로 221) → 도곡초등학교(선릉로64길 33).",
   },
   school_to_academy: {
     origin: "선릉로64길 33",
@@ -33,10 +33,10 @@ const DEMO_SCENARIOS = {
   },
   night_academy: {
     origin: "도곡로 313",
-    destination: "역삼로 306",
+    destination: "선릉로 221",
     age: 11,
     forceNight: true,
-    note: "야간 하원: 게이트대치어학원(도곡로 313) → 개나리래미안아파트(역삼로 306). 야간 가중치로 채점합니다.",
+    note: "야간 하원: 게이트대치어학원(도곡로 313) → 도곡렉슬아파트(선릉로 221). 야간 가중치로 채점합니다.",
   },
   academy_detour: {
     origin: "도곡로 445",
