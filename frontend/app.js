@@ -130,6 +130,61 @@ function scoreColor(score) {
   return "#d64545";
 }
 
+/** 강남구 초등 통학로 캘리브 분위수 (점수 → 누적 %). */
+const GANGNAM_SCORE_PERCENTILES = [
+  [42.1, 0],
+  [48.8, 10],
+  [53.7, 25],
+  [60.3, 50],
+  [65.6, 75],
+  [78.1, 90],
+  [96.0, 100],
+];
+const GANGNAM_SCORE_MEDIAN = 60;
+
+function scorePercentile(score) {
+  const s = Number(score);
+  if (!Number.isFinite(s)) return null;
+  const table = GANGNAM_SCORE_PERCENTILES;
+  if (s <= table[0][0]) return table[0][1];
+  if (s >= table[table.length - 1][0]) return table[table.length - 1][1];
+  for (let i = 0; i < table.length - 1; i++) {
+    const [x0, y0] = table[i];
+    const [x1, y1] = table[i + 1];
+    if (s >= x0 && s <= x1) {
+      const t = (s - x0) / (x1 - x0 || 1);
+      return y0 + t * (y1 - y0);
+    }
+  }
+  return null;
+}
+
+function safetyGradeInfo(score) {
+  const s = Number(score);
+  if (s >= 70) return { label: "안전", className: "grade-safe" };
+  if (s >= 55) return { label: "보통", className: "grade-mid" };
+  return { label: "주의", className: "grade-caution" };
+}
+
+function scoreBenchmarkLine(score) {
+  const s = Number(score);
+  if (!Number.isFinite(s)) return "";
+  return `${s}점 · 강남구 초등 통학로 평균 ${GANGNAM_SCORE_MEDIAN}점`;
+}
+
+function scoreTopPercentLine(score) {
+  const pct = scorePercentile(score);
+  if (pct == null) return "";
+  const top = Math.max(0, Math.min(100, Math.round(100 - pct)));
+  if (top <= 0) return "강남 통학로 최상위";
+  return `강남 통학로 상위 ${top}%`;
+}
+
+function gradeBadgeHtml(score) {
+  const g = safetyGradeInfo(score);
+  return `<span class="grade-badge ${g.className}" title="70↑ 안전 · 55~70 보통 · 55↓ 주의">${g.label}</span>`;
+}
+
 /** 추천 vs 차순위 점수 격차에 따른 정직한 비교 문구. */
 function scoreGapCompareMessage(candidate, routeData) {
   if (!routeData?.candidates?.length || !candidate) return null;
@@ -415,7 +470,9 @@ function renderParentSafetyHtml(model) {
         <p class="safety-kicker">${escapeHtml(model.routeTag)}</p>
         <h4 class="safety-title">${escapeHtml(model.whyTitle || "왜 이 길인가요?")}</h4>
         <p class="safety-meta">
-          안전점수 <strong>${escapeHtml(model.score)}</strong>점
+          ${gradeBadgeHtml(model.score)}
+          <strong>${escapeHtml(scoreBenchmarkLine(model.score))}</strong>
+          <span aria-hidden="true">·</span> ${escapeHtml(scoreTopPercentLine(model.score))}
           <span aria-hidden="true">·</span> ${escapeHtml(model.distance)}
           <span aria-hidden="true">·</span> 약 ${escapeHtml(model.duration)}
         </p>
@@ -462,7 +519,7 @@ function buildSelectedRouteSafetyText(candidate, routeData) {
   const model = buildParentSafetyModel(candidate, routeData);
   return [
     `${model.whyTitle} (${model.routeTag})`,
-    `안전 ${model.score}점 · ${model.distance} · ${model.duration}`,
+    `안전 ${model.score}점 (${scoreBenchmarkLine(model.score)} · ${scoreTopPercentLine(model.score)} · ${safetyGradeInfo(model.score).label}) · ${model.distance} · ${model.duration}`,
     "",
     ...model.paragraphs,
     "",
@@ -1090,21 +1147,25 @@ function renderCandidates(data) {
           )}"</div>`;
         })
         .join("");
-      const stars = "⭐".repeat(c.star_rating) + "☆".repeat(3 - c.star_rating);
       const stampsHtml = (c.stamps || [])
         .map(
           (s) =>
             `<span class="stamp-chip" title="${s.description}">${s.emoji} ${s.label}${s.count > 1 ? ` x${s.count}` : ""}</span>`
         )
         .join("");
+      const topLine = scoreTopPercentLine(c.safety_score);
       return `
         <div class="candidate-card ${isRecommended ? "recommended" : ""} ${isActive ? "selected" : ""}" data-route-id="${c.id}" role="button" tabindex="0" aria-pressed="${isActive}">
           <h4>
             <span>${routeName}${recommendTag}</span>
-            <span class="score-pill" style="background:${scoreColor(c.safety_score)}">${c.safety_score}점</span>
+            <span class="score-pill-wrap">
+              ${gradeBadgeHtml(c.safety_score)}
+              <span class="score-pill" style="background:${scoreColor(c.safety_score)}">${c.safety_score}점</span>
+            </span>
           </h4>
+          <div class="score-benchmark">${escapeHtml(scoreBenchmarkLine(c.safety_score))}</div>
+          ${topLine ? `<div class="score-percentile">${escapeHtml(topLine)}</div>` : ""}
           ${gapMsg && isRecommended ? `<div class="score-gap-note">${gapMsg}</div>` : ""}
-          <div class="star-rating" title="안전 등급 ${c.star_rating}/3">${stars}</div>
           ${isRecommended ? `<div class="candidate-time">${routeTimeRange(c.duration_s)}</div>` : ""}
           <div class="candidate-meta candidate-summary">
             <span>거리: ${(c.distance_m / 1000).toFixed(2)}km</span>
@@ -1145,7 +1206,8 @@ function renderReports(data) {
   const fc = facilityCounts(recommended.features);
 
   keywords.innerHTML = `
-    <span class="route-keyword score">안전 ${recommended.safety_score}점</span>
+    <span class="route-keyword score">${gradeBadgeHtml(recommended.safety_score)} 안전 ${recommended.safety_score}점</span>
+    <span class="route-keyword">${escapeHtml(scoreTopPercentLine(recommended.safety_score))}</span>
     <span class="route-keyword">${data.time_context?.period_emoji || "☀️"} ${data.time_context?.period_label || "낮"}</span>
     <span class="route-keyword">CCTV ${fc.cctv}곳</span>
     <span class="route-keyword">보안등 ${fc.streetlight}개</span>
@@ -1168,10 +1230,9 @@ function renderReports(data) {
     board.innerHTML = `<div class="kid-progress-summary">🚶 길 스탬프는 「아이가 보기 쉽게」에서 받아요</div>`;
     return;
   }
-  const stars = "⭐".repeat(recommended.star_rating);
   board.innerHTML = `
     <div class="kid-progress-summary">🚶 길 스탬프는 「아이가 보기 쉽게」에서 받아요</div>
-    <div class="stamp-board-title">🎉 오늘의 안전 스탬프 ${stars}</div>
+    <div class="stamp-board-title">🎉 오늘의 안전 스탬프 ${gradeBadgeHtml(recommended.safety_score)}</div>
     <div class="stamps-row">
       ${recommended.stamps
         .map(
@@ -2808,6 +2869,8 @@ function setMode(mode) {
   document.getElementById("results-label").textContent = kidMode
     ? "오늘의 추천 길"
     : "안전한 길 비교";
+  const scaleHint = document.getElementById("score-scale-hint");
+  if (scaleHint) scaleHint.hidden = kidMode;
 
   if (!kidMode && state.lastResult) {
     renderParentReport(state.lastResult);

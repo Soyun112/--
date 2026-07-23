@@ -693,6 +693,59 @@ body.theme-dark .doc-review-skip {
   font-weight: 700;
 }
 .recommended-tag { font-size: 11px; color: var(--accent-green); font-weight: 700; margin-left: 8px; }
+
+.score-scale-hint {
+  margin: -4px 0 12px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted, #5b6b7c);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+.score-pill-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.grade-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.4em;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.4;
+  border: 1px solid transparent;
+}
+.grade-badge.grade-safe {
+  background: #e7f7ed;
+  color: #1f6b3f;
+  border-color: #b5e0c4;
+}
+.grade-badge.grade-mid {
+  background: #fff4e5;
+  color: #9a5b10;
+  border-color: #f0d2a0;
+}
+.grade-badge.grade-caution {
+  background: #fdecec;
+  color: #a32828;
+  border-color: #f0b8b8;
+}
+.score-benchmark,
+.score-percentile {
+  font-size: 12px;
+  color: var(--muted, #5b6b7c);
+  margin: 0 0 4px;
+  line-height: 1.4;
+}
+.score-percentile { font-weight: 600; color: #3d4f63; }
+.safety-meta .grade-badge { margin-right: 4px; vertical-align: middle; }
 .score-gap-note {
   margin: 4px 0 2px;
   font-size: 12px;
@@ -940,8 +993,6 @@ body.theme-dark .turn-step-landmark { color: #ffd79a; }
 
 .doc-evidence { margin-top: 8px; font-size: 12px; background: #fbf7ea; border-left: 3px solid var(--accent-orange); padding: 6px 8px; border-radius: 6px; }
 
-.star-rating { font-size: 15px; letter-spacing: 2px; margin: 2px 0 8px; }
-
 .stamps-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .stamp-chip {
   display: inline-flex;
@@ -1012,6 +1063,12 @@ body.theme-dark .kid-report-card { background: #193126; border-color: #3f8a60; }
 body.theme-dark .parent-report-card { background: #1a2838; border-color: #365774; }
 body.theme-dark .time-banner { background: linear-gradient(90deg, #2a2410, #1a2838); border-color: #4a6080; color: #edf3f8; }
 body.theme-dark .eta-chip { background: #1d3549; border-color: #365774; color: #b5ddff; }
+body.theme-dark .score-scale-hint { color: #9aadc0; }
+body.theme-dark .score-benchmark { color: #9aadc0; }
+body.theme-dark .score-percentile { color: #c5d4e2; }
+body.theme-dark .grade-badge.grade-safe { background: #1a3d2a; color: #8fd9a8; border-color: #2e6b45; }
+body.theme-dark .grade-badge.grade-mid { background: #3d3018; color: #f0c878; border-color: #7a5a20; }
+body.theme-dark .grade-badge.grade-caution { background: #3d1a1a; color: #f0a0a0; border-color: #7a3030; }
 body.theme-dark .candidate-card { background: #18212b; }
 body.theme-dark .candidate-card.selected { background: rgba(89, 188, 130, 0.12); }
 body.theme-dark .candidate-card h4 { color: var(--text); }
