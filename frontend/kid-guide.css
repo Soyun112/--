@@ -292,6 +292,22 @@ html.has-preload .kid-guide-loading {
 
 .kid-guide-friendly:empty { display: none; }
 
+.kid-guide-tip {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: #e7f5ff;
+  border: 2px solid #9fd0f0;
+  font-size: clamp(15px, 4.2vw, 17px);
+  font-weight: 700;
+  color: #1c5f8a;
+  line-height: 1.35;
+  max-width: 100%;
+  text-align: center;
+}
+
+.kid-guide-tip:empty { display: none; }
+
 .kid-guide-distance {
   margin: 0;
   font-size: clamp(18px, 5vw, 22px);

@@ -79,6 +79,14 @@ function renderCard(direction = 0) {
 
   document.getElementById("kid-guide-text").textContent = keyword;
   document.getElementById("kid-guide-friendly").textContent = step.friendly || "";
+  const tipEl = document.getElementById("kid-guide-tip");
+  if (tipEl) {
+    const tip =
+      step.tip ||
+      (typeof tipForShareStep === "function" ? tipForShareStep(step) : "") ||
+      "";
+    tipEl.textContent = tip;
+  }
   const distanceEl = document.getElementById("kid-guide-distance");
   if (distanceEl) {
     const meters = !isArrive && step.distance_m > 0 ? `${Math.round(step.distance_m)}m` : "";

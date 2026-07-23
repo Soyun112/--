@@ -1213,7 +1213,8 @@ async function setTimeMode(mode, { rerun = true } = {}) {
 
 function setRouteProgress(message) {
   const btn = document.getElementById("submit-btn");
-  if (btn && message) btn.textContent = message;
+  // 버튼 문구는 「안전 경로 찾기」 유지 — 진행 멘트는 버튼 아래에만 표시
+  if (btn) btn.textContent = "안전 경로 찾기";
   const el = document.getElementById("route-progress");
   if (el) {
     el.textContent = message || "";

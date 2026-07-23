@@ -133,8 +133,8 @@
         </fieldset>
         <div class="form-actions">
           <button type="submit" id="submit-btn" disabled title="먼저 안전 문서를 확인하거나 반영 안함을 선택해 주세요.">안전 경로 찾기</button>
-          <p id="route-progress" class="route-progress" hidden aria-live="polite"></p>
         </div>
+        <p id="route-progress" class="route-progress" hidden aria-live="polite"></p>
       </form>
       <p class="hint route-panel-hint">위에서 문서 확인(또는 반영 안함) 후, 출발·도착을 넣고 안전한 길을 찾아보세요.</p>
       <details class="demo-controls">
@@ -200,11 +200,13 @@
     <section class="panel results-panel">
       <h2 id="results-label">안전한 길 비교</h2>
       <p id="score-scale-hint" class="score-scale-hint">
-        점수 기준 ·
-        <span class="grade-badge grade-safe">안전</span> 70점 이상 ·
-        <span class="grade-badge grade-mid">보통</span> 55~70점 ·
-        <span class="grade-badge grade-caution">주의</span> 55점 미만 ·
-        강남구 초등 통학로 중앙값 60점
+        <span class="score-scale-label">점수 기준</span>
+        <span class="score-scale-grades">
+          <span class="score-scale-item"><span class="grade-badge grade-safe">안전</span> 70점 이상</span>
+          <span class="score-scale-item"><span class="grade-badge grade-mid">보통</span> 55~70점</span>
+          <span class="score-scale-item"><span class="grade-badge grade-caution">주의</span> 55점 미만</span>
+        </span>
+        <span class="score-scale-note">강남구 초등 통학로 중앙값 60점</span>
       </p>
       <div id="candidates-list" class="candidates-list">
         <p class="placeholder">안전 경로를 찾으면 여기에 결과가 표시됩니다.</p>

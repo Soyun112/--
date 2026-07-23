@@ -312,11 +312,13 @@ button {
 #submit-btn { background: var(--primary); color: white; }
 #submit-btn:hover { background: var(--primary-dark); }
 .route-progress {
-  margin: 8px 0 0;
+  margin: 8px 2px 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--primary-dark, #1e4a7a);
+  line-height: 1.4;
 }
+.route-progress[hidden] { display: none !important; }
 .ai-text.pending {
   color: var(--muted);
   font-style: italic;
@@ -970,9 +972,29 @@ body.theme-dark .doc-review-skip {
   line-height: 1.55;
   color: var(--muted, #5b6b7c);
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.score-scale-label {
+  font-weight: 700;
+  color: var(--text, #1c2733);
+}
+.score-scale-grades {
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 6px;
+  gap: 6px 10px;
+}
+.score-scale-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.score-scale-note {
+  font-size: 11px;
+  color: var(--muted, #5b6b7c);
 }
 .score-pill-wrap {
   display: inline-flex;

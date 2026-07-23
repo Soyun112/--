@@ -102,13 +102,11 @@ function buildKidSafetyTip({ keyword, landmarkLabel, stepCount, description, tur
   if (k.includes("도착")) return "";
 
   if (k.includes("왼쪽")) {
-    if (place) return `${place} 지나서 천천히 왼쪽으로, 나오는 차 조심해요`;
-    return "모퉁이에서 멈추고, 나오는 차를 먼저 확인해요";
+    return "모퉁이에선 천천히, 나오는 차 조심해요";
   }
 
   if (k.includes("오른쪽")) {
-    if (place) return `${place} 앞에서 멈춘 뒤, 오른쪽으로 천천히 돌아요`;
-    return "오른쪽으로 돌기 전, 뒤에서 오는 자전거도 확인해요";
+    return "모퉁이에선 천천히, 나오는 차 조심해요";
   }
 
   if (k.includes("육교") || desc.includes("육교")) {
