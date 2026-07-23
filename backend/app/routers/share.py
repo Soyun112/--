@@ -22,8 +22,9 @@ class KidGuideShareCreate(BaseModel):
     title: str = "오늘의 안전 길"
     origin: str = ""
     destination: str = ""
-    safety_score: int | None = None
-    duration_min: int | None = None
+    # 점수·거리는 소수로 산출되므로 float 유지 (반올림 저장 금지)
+    safety_score: float | None = None
+    duration_min: float | None = None
     steps: list[KidGuideStep] = Field(min_length=1)
 
 
