@@ -1144,9 +1144,15 @@ function renderTimeContext(routeData) {
   if (icon) icon.textContent = tc.period_emoji || (tc.is_night ? "🌙" : "☀️");
   if (rec) rec.textContent = tc.recommendation_message || "";
   if (fixedLabel) {
-    if (tc.is_time_fixed && tc.fixed_time_label) {
+    // 자동일 때만 낮/밤 기준 안내 (수동 낮·밤은 토글이 기준이라 숨김)
+    const basisLabel =
+      state.timeMode === "auto"
+        ? tc.fixed_time_label ||
+          (tc.is_night ? "밤 기준으로 보는 중" : "낮 기준으로 보는 중")
+        : "";
+    if (basisLabel) {
       fixedLabel.hidden = false;
-      fixedLabel.textContent = tc.fixed_time_label;
+      fixedLabel.textContent = basisLabel;
     } else {
       fixedLabel.hidden = true;
       fixedLabel.textContent = "";
@@ -1384,10 +1390,14 @@ function renderCandidates(data) {
         .join("");
       const topLine = scoreTopPercentLine(c.safety_score);
       const detourNote = isDetour ? detourCompareNote(c, data) : "";
+      const timeRange = routeTimeRange(c.duration_s, data);
       return `
         <div class="candidate-card ${isRecommended ? "recommended" : ""} ${isActive ? "selected" : ""}" data-route-id="${c.id}" role="button" tabindex="0" aria-pressed="${isActive}">
           <h4>
-            <span>${escapeHtml(routeName)}${recommendTag}</span>
+            <span class="candidate-title-block">
+              <span class="candidate-route-name">${escapeHtml(routeName)}</span>
+              ${recommendTag}
+            </span>
             <span class="score-pill-wrap">
               ${gradeBadgeHtml(c.safety_score)}
               <span class="score-pill" style="background:${scoreColor(c.safety_score)}">${c.safety_score}점</span>
@@ -1397,7 +1407,7 @@ function renderCandidates(data) {
           ${topLine ? `<div class="score-percentile">${escapeHtml(topLine)}</div>` : ""}
           ${detourNote ? `<div class="detour-compare-note">${escapeHtml(detourNote)}</div>` : ""}
           ${gapMsg && isRecommended ? `<div class="score-gap-note">${gapMsg}</div>` : ""}
-          ${isRecommended ? `<div class="candidate-time">${routeTimeRange(c.duration_s, data)}</div>` : ""}
+          ${timeRange ? `<div class="candidate-time">${timeRange}</div>` : ""}
           <div class="candidate-meta candidate-summary">
             <span>거리: ${(c.distance_m / 1000).toFixed(2)}km</span>
             <span>예상 소요: ${Math.round(c.duration_s / 60)}분</span>
@@ -2550,7 +2560,10 @@ function renderTmapRoutes(routeData, publicData, { fitToRoute = true } = {}) {
   if (!state.tmap) return;
   clearTmapOverlays();
   const bounds = new Tmapv2.LatLngBounds();
+  // fitBounds는 통학 경로(+출발/도착)만 기준 — 시설 마커까지 넣으면 과도하게 축소됨
+  const routeFitBounds = new Tmapv2.LatLngBounds();
   let hasPoint = false;
+  let hasRouteFitPoint = false;
   const track = (overlay) => {
     state.tmapOverlays.push(overlay);
     return overlay;
@@ -2567,7 +2580,9 @@ function renderTmapRoutes(routeData, publicData, { fitToRoute = true } = {}) {
     const path = active.coordinates.map((pt) => {
       const latlng = new Tmapv2.LatLng(pt.lat, pt.lng);
       bounds.extend(latlng);
+      routeFitBounds.extend(latlng);
       hasPoint = true;
+      hasRouteFitPoint = true;
       return latlng;
     });
     drawTmapCommuteRoute(path, track);
@@ -2606,7 +2621,9 @@ function renderTmapRoutes(routeData, publicData, { fitToRoute = true } = {}) {
     const pin = waypointPinIcon(kind);
     const latlng = new Tmapv2.LatLng(pt.lat, pt.lng);
     bounds.extend(latlng);
+    routeFitBounds.extend(latlng);
     hasPoint = true;
+    hasRouteFitPoint = true;
     const m = track(
       new Tmapv2.Marker({
         position: latlng,
@@ -2678,7 +2695,23 @@ function renderTmapRoutes(routeData, publicData, { fitToRoute = true } = {}) {
   waypointMarker(routeData.origin, "origin", routeData.origin.name || "출발");
   waypointMarker(routeData.destination, "destination", routeData.destination.name || "도착");
 
-  if (hasPoint && fitToRoute) {
+  if (fitToRoute && hasRouteFitPoint) {
+    fitTmapToRouteBounds(routeFitBounds);
+  }
+}
+
+/** 경로 전체가 보이되, 시설 마커 없이 경로(+출발/도착)만 맞춰 조금 더 확대한다. */
+function fitTmapToRouteBounds(bounds) {
+  if (!state.tmap || !bounds) return;
+  try {
+    // 여백(px)이 작을수록 경로가 화면을 더 크게 채움
+    state.tmap.fitBounds(bounds, {
+      top: 56,
+      right: 48,
+      bottom: 56,
+      left: 48,
+    });
+  } catch {
     state.tmap.fitBounds(bounds);
   }
 }

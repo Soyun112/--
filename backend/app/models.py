@@ -133,6 +133,7 @@ class TimeContext(BaseModel):
     duration_minutes: Optional[int] = None
     time_mode: str = "auto"
     is_time_fixed: bool = False
+    # auto일 때 "낮/밤 기준으로 보는 중". day·night 수동 선택 시에는 None.
     fixed_time_label: Optional[str] = None
 
 

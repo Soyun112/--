@@ -33,23 +33,23 @@ def test_resolve_auto_keeps_real_clock():
     assert fixed == base
 
 
-def test_build_time_context_night_eta_and_label():
+def test_build_time_context_night_eta_hides_basis_label():
     base = datetime(2026, 7, 24, 10, 0, tzinfo=KST)
     ctx = build_time_context(11 * 60, now=base, time_mode="night")
     assert ctx["is_night"] is True
     assert ctx["is_time_fixed"] is True
     assert ctx["time_mode"] == "night"
-    assert ctx["fixed_time_label"] == "밤 기준으로 보는 중"
+    assert ctx["fixed_time_label"] is None
     assert ctx["recommendation_message"] == recommendation_message(True)
     assert "출발" in ctx["eta_message"] and "도착" in ctx["eta_message"]
     assert "지금 출발하면" not in ctx["eta_message"]
 
 
-def test_build_time_context_auto_eta_unchanged_style():
+def test_build_time_context_auto_shows_day_basis_label():
     base = datetime(2026, 7, 24, 14, 0, tzinfo=KST)
     ctx = build_time_context(600, now=base, time_mode="auto")
     assert ctx["is_time_fixed"] is False
-    assert ctx["fixed_time_label"] is None
+    assert ctx["fixed_time_label"] == "낮 기준으로 보는 중"
     assert ctx["eta_message"].startswith("지금 출발하면")
     assert ctx["recommendation_message"] == recommendation_message(False)
 
@@ -60,3 +60,4 @@ def test_auto_force_night_keeps_clock_overrides_flag():
     assert ctx["is_night"] is True
     assert ctx["current_time"]  # real afternoon clock string
     assert ctx["is_time_fixed"] is False
+    assert ctx["fixed_time_label"] == "밤 기준으로 보는 중"

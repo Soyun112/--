@@ -172,7 +172,11 @@ def build_time_context(
         "night_end_time": f"오전 {NIGHT_END_HOUR}:00",
         "time_mode": mode,
         "is_time_fixed": is_fixed,
-        "fixed_time_label": ("밤 기준으로 보는 중" if night else "낮 기준으로 보는 중") if is_fixed else None,
+        # 자동일 때만: 지금이 낮/밤 중 어느 기준으로 보고 있는지 안내
+        # (낮·밤 수동 선택 시에는 토글이 이미 기준이라 라벨 생략)
+        "fixed_time_label": (
+            ("밤 기준으로 보는 중" if night else "낮 기준으로 보는 중") if not is_fixed else None
+        ),
     }
 
     if duration_s is not None and duration_s > 0:
