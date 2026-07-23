@@ -153,8 +153,22 @@
     <div class="center-stack">
     <section class="panel map-panel">
       <h2><span id="route-label">부모님이 추천한 길</span> <span id="weather-badge" class="weather-badge" style="display:none;"></span></h2>
-      <p id="mode-message" class="mode-message">안전 점수와 주변 시설을 비교해 가장 안전한 길을 골랐어요.</p>
+      <p id="mode-message" class="mode-message visually-hidden">경로를 찾으면 지도에 안전한 길이 표시됩니다.</p>
       <div class="map-wrap">
+        <form id="map-search-float" class="map-search-float" autocomplete="off">
+          <label class="map-search-field">
+            <span class="map-search-label">출발</span>
+            <input type="text" id="float-origin-query" placeholder="출발지" />
+          </label>
+          <button type="button" id="float-swap-locations" class="map-search-swap" aria-label="출발지와 목적지 바꾸기" title="출발지와 목적지 바꾸기">⇅</button>
+          <label class="map-search-field">
+            <span class="map-search-label">도착</span>
+            <input type="text" id="float-dest-query" placeholder="도착지" />
+          </label>
+          <button type="submit" id="float-submit-btn" class="map-search-submit" disabled title="먼저 안전 문서를 확인하거나 반영 안함을 선택해 주세요.">
+            안전 경로 찾기
+          </button>
+        </form>
         <div id="tmap" class="map-surface"></div>
         <div id="map-status" class="map-status">티맵 지도를 불러오는 중…</div>
         <svg id="svg-map" class="map-surface" style="display:none;" viewBox="0 0 600 600" preserveAspectRatio="xMidYMid meet"></svg>

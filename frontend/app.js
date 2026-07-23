@@ -120,6 +120,7 @@ function fillDemoCoordinates() {
 
   document.getElementById("origin-query").value = scenario.origin;
   document.getElementById("dest-query").value = scenario.destination;
+  syncFloatSearchFields("main");
   state.demoForceNight = Boolean(scenario.forceNight);
   if (scenario.forceNight) {
     setTimeMode("night", { rerun: false });
@@ -135,7 +136,32 @@ function swapLocations() {
   const origin = document.getElementById("origin-query");
   const destination = document.getElementById("dest-query");
   [origin.value, destination.value] = [destination.value, origin.value];
+  syncFloatSearchFields("main");
   origin.focus();
+}
+
+function syncFloatSearchFields(source = "main") {
+  const origin = document.getElementById("origin-query");
+  const dest = document.getElementById("dest-query");
+  const floatOrigin = document.getElementById("float-origin-query");
+  const floatDest = document.getElementById("float-dest-query");
+  if (!origin || !dest || !floatOrigin || !floatDest) return;
+  if (source === "float") {
+    origin.value = floatOrigin.value;
+    dest.value = floatDest.value;
+  } else {
+    floatOrigin.value = origin.value;
+    floatDest.value = dest.value;
+  }
+}
+
+function syncFloatSubmitButton() {
+  const btn = document.getElementById("submit-btn");
+  const floatBtn = document.getElementById("float-submit-btn");
+  if (!btn || !floatBtn) return;
+  floatBtn.disabled = btn.disabled;
+  floatBtn.title = btn.title || "";
+  floatBtn.textContent = btn.textContent || "안전 경로 찾기";
 }
 
 function scoreColor(score) {
@@ -1280,6 +1306,7 @@ async function setTimeMode(mode, { rerun = true } = {}) {
       submitBtn.disabled = !state.docReady;
       submitBtn.textContent = prevText || "안전 경로 찾기";
     }
+    syncFloatSubmitButton();
   }
 }
 
@@ -1291,6 +1318,7 @@ function setRouteProgress(message) {
     el.textContent = message || "";
     el.hidden = !message;
   }
+  syncFloatSubmitButton();
 }
 
 function clearRouteProgressTimers(timers) {
@@ -1811,7 +1839,6 @@ function renderLegend() {
       const active = state.activePublicLayer === layer ? " is-active" : "";
       return `<button type="button" class="legend-item${active}" data-public-layer="${layer}"><span class="dot" style="background:${CATEGORY_COLORS[color]}"></span>${label}</button>`;
     }).join("")}
-    <span class="legend-route-help">굵은 파란 선 = 통학 경로 · 보라 점선 = 문서 위험 구간</span>
   `;
   el.querySelectorAll("[data-public-layer]").forEach((item) => {
     const layer = item.dataset.publicLayer;
@@ -3125,6 +3152,7 @@ function syncRouteSubmitButton() {
   btn.title = state.docReady
     ? ""
     : "먼저 안전 문서를 확인하거나 반영 안함을 선택해 주세요.";
+  syncFloatSubmitButton();
 }
 
 function syncDocConfirmButton() {
@@ -3442,6 +3470,18 @@ function bindAppUi() {
   document.getElementById("demo-scenario-select")?.addEventListener("change", fillDemoCoordinates);
   document.getElementById("swap-locations")?.addEventListener("click", swapLocations);
   document.getElementById("route-form")?.addEventListener("submit", handleSubmit);
+  document.getElementById("origin-query")?.addEventListener("input", () => syncFloatSearchFields("main"));
+  document.getElementById("dest-query")?.addEventListener("input", () => syncFloatSearchFields("main"));
+  document.getElementById("float-origin-query")?.addEventListener("input", () => syncFloatSearchFields("float"));
+  document.getElementById("float-dest-query")?.addEventListener("input", () => syncFloatSearchFields("float"));
+  document.getElementById("float-swap-locations")?.addEventListener("click", swapLocations);
+  document.getElementById("map-search-float")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    syncFloatSearchFields("float");
+    document.getElementById("route-form")?.requestSubmit();
+  });
+  syncFloatSearchFields("main");
+  syncFloatSubmitButton();
   bindDocumentUpload();
   document.querySelectorAll(".mode-button").forEach((button) => {
     button.addEventListener("click", () => setMode(button.dataset.mode));
