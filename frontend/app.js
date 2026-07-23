@@ -900,7 +900,7 @@ function landmarkPhrase(step) {
 
 /** 아이 카드용 상황별 안전 한마디 (본문 행동 안내와 별도 1줄) */
 function kidSafetyTip(step, { isArrive = false, weather = null } = {}) {
-  if (isArrive) return "도착! 오늘도 안전하게 와줘서 고마워요";
+  if (isArrive) return "아이에게 이 길 안내 링크를 보내 주세요";
 
   const desc = `${step?.description || ""} ${navigationKeywordPlain(step) || ""}`;
   const tt = step?.turn_type;
@@ -1789,43 +1789,50 @@ async function shareKidGuide(mode = "kakao") {
   }
 }
 
+function setKidCardIcon(iconEl, { isArrive, icon, kind }) {
+  if (!iconEl) return;
+  iconEl.classList.toggle("is-cross", !isArrive && kind === "cross");
+  iconEl.classList.toggle("is-arrive", isArrive);
+  if (!isArrive && kind === "cross") {
+    iconEl.innerHTML =
+      '<span class="kid-card-sign" aria-hidden="true"><span class="kid-card-sign-inner">🚸</span></span>';
+    return;
+  }
+  iconEl.textContent = isArrive ? "🎉" : icon;
+}
+
 function renderKidCard(direction = 0) {
   const steps = state.kidCardSteps;
   const total = steps.length;
   const index = Math.min(state.kidCardIndex, total - 1);
   const step = steps[index];
   const isArrive = index === total - 1;
-  const [icon] = navigationIcon(step);
+  const [icon, kind] = navigationIcon(step);
   const { text: stepText } = kidStepText(step.distance_m);
   const landmark = landmarkPhrase(step);
+  const plain = navigationKeywordPlain(step);
   const weather = state.lastResult?.weather || null;
   const tip = kidSafetyTip(step, { isArrive, weather });
-  const ratio = kidProgressRatio(steps, index);
-  const plain = navigationKeywordPlain(step);
-  // 한 줄만: 횡단·회전·도착은 tip, 직진은 걸음 수 (m·tip·걸음 동시 표시 안 함)
-  const preferTip =
-    isArrive ||
-    plain.includes("횡단") ||
-    plain.includes("육교") ||
-    plain.includes("왼쪽") ||
-    plain.includes("오른쪽");
-  let support = "";
-  if (preferTip) support = tip || "";
-  else if (stepText) support = `👣 ${stepText} 걸어가요`;
-  else support = tip || "";
+  const meters = !isArrive && step.distance_m > 0 ? `${Math.round(step.distance_m)}m` : "";
+  const friendly = !isArrive && stepText ? `👣 ${stepText} 걸어가요` : "";
 
   document.getElementById("kid-card-progress").textContent = `${index + 1} / ${total}`;
   document.getElementById("kid-card").classList.toggle("arrived", isArrive);
-  document.getElementById("kid-card-icon").textContent = isArrive ? "🎉" : icon;
+  setKidCardIcon(document.getElementById("kid-card-icon"), { isArrive, icon, kind });
   document.getElementById("kid-card-text").textContent = isArrive ? "도착! 잘했어요" : plain;
-  const supportEl = document.getElementById("kid-card-support");
-  if (supportEl) {
-    supportEl.textContent = support;
-    supportEl.classList.toggle("is-tip", preferTip && Boolean(tip));
-    supportEl.classList.toggle("is-steps", !preferTip && Boolean(stepText));
-  }
+
+  const friendlyEl = document.getElementById("kid-card-friendly");
+  if (friendlyEl) friendlyEl.textContent = friendly;
+
+  const tipEl = document.getElementById("kid-card-tip");
+  if (tipEl) tipEl.textContent = tip || "";
+
+  const distanceEl = document.getElementById("kid-card-distance");
+  if (distanceEl) distanceEl.textContent = meters;
+
   document.getElementById("kid-card-landmark").textContent =
     isArrive || !landmark ? "" : `📍 ${landmark}`;
+
   const prevBtn = document.getElementById("kid-card-prev");
   if (prevBtn) {
     prevBtn.hidden = index === 0;
@@ -1836,10 +1843,11 @@ function renderKidCard(direction = 0) {
   nextBtn.textContent = index >= total - 2 ? "도착! →" : "다음 →";
   document.querySelector(".kid-card-nav")?.classList.toggle("solo-next", index === 0 && !isArrive);
 
-  // 공유는 부모용 → 도착 카드에만
+  // 공유(카톡·링크 복사)는 마지막(도착) 카드에만
   const shareRow = document.getElementById("kid-card-share-row");
   if (shareRow) shareRow.hidden = !isArrive;
 
+  const ratio = kidProgressRatio(steps, index);
   updateProgressStamps(ratio, { announce: direction !== 0 || index === 0 });
   animateKidCard(direction);
 }

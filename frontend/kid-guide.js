@@ -126,15 +126,24 @@ function renderCard(direction = 0) {
 
   const card = document.getElementById("kid-guide-card");
   card.classList.toggle("arrived", isArrive);
-  document.getElementById("kid-guide-icon").textContent = step.icon || (isArrive ? "🎉" : "↑");
-  document.getElementById("kid-guide-text").textContent = step.keyword || "";
+
+  const iconEl = document.getElementById("kid-guide-icon");
+  const keyword = step.keyword || "";
+  const isCross = !isArrive && (keyword.includes("횡단") || keyword.includes("육교") || step.icon === "🚸");
+  iconEl.classList.toggle("is-cross", isCross);
+  if (isCross) {
+    iconEl.innerHTML =
+      '<span class="kid-card-sign" aria-hidden="true"><span class="kid-card-sign-inner">🚸</span></span>';
+  } else {
+    iconEl.textContent = step.icon || (isArrive ? "🎉" : "↑");
+  }
+
+  document.getElementById("kid-guide-text").textContent = keyword;
   document.getElementById("kid-guide-friendly").textContent = step.friendly || "";
-  const tipEl = document.getElementById("kid-guide-tip");
-  if (tipEl) {
-    tipEl.textContent =
-      step.tip ||
-      (typeof tipForShareStep === "function" ? tipForShareStep(step) : "") ||
-      (isArrive ? "도착! 오늘도 안전하게 와줘서 고마워요" : "");
+  const distanceEl = document.getElementById("kid-guide-distance");
+  if (distanceEl) {
+    const meters = !isArrive && step.distance_m > 0 ? `${Math.round(step.distance_m)}m` : "";
+    distanceEl.textContent = meters;
   }
   document.getElementById("kid-guide-landmark").textContent = step.landmark || "";
 
