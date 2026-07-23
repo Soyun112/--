@@ -122,12 +122,14 @@
       <form id="route-form" class="route-form-stack">
         <fieldset>
           <legend>출발지 (건물명 · 역 이름 · 주소)</legend>
-          <input type="text" id="origin-query" aria-label="출발지" value="개나리SK뷰5차아파트" placeholder="예: 강남역, 코엑스, OO초등학교" required />
+          <input type="text" id="origin-query" aria-label="출발지" value="도곡렉슬아파트" placeholder="예: 강남역, 코엑스, OO초등학교" required />
+          <p id="origin-addr-hint" class="place-addr-hint" hidden></p>
         </fieldset>
         <button type="button" id="swap-locations" class="swap-locations" aria-label="출발지와 목적지 바꾸기" title="출발지와 목적지 바꾸기">↕</button>
         <fieldset>
           <legend>목적지 (건물명 · 역 이름 · 주소)</legend>
-          <input type="text" id="dest-query" aria-label="목적지" value="도성초등학교" placeholder="예: 학교, 서울역, 봉은사" required />
+          <input type="text" id="dest-query" aria-label="목적지" value="도곡초등학교" placeholder="예: 학교, 서울역, 봉은사" required />
+          <p id="dest-addr-hint" class="place-addr-hint" hidden></p>
         </fieldset>
         <div class="form-actions">
           <button type="submit" id="submit-btn" disabled title="먼저 안전 문서를 확인하거나 반영 안함을 선택해 주세요.">안전 경로 찾기</button>
@@ -139,10 +141,10 @@
         <summary>발표용 시나리오 선택</summary>
         <label>데모 시나리오
           <select id="demo-scenario-select">
-            <option value="morning_school">등교 (선릉로 221 → 선릉로64길 33)</option>
-            <option value="school_to_academy">학원 (선릉로64길 33 → 도곡로 313)</option>
-            <option value="night_academy">야간 하원 (도곡로 313 → 선릉로 221)</option>
-            <option value="academy_detour">우회 (도곡로 445 → 선릉로64길 33)</option>
+            <option value="morning_school">등교 — 도곡렉슬아파트 → 도곡초등학교</option>
+            <option value="school_to_academy">학원 — 도곡초등학교 → 게이트대치어학원</option>
+            <option value="night_academy">야간 하원 — 게이트대치어학원 → 도곡렉슬아파트</option>
+            <option value="academy_detour">우회 비교 — 깊은생각수학학원 → 도곡초등학교</option>
           </select>
         </label>
         <p id="scenario-hint" class="hint"></p>

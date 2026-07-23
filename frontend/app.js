@@ -30,27 +30,35 @@ const PUBLIC_DATA_LEGEND = [
 
 const DEMO_SCENARIOS = {
   morning_school: {
-    origin: "선릉로 221",
-    destination: "선릉로64길 33",
+    origin: "도곡렉슬아파트",
+    destination: "도곡초등학교",
+    originAddr: "선릉로 221",
+    destinationAddr: "선릉로64길 33",
     age: 8,
     note: "등교: 도곡렉슬아파트(선릉로 221) → 도곡초등학교(선릉로64길 33).",
   },
   school_to_academy: {
-    origin: "선릉로64길 33",
-    destination: "도곡로 313",
+    origin: "도곡초등학교",
+    destination: "게이트대치어학원",
+    originAddr: "선릉로64길 33",
+    destinationAddr: "도곡로 313",
     age: 8,
     note: "학원: 도곡초등학교(선릉로64길 33) → 게이트대치어학원(도곡로 313).",
   },
   night_academy: {
-    origin: "도곡로 313",
-    destination: "선릉로 221",
+    origin: "게이트대치어학원",
+    destination: "도곡렉슬아파트",
+    originAddr: "도곡로 313",
+    destinationAddr: "선릉로 221",
     age: 11,
     forceNight: true,
     note: "야간 하원: 게이트대치어학원(도곡로 313) → 도곡렉슬아파트(선릉로 221). 야간 가중치로 채점합니다.",
   },
   academy_detour: {
-    origin: "도곡로 445",
-    destination: "선릉로64길 33",
+    origin: "깊은생각수학학원",
+    destination: "도곡초등학교",
+    originAddr: "도곡로 445",
+    destinationAddr: "선릉로64길 33",
     age: 8,
     note: "우회: 깊은생각수학학원(도곡로 445) → 도곡초등학교(선릉로64길 33).",
   },
@@ -114,12 +122,30 @@ async function fetchJson(path, options = {}) {
   return res.json();
 }
 
+function setPlaceAddrHints(originAddr = "", destAddr = "") {
+  const originHint = document.getElementById("origin-addr-hint");
+  const destHint = document.getElementById("dest-addr-hint");
+  if (originHint) {
+    originHint.textContent = originAddr || "";
+    originHint.hidden = !originAddr;
+  }
+  if (destHint) {
+    destHint.textContent = destAddr || "";
+    destHint.hidden = !destAddr;
+  }
+}
+
+function clearPlaceAddrHints() {
+  setPlaceAddrHints("", "");
+}
+
 function fillDemoCoordinates() {
   const select = document.getElementById("demo-scenario-select");
   const scenario = DEMO_SCENARIOS[select.value] || DEMO_SCENARIOS.morning_school;
 
   document.getElementById("origin-query").value = scenario.origin;
   document.getElementById("dest-query").value = scenario.destination;
+  setPlaceAddrHints(scenario.originAddr || "", scenario.destinationAddr || "");
   syncFloatSearchFields("main");
   state.demoForceNight = Boolean(scenario.forceNight);
   if (scenario.forceNight) {
@@ -135,7 +161,17 @@ function fillDemoCoordinates() {
 function swapLocations() {
   const origin = document.getElementById("origin-query");
   const destination = document.getElementById("dest-query");
+  const originHint = document.getElementById("origin-addr-hint");
+  const destHint = document.getElementById("dest-addr-hint");
   [origin.value, destination.value] = [destination.value, origin.value];
+  if (originHint && destHint) {
+    const oText = originHint.textContent;
+    const oHidden = originHint.hidden;
+    originHint.textContent = destHint.textContent;
+    originHint.hidden = destHint.hidden;
+    destHint.textContent = oText;
+    destHint.hidden = oHidden;
+  }
   syncFloatSearchFields("main");
   origin.focus();
 }
@@ -3468,10 +3504,38 @@ function bindAppUi() {
   document.getElementById("demo-scenario-select")?.addEventListener("change", fillDemoCoordinates);
   document.getElementById("swap-locations")?.addEventListener("click", swapLocations);
   document.getElementById("route-form")?.addEventListener("submit", handleSubmit);
-  document.getElementById("origin-query")?.addEventListener("input", () => syncFloatSearchFields("main"));
-  document.getElementById("dest-query")?.addEventListener("input", () => syncFloatSearchFields("main"));
-  document.getElementById("float-origin-query")?.addEventListener("input", () => syncFloatSearchFields("float"));
-  document.getElementById("float-dest-query")?.addEventListener("input", () => syncFloatSearchFields("float"));
+  document.getElementById("origin-query")?.addEventListener("input", () => {
+    const originHint = document.getElementById("origin-addr-hint");
+    if (originHint) {
+      originHint.textContent = "";
+      originHint.hidden = true;
+    }
+    syncFloatSearchFields("main");
+  });
+  document.getElementById("dest-query")?.addEventListener("input", () => {
+    const destHint = document.getElementById("dest-addr-hint");
+    if (destHint) {
+      destHint.textContent = "";
+      destHint.hidden = true;
+    }
+    syncFloatSearchFields("main");
+  });
+  document.getElementById("float-origin-query")?.addEventListener("input", () => {
+    const originHint = document.getElementById("origin-addr-hint");
+    if (originHint) {
+      originHint.textContent = "";
+      originHint.hidden = true;
+    }
+    syncFloatSearchFields("float");
+  });
+  document.getElementById("float-dest-query")?.addEventListener("input", () => {
+    const destHint = document.getElementById("dest-addr-hint");
+    if (destHint) {
+      destHint.textContent = "";
+      destHint.hidden = true;
+    }
+    syncFloatSearchFields("float");
+  });
   document.getElementById("float-swap-locations")?.addEventListener("click", swapLocations);
   document.getElementById("map-search-float")?.addEventListener("submit", (event) => {
     event.preventDefault();
