@@ -107,7 +107,7 @@ def health() -> dict:
     used = usage_snapshot()
     return {
         "status": "ok",
-        "api_version": "2026-07-22-safety-brief-a",
+        "api_version": "2026-07-24-route-perf-solar-v2",
         "tmap_usage": {k: {"used": used.get(k, 0), "limit": limits[k]} for k in limits},
     }
 
