@@ -170,13 +170,33 @@ def _juso_address(query: str) -> Optional[GeocodeResult]:
         return None
 
 
-def _kakao_keyword(query: str) -> Optional[GeocodeResult]:
+def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    from .geo import haversine_m
+    import numpy as np
+
+    return float(
+        haversine_m(
+            np.array([lat1]),
+            np.array([lng1]),
+            np.array([lat2]),
+            np.array([lng2]),
+        )[0]
+    )
+
+
+def _kakao_keyword(query: str, near: tuple[float, float] | None = None) -> Optional[GeocodeResult]:
     if not settings.kakao_rest_api_key:
         return None
     try:
+        params: dict[str, object] = {"query": query, "size": 5 if near else 1}
+        if near:
+            # Kakao: x=경도, y=위도 — 지정 시 거리순 정렬
+            params["y"] = near[0]
+            params["x"] = near[1]
+            params["radius"] = 8000
         resp = requests.get(
             "https://dapi.kakao.com/v2/local/search/keyword.json",
-            params={"query": query, "size": 1},
+            params=params,
             headers={"Authorization": f"KakaoAK {settings.kakao_rest_api_key}"},
             timeout=10,
         )
@@ -184,12 +204,21 @@ def _kakao_keyword(query: str) -> Optional[GeocodeResult]:
         docs = resp.json().get("documents", [])
         if not docs:
             return None
-        d = docs[0]
-        lat, lng = float(d["y"]), float(d["x"])
-        if not _in_korea(lat, lng):
-            return None
-        label = d.get("place_name") or d.get("road_address_name") or query
-        return GeocodeResult(lat=lat, lng=lng, label=label, source="KAKAO_KEYWORD")
+        best = None
+        best_dist = float("inf")
+        for d in docs:
+            lat, lng = float(d["y"]), float(d["x"])
+            if not _in_korea(lat, lng):
+                continue
+            if near:
+                dist = _haversine_m(near[0], near[1], lat, lng)
+            else:
+                dist = 0.0
+            if dist < best_dist:
+                best_dist = dist
+                label = d.get("place_name") or d.get("road_address_name") or query
+                best = GeocodeResult(lat=lat, lng=lng, label=label, source="KAKAO_KEYWORD")
+        return best
     except Exception:
         return None
 
@@ -254,7 +283,6 @@ def geocode(
             ("juso", _juso_address),
             ("kakao_address", _kakao_address),
             ("tmap_fulladdr", _tmap_fulladdr),
-            ("kakao_keyword", _kakao_keyword),
         ):
             if name == "tmap_fulladdr" and not settings.tmap_app_key:
                 continue
@@ -262,16 +290,23 @@ def geocode(
             if result:
                 safe_print(f"[지오코딩] '{q}' → {result.source}")
                 return result
+        # 키워드·POI는 near(출발지)로 근접 보정
+        result = _kakao_keyword(q, near=near)
+        if result:
+            safe_print(f"[지오코딩] '{q}' → {result.source}")
+            return result
         if settings.tmap_app_key:
             poi = search_poi(q, near=poi_near)
             if poi:
                 return GeocodeResult(poi.lat, poi.lng, poi.label, poi.source)
         return None
 
-    for provider in (_kakao_keyword, _naver_local):
-        result = provider(q)
-        if result:
-            return result
+    result = _kakao_keyword(q, near=near)
+    if result:
+        return result
+    result = _naver_local(q)
+    if result:
+        return result
 
     if settings.tmap_app_key:
         poi = search_poi(q, near=poi_near)

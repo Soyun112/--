@@ -181,22 +181,14 @@ def get_public_data_layers() -> PublicDataResponse:
 
 @router.post("/route", response_model=RouteResponse)
 def compute_route(req: RouteRequest, background_tasks: BackgroundTasks) -> RouteResponse:
-    # 출발·도착 지오코딩 병렬 (둘 다 query일 때)
-    origin_ready = req.origin.lat is not None and req.origin.lng is not None
-    dest_ready = req.destination.lat is not None and req.destination.lng is not None
-    if not origin_ready and not dest_ready:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            fut_o = pool.submit(_resolve_waypoint, req.origin, "출발지")
-            fut_d = pool.submit(_resolve_waypoint, req.destination, "목적지")
-            origin = fut_o.result()
-            destination = fut_d.result()
-    else:
-        origin = _resolve_waypoint(req.origin, "출발지")
-        destination = _resolve_waypoint(
-            req.destination,
-            "목적지",
-            near=(origin.lat, origin.lng) if origin.lat is not None else None,
-        )
+    # 출발지 먼저 → 도착지는 출발 좌표 near로 근접 보정(도곡동 유사명칭 혼동 방지).
+    # DEMO_PLACES/사전 히트는 즉시 반환되므로 데모 OD는 사실상 무비용.
+    origin = _resolve_waypoint(req.origin, "출발지")
+    destination = _resolve_waypoint(
+        req.destination,
+        "목적지",
+        near=(origin.lat, origin.lng) if origin.lat is not None else None,
+    )
 
     origin_xy = (origin.lat, origin.lng)
     dest_xy = (destination.lat, destination.lng)
