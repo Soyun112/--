@@ -63,16 +63,24 @@ def parse_document(file_bytes: bytes, filename: str) -> dict[str, Any]:
         sample_path = settings.data_dir / "sample_documents" / "sample_report.md"
         return {"markdown": sample_path.read_text(encoding="utf-8"), "mock": True}
 
-    resp = requests.post(
-        DOCUMENT_DIGITIZATION_URL,
-        headers={"Authorization": f"Bearer {settings.upstage_api_key}"},
-        files={"document": (filename, file_bytes)},
-        data={"model": "document-parse", "output_formats": json.dumps(["markdown"])},
-        timeout=60,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    return {"markdown": data.get("content", {}).get("markdown", ""), "mock": False, "raw": data}
+    last_err: Exception | None = None
+    # Upstage sync는 최대 ~5분. Render cold start·일시 지연 대비 여유 + 1회 재시도
+    for attempt in range(2):
+        try:
+            resp = requests.post(
+                DOCUMENT_DIGITIZATION_URL,
+                headers={"Authorization": f"Bearer {settings.upstage_api_key}"},
+                files={"document": (filename, file_bytes)},
+                data={"model": "document-parse", "output_formats": json.dumps(["markdown"])},
+                timeout=180,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return {"markdown": data.get("content", {}).get("markdown", ""), "mock": False, "raw": data}
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+            last_err = exc
+            safe_print(f"[문서] Upstage Document Parse 타임아웃/연결 실패 (시도 {attempt + 1}/2): {exc}")
+    raise RuntimeError(f"문서 파싱에 실패했습니다: {last_err}") from last_err
 
 
 def risk_points_from_filename(filename: str) -> list[dict[str, Any]]:
