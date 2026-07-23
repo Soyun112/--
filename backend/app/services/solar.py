@@ -1,234 +1,270 @@
-"""Upstage Solar LLM(OpenAI 호환 /v1/chat/completions)로 부모용/아이용 설명을 생성.
+"""Upstage Solar LLM으로 부모용 안전 리포트(JSON)를 생성.
 
-일반 LLM과의 차별점: 안전점수 수치뿐 아니라 매칭된 문서 스니펫(근거 원문)을 프롬프트에
-grounding 컨텍스트로 함께 주입해, 출처를 밝힐 수 있는 설명을 생성한다(PROJECT_PLAN.md 6장).
-UPSTAGE_API_KEY가 없으면 동일한 데이터를 이용한 템플릿 기반 MOCK 설명으로 대체한다.
+부모가 아이에게 그대로 읽어줄 수 있는 문장만 쓰고, 주어진 수치 밖의
+추측·과장을 금지한다. UPSTAGE_API_KEY가 없으면 동일 규칙의 템플릿 JSON으로 대체.
 """
 from __future__ import annotations
 
+import json
+import re
 from typing import Any, Optional
 
 import requests
 
 from ..config import settings
 from ..models import RouteCandidate
-from . import gamification
 from .weather import weather_summary_text
 
 CHAT_COMPLETIONS_URL = "https://api.upstage.ai/v1/chat/completions"
 
+GANGNAM_MEDIAN = 60
 
-def _grounding_context(candidate: RouteCandidate) -> str:
-    if not candidate.features.matched_documents:
-        return "(이 경로 주변에서 매칭된 문서 근거 없음)"
-    lines = []
-    for doc in candidate.features.matched_documents:
-        tag = "위험지적" if doc.is_risk else "안전조치완료"
-        lines.append(f"- [{tag}/{doc.risk_type}] 출처: {doc.source_doc} (경로에서 약 {doc.distance_m:.0f}m) — \"{doc.snippet}\"")
-    return "\n".join(lines)
+PARENT_SYSTEM_PROMPT = """당신은 초등학생 통학로 안전 리포트를 쓰는 도우미입니다.
+부모가 아이에게 그대로 읽어줄 수 있는 문장을 씁니다.
+
+절대 규칙:
+1. 주어진 수치에 없는 내용을 만들지 마세요. 추측 금지.
+2. 값이 0인 항목은 "없습니다"라고만 쓰고, 그것을 근거로
+   위험하다고 단정하지 마세요.
+3. "어린이보호구역 CCTV"는 보호구역이 보유한 개수이며 경로 바로
+   위에 있다는 뜻이 아닙니다. "주변 보호구역에 CCTV가 N대 있습니다"
+   처럼 쓰고, "아이를 지켜보고 있습니다" 같은 단정은 피하세요.
+4. 안전점수는 100점 만점 시험 점수가 아닙니다. 강남구 초등학교
+   통학로 87개 실측 기준 중앙값이 60점입니다. 점수를 언급할 때는
+   반드시 이 기준을 함께 알려 주세요.
+5. 과장하지 마세요. "매우 안전", "완벽하게" 같은 표현 금지.
+6. 아이에게 겁을 주지 마세요. 주의사항은 행동 지침으로 바꿔서
+   쓰세요. ("위험합니다" → "여기서는 뛰지 말고 좌우를 보세요")"""
 
 
-def _build_messages(
+def _score_grade_label(score: float) -> str:
+    if score >= 70:
+        return "안전 (70점 이상)"
+    if score >= 55:
+        return "보통 (55~70점)"
+    return "주의 (55점 미만)"
+
+
+def _period_label(time_context: Optional[dict[str, Any]]) -> str:
+    tc = time_context or {}
+    if tc.get("is_night"):
+        return "밤"
+    if tc.get("period_label") in ("밤", "낮"):
+        return str(tc["period_label"])
+    return "낮"
+
+
+def _bell112_count(features) -> int:
+    """안심벨·112신고 통합 개수(폴 기준 우선)."""
+    pole = int(getattr(features, "emergency_pole_count", 0) or 0)
+    if pole > 0:
+        return pole
+    return int(features.safety_bell_count or 0) + int(features.emergency112_count or 0)
+
+
+def build_parent_user_prompt(
     candidate: RouteCandidate,
-    other_candidates: list[RouteCandidate],
-    audience_age: int,
-    weather: Optional[dict[str, Any]] = None,
     time_context: Optional[dict[str, Any]] = None,
-) -> dict[str, str]:
+) -> str:
+    """프롬프트용 수치 — 0인 항목도 그대로 전달 (문장 반영은 모델 규칙)."""
     f = candidate.features
-    others_summary = ", ".join(
-        f"{c.id}(점수 {c.safety_score}, {c.distance_m/1000:.1f}km)" for c in other_candidates if c.id != candidate.id
-    ) or "없음"
+    km = round(f.distance_km if f.distance_km else candidate.distance_m / 1000.0, 2)
+    mins = max(1, round(candidate.duration_s / 60))
+    score = candidate.safety_score
+    period = _period_label(time_context)
+    bell112 = _bell112_count(f)
+    doc_n = int(f.doc_risk_count or 0)
+    if not doc_n and f.matched_documents:
+        doc_n = sum(1 for d in f.matched_documents if d.is_risk)
 
-    stamps_text = gamification.stamps_summary_text(
-        [gamification.Stamp(s.id, s.emoji, s.label, s.description, s.count) for s in candidate.stamps]
+    return f"""아래 수치로 안전 리포트를 작성하세요.
+
+경로 정보
+- 거리: {km}km, 소요: {mins}분
+- 안전점수: {score}점 (강남 초등 통학로 중앙값 {GANGNAM_MEDIAN}점)
+- 등급: {_score_grade_label(score)}
+- 시간대: {period}
+
+안전 시설 (경로 40m 이내)
+- 안심귀갓길 CCTV: {f.safety_facility_cctv_count}대
+- 안심귀갓길 보안등: {f.safety_facility_streetlight_count}개
+- 안심벨·112신고: {bell112}개
+- 아동안전지킴이집: {f.guardian_house_count}곳
+- 무인단속카메라: {f.speed_camera_count}곳
+
+주변 보호구역
+- 보호구역 보유 CCTV: {f.cctv_count}대
+- 어린이보호구역 통과 비율: {f.child_zone_coverage_pct}%
+
+주의 요소
+- 교통사고다발지역: {f.accident_hotspot_count}곳
+- 문서 기반 위험구간: {doc_n}곳
+
+아래 형식 그대로, JSON으로만 출력하세요.
+
+{{
+  "summary": "2~3문장. 점수와 그 의미(중앙값 60점 대비 위치)를 먼저 말하고, 이 경로의 특징을 한 문장으로.",
+  "good_points": [
+    "값이 0보다 큰 항목만. 각 1~2문장. 최대 4개. 수치를 반드시 포함. 없으면 빈 배열."
+  ],
+  "caution_points": [
+    "사고다발·문서위험이 있을 때만. 각 1~2문장. 아이에게 말해 줄 구체적 행동 지침을 포함. 없으면 빈 배열."
+  ],
+  "night_note": "밤일 때만 한 문장. 낮이면 빈 문자열. 조명·CCTV 유무에 따라 실용적인 조언."
+}}"""
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    if not text:
+        return None
+    raw = text.strip()
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw, re.IGNORECASE)
+    if fence:
+        raw = fence.group(1).strip()
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict) and "summary" in data:
+            return data
+    except json.JSONDecodeError:
+        pass
+    start, end = raw.find("{"), raw.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            data = json.loads(raw[start : end + 1])
+            if isinstance(data, dict) and "summary" in data:
+                return data
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _normalize_parent_payload(data: dict[str, Any]) -> dict[str, Any]:
+    good = data.get("good_points") or []
+    caution = data.get("caution_points") or []
+    if not isinstance(good, list):
+        good = [str(good)] if good else []
+    if not isinstance(caution, list):
+        caution = [str(caution)] if caution else []
+    return {
+        "summary": str(data.get("summary") or "").strip(),
+        "good_points": [str(x).strip() for x in good if str(x).strip()][:4],
+        "caution_points": [str(x).strip() for x in caution if str(x).strip()],
+        "night_note": str(data.get("night_note") or "").strip(),
+    }
+
+
+def _mock_parent_structured(
+    candidate: RouteCandidate,
+    time_context: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Solar 없을 때 — 동일 규칙으로 JSON 구조 생성."""
+    f = candidate.features
+    score = float(candidate.safety_score)
+    km = round(f.distance_km if f.distance_km else candidate.distance_m / 1000.0, 2)
+    mins = max(1, round(candidate.duration_s / 60))
+    period = _period_label(time_context)
+    vs = score - GANGNAM_MEDIAN
+    if abs(vs) < 0.5:
+        vs_txt = f"강남 초등 통학로 중앙값({GANGNAM_MEDIAN}점)과 비슷합니다"
+    elif vs > 0:
+        vs_txt = f"강남 초등 통학로 중앙값({GANGNAM_MEDIAN}점)보다 약 {vs:.1f}점 높습니다"
+    else:
+        vs_txt = f"강남 초등 통학로 중앙값({GANGNAM_MEDIAN}점)보다 약 {abs(vs):.1f}점 낮습니다"
+
+    summary = (
+        f"이 경로의 안전점수는 {score}점입니다. {vs_txt}. "
+        f"거리는 약 {km}km, 걸어서 약 {mins}분 걸립니다."
     )
 
-    time_ctx = time_context or {}
-    time_block = ""
-    if time_ctx:
-        time_block = (
-            f"\n[현재 시각·시간대 맥락]\n"
-            f"- 현재 시각: {time_ctx.get('current_time', '알 수 없음')}\n"
-            f"- 시간대: {time_ctx.get('period_label', '낮')} ({time_ctx.get('scoring_context', '')})\n"
-            f"- 일몰: {time_ctx.get('sunset_time', '')} / 밤 시작: {time_ctx.get('night_start_time', '')}\n"
-            f"- 도착 예상: {time_ctx.get('eta_message', '알 수 없음')}\n"
+    good: list[str] = []
+    if f.child_zone_coverage_pct > 0:
+        good.append(
+            f"어린이보호구역을 약 {f.child_zone_coverage_pct}% 지납니다. "
+            "이 구간에서는 차량 속도가 제한되니 아이가 횡단보도에서 여유 있게 건널 수 있다고 말해 주세요."
+        )
+    if f.cctv_count > 0:
+        good.append(
+            f"주변 보호구역에 CCTV가 {f.cctv_count}대 있습니다. "
+            "경로 바로 위에 있다는 뜻은 아니며, 근처 보호구역이 보유한 시설 수입니다."
+        )
+    if f.safety_facility_cctv_count > 0:
+        good.append(
+            f"경로 40m 안에 안심귀갓길 CCTV가 {f.safety_facility_cctv_count}대 있습니다."
+        )
+    if f.safety_facility_streetlight_count > 0:
+        good.append(
+            f"안심귀갓길 보안등이 {f.safety_facility_streetlight_count}개 있습니다. "
+            "어두운 시간대에 밝은 구간을 고르는 데 참고할 수 있습니다."
+        )
+    bell112 = _bell112_count(f)
+    if bell112 > 0 and len(good) < 4:
+        good.append(f"안심벨·112신고 장치가 {bell112}개 있습니다.")
+    if f.guardian_house_count > 0 and len(good) < 4:
+        good.append(
+            f"아동안전지킴이집이 {f.guardian_house_count}곳 있습니다. "
+            "급한 일이 있으면 가까운 가게에 도움을 요청하라고 미리 알려 주세요."
+        )
+    if f.speed_camera_count > 0 and len(good) < 4:
+        good.append(f"무인단속카메라가 {f.speed_camera_count}곳 있습니다.")
+
+    caution: list[str] = []
+    if f.accident_hotspot_count > 0:
+        caution.append(
+            f"교통사고다발지역이 {f.accident_hotspot_count}곳 있습니다. "
+            "아이에게 ‘여기서는 뛰지 말고 좌우를 본 뒤 건너자’고 말해 주세요."
+        )
+    risk_docs = [d for d in (f.matched_documents or []) if d.is_risk]
+    doc_n = int(f.doc_risk_count or 0) or len(risk_docs)
+    if doc_n > 0:
+        kind = (risk_docs[0].risk_type if risk_docs else None) or "주의 구간"
+        caution.append(
+            f"문서 기반 위험구간이 {doc_n}곳({kind}) 있습니다. "
+            "그 앞을 지날 때는 천천히 걷고, 공사·펜스가 있으면 한쪽으로 붙어 가라고 알려 주세요."
         )
 
-    shared_facts = (
-        f"[추천 경로 데이터]\n"
-        f"- 거리: {f.distance_km}km / 예상 소요시간: 약 {round(candidate.duration_s/60)}분\n"
-        f"- CCTV: {f.cctv_count}개 + 안심귀갓길 CCTV {f.safety_facility_cctv_count}대\n"
-        f"- 보안등: {f.streetlight_count}개 + 안심귀갓길 보안등 {f.safety_facility_streetlight_count}개\n"
-        f"- 안심벨: {f.safety_bell_count} · 112신고: {f.emergency112_count}\n"
-        f"- 어린이보호구역 통과 비율: {f.child_zone_coverage_pct}%\n"
-        f"- 사고다발지역: {f.accident_hotspot_count}곳\n"
-        f"- 범죄위험 근사지수(0~100, 낮을수록 안전): {f.crime_risk_proxy}\n"
-        f"- 아동안전지킴이집(위험 시 대피 가능): {f.guardian_house_count}곳\n"
-        f"- 무인 교통단속카메라(과속 감시): {f.speed_camera_count}곳\n"
-        f"- 안전점수: {candidate.safety_score}/100 ({time_ctx.get('scoring_context', '시간대 기준')}, 별점 {candidate.star_rating}/3)\n"
-        f"- 획득한 안전 스탬프: {stamps_text}\n"
-        f"- 다른 후보 경로: {others_summary}\n"
-        f"- 현재 목적지 날씨: {weather_summary_text(weather)}\n"
-        f"{time_block}\n"
-        f"[문서 근거(통학로 안전진단 보고서 등에서 추출)]\n{_grounding_context(candidate)}"
-    )
+    night_note = ""
+    if period == "밤":
+        lights = f.safety_facility_streetlight_count
+        cams = f.safety_facility_cctv_count
+        if lights > 0 or cams > 0:
+            night_note = (
+                f"밤 시간대라 안심귀갓길 보안등 {lights}개·CCTV {cams}대가 있는 구간을 우선 참고해 주세요."
+            )
+        else:
+            night_note = (
+                "밤 시간대입니다. 가능하면 밝은 큰길을 걷고, 이어폰은 한쪽만 쓰도록 알려 주세요."
+            )
 
-    parent_system = (
-        "당신은 어린이 통학로 안전을 분석해 부모에게 브리핑하는 안전 전문가입니다. "
-        "반드시 아래 제공된 데이터와 문서 근거'만' 사용해 사실에 기반한 설명을 작성하세요. "
-        "제공되지 않은 수치나 시설을 지어내지 말고, 근거 없는 일반론도 쓰지 마세요.\n"
-        "다음 구조로, 각 항목을 구체적인 수치와 함께 상세히 작성하세요(마크다운 소제목 사용):\n"
-        "### ✅ 한줄 결론\n왜 이 경로를 추천하는지 1~2문장.\n"
-        "### 📊 안전 근거\nCCTV·어린이보호구역·안전지킴이집·보안등·단속카메라 수치를 다른 후보 경로와 비교해 "
-        "구체적으로 설명(예: 'CCTV가 1km당 N개로 ~').\n"
-        "### ⚠️ 주의 구간\n사고다발지역·범죄위험·문서상 위험지적이 있으면 어디를 조심해야 하는지, "
-        "문서 근거가 있으면 출처(보고서명)를 인용해 설명. 없으면 '특별한 위험 지적 없음'이라고 명시.\n"
-        "### 🕒 시간·날씨 팁\n현재 시각·낮/밤 시간대에 맞는 안전 조언(밤이면 조명·CCTV, 낮이면 교통·횡단보도), "
-        "도착 예상 시각, 그리고 현재 날씨를 고려한 등하교 팁을 덧붙이세요.\n"
-        "전문적이되 부모가 이해하기 쉬운 존댓말로, 전체 8~12문장 분량으로 충실하게 작성하세요."
+    return _normalize_parent_payload(
+        {
+            "summary": summary,
+            "good_points": good[:4],
+            "caution_points": caution,
+            "night_note": night_note,
+        }
     )
-    kid_system = (
-        f"당신은 {audience_age}세 어린이에게 등하굣길을 설명하는 아주 친절하고 다정한 도우미입니다. "
-        "반드시 아래 데이터에 기반해서 설명하되, 숫자나 어려운 용어(예: '안전점수', 'CCTV 밀도', "
-        "'범죄위험지수')는 그대로 쓰지 말고 아이가 이해할 수 있는 쉬운 말로 바꿔서 설명하세요.\n"
-        "쉬운 낱말과 짧은 문장으로 4~6문장 정도, 다음 내용을 담아 이야기하듯 말해주세요:\n"
-        "1) 이 길이 왜 안전하고 좋은지 (CCTV·밝은 가로등·안전지킴이집 등을 아이 눈높이로),\n"
-        "2) 걸을 때 무엇을 조심해야 하는지 (횡단보도, 차 조심 등),\n"
-        "3) 현재 날씨에 맞는 한마디(비 오면 우산·미끄럼 조심 등),\n"
-        "4) 마지막 문장에는 이 길에서 모은 '안전 스탬프'를 자랑하듯 신나게 언급해 뿌듯함을 주세요"
-        "(예: 'CCTV 지킴이 스탬프도 모았어! 대단하지?'). 밝고 다정한 말투(반말)로 격려해 주세요."
-    )
-
-    return {
-        "shared_facts": shared_facts,
-        "parent_system": parent_system,
-        "kid_system": kid_system,
-    }
 
 
 def _call_solar(system_prompt: str, user_prompt: str, max_tokens: int = 900) -> str:
     resp = requests.post(
         CHAT_COMPLETIONS_URL,
-        headers={"Authorization": f"Bearer {settings.upstage_api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {settings.upstage_api_key}",
+            "Content-Type": "application/json",
+        },
         json={
             "model": "solar-pro",
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": 0.5,
+            "temperature": 0.3,
             "max_tokens": max_tokens,
         },
         timeout=45,
     )
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"].strip()
-
-
-def _weather_parent_note(weather: Optional[dict[str, Any]]) -> str:
-    if not weather:
-        return ""
-    if weather.get("is_rain"):
-        return f" 현재 목적지 날씨는 '{weather.get('description')}'이라, 미끄럼과 시야 확보에 유의하고 우산·우비를 챙기세요."
-    return f" 현재 목적지 날씨는 '{weather.get('description')}'입니다."
-
-
-def _mock_parent_report(
-    candidate: RouteCandidate,
-    other_candidates: list[RouteCandidate],
-    weather: Optional[dict[str, Any]] = None,
-    time_context: Optional[dict[str, Any]] = None,
-) -> str:
-    """부모용 안전 설명 — 경로 수치를 표처럼 정리 (AI 문장 없음)."""
-    f = candidate.features
-    risk_docs = [d for d in f.matched_documents if d.is_risk]
-    km = f.distance_km if f.distance_km else round(candidate.distance_m / 1000, 2)
-    mins = max(1, round(candidate.duration_s / 60))
-
-    plus: list[str] = []
-    if f.child_zone_coverage_pct > 0:
-        plus.append(f"어린이보호구역 통과 {f.child_zone_coverage_pct}%")
-    total_cctv = f.safety_facility_cctv_count + f.cctv_count
-    if total_cctv > 0:
-        parts = []
-        if f.safety_facility_cctv_count > 0:
-            parts.append(f"안심귀갓길 {f.safety_facility_cctv_count}")
-        if f.cctv_count > 0:
-            parts.append(f"보호구역 {f.cctv_count}")
-        plus.append(f"CCTV {total_cctv}대({', '.join(parts)})")
-    if f.safety_facility_streetlight_count > 0:
-        plus.append(f"안심귀갓길 보안등 {f.safety_facility_streetlight_count}개")
-    if f.guardian_house_count > 0:
-        plus.append(f"아동안전지킴이집 {f.guardian_house_count}곳")
-    if f.speed_camera_count > 0:
-        plus.append(f"무인 단속카메라 {f.speed_camera_count}곳")
-    if f.safety_bell_count > 0:
-        plus.append(f"안심벨 {f.safety_bell_count}개")
-
-    caution: list[str] = []
-    if f.accident_hotspot_count > 0:
-        caution.append(f"사고다발지역 {f.accident_hotspot_count}곳")
-    if f.doc_risk_count > 0 or risk_docs:
-        if risk_docs:
-            first = risk_docs[0]
-            caution.append(
-                f"문서 {first.source_doc or '업로드 문서'} · {first.risk_type or '위험 구간'}"
-            )
-        else:
-            caution.append(f"문서 위험 지점 {f.doc_risk_count}곳")
-
-    why_bits = [
-        "추천 경로",
-        f"안전 {candidate.safety_score}점",
-        f"{km}km",
-        f"{mins}분",
-    ]
-    if plus:
-        why_bits.append(f"반영 근거: {', '.join(plus[:3])}")
-    if caution:
-        why_bits.append(f"주의 근거: {', '.join(caution[:2])}")
-    if not plus and not caution:
-        why_bits.append("표시할 추가 시설·주의 근거 없음")
-    why_line = " · ".join(why_bits)
-
-    lines = [
-        why_line,
-        "",
-        "경로 주변 안전 시설",
-        f"- 안심귀갓길 CCTV: {f.safety_facility_cctv_count}대",
-        f"- 어린이보호구역 CCTV: {f.cctv_count}대",
-        f"- 안심귀갓길 보안등: {f.safety_facility_streetlight_count}개",
-        f"- 일반 보안등: {f.streetlight_count}개",
-        f"- 안심벨: {f.safety_bell_count}개",
-        f"- 112 신고장치: {f.emergency112_count}개",
-        f"- 어린이보호구역 통과: {f.child_zone_coverage_pct}%",
-        f"- 아동안전지킴이집: {f.guardian_house_count}곳",
-        f"- 무인 단속카메라: {f.speed_camera_count}곳",
-        "",
-        "주의할 점",
-        f"- 사고다발지역: {f.accident_hotspot_count}곳",
-        f"- 문서 위험 지점: {f.doc_risk_count}곳",
-        f"- 범죄위험 지수: {f.crime_risk_proxy} (낮을수록 안전)",
-    ]
-    if risk_docs:
-        first = risk_docs[0]
-        lines.append(
-            f"- 문서 내용: {first.risk_type or '주의 구간'} · {first.source_doc or '업로드 문서'}"
-        )
-    if weather and weather.get("is_rain"):
-        lines.append(f"- 날씨: {weather.get('description') or '비'} · 미끄럼 주의")
-    return "\n".join(lines)
-
-
-def _parent_report_v2_two_groups(
-    candidate: RouteCandidate,
-    other_candidates: list[RouteCandidate] | None = None,
-    weather: Optional[dict[str, Any]] = None,
-    time_context: Optional[dict[str, Any]] = None,
-) -> str:
-    """하위 호환: 설명2도 동일 템플릿."""
-    return _mock_parent_report(candidate, other_candidates or [], weather, time_context)
 
 
 def _mock_kid_report(
@@ -239,26 +275,59 @@ def _mock_kid_report(
 ) -> str:
     f = candidate.features
     tc = time_context or {}
-    crossing_note = "횡단보도를 조심해서 건너면" if f.accident_hotspot_count == 0 else "위험한 곳을 지날 때는 손을 들고 조심해서 건너면"
+    crossing_note = (
+        "횡단보도를 조심해서 건너면"
+        if f.accident_hotspot_count == 0
+        else "차가 많은 곳에서는 손을 들고 좌우를 본 뒤 건너면"
+    )
     weather_note = ""
     if weather and weather.get("is_rain"):
-        weather_note = " 오늘은 비가 오니까 우산 꼭 챙기고, 바닥이 미끄러우니 뛰지 말고 천천히 걷자!"
-    stamp_note = ""
-    if candidate.stamps:
-        stamp_labels = " ".join(f"{s.emoji}{s.label}" for s in candidate.stamps)
-        stamp_note = f" 오늘은 {stamp_labels} 스탬프도 모았어요!"
+        weather_note = " 오늘은 비가 오니까 우산 챙기고, 바닥이 미끄러우니 뛰지 말고 천천히 걷자!"
     time_note = ""
     if tc.get("is_night"):
-        time_note = " 지금은 밤이라 밝은 가로등이랑 CCTV 많은 길로 골랐어!"
+        time_note = " 지금은 밤이라 밝은 길을 골랐어!"
     elif tc.get("period_label"):
         time_note = " 지금은 낮이라 차 조심하는 길로 골랐어!"
     if tc.get("eta_message"):
         time_note += f" {tc['eta_message']}!"
+    ansim = f.safety_facility_cctv_count
     return (
-        f"이 길은 큰 도로를 따라가서 안전해요! CCTV 카메라가 {f.cctv_count + f.safety_facility_cctv_count}개나 있어서 지켜봐 주고, "
-        f"밝은 가로등도 있어요. {crossing_note} 학교까지 안전하게 갈 수 있어요.{time_note}{weather_note}"
-        f"{stamp_note}"
+        f"이 길로 가면 돼요. 근처 안심 CCTV가 {ansim}대 있고, "
+        f"{crossing_note} 학교까지 갈 수 있어요.{time_note}{weather_note}"
     )
+
+
+def _mock_parent_report(
+    candidate: RouteCandidate,
+    other_candidates: list[RouteCandidate] | None = None,
+    weather: Optional[dict[str, Any]] = None,
+    time_context: Optional[dict[str, Any]] = None,
+) -> str:
+    """하위 호환 — JSON 문자열로 부모 리포트 반환."""
+    del other_candidates, weather
+    return json.dumps(
+        _mock_parent_structured(candidate, time_context),
+        ensure_ascii=False,
+    )
+
+
+def generate_parent_report(
+    candidate: RouteCandidate,
+    time_context: Optional[dict[str, Any]] = None,
+) -> tuple[dict[str, Any], bool]:
+    """부모용 리포트 JSON dict와 mock 여부."""
+    if settings.upstage_mock:
+        return _mock_parent_structured(candidate, time_context), True
+
+    user_prompt = build_parent_user_prompt(candidate, time_context)
+    try:
+        raw = _call_solar(PARENT_SYSTEM_PROMPT, user_prompt, max_tokens=900)
+        parsed = _extract_json_object(raw)
+        if parsed:
+            return _normalize_parent_payload(parsed), False
+        return _mock_parent_structured(candidate, time_context), True
+    except Exception:
+        return _mock_parent_structured(candidate, time_context), True
 
 
 def generate_reports(
@@ -268,32 +337,18 @@ def generate_reports(
     weather: Optional[dict[str, Any]] = None,
     time_context: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    # 부모용은 템플릿만 사용 (AI 장문 제거). 아이용만 Solar 가능.
-    parent_report = _mock_parent_report(candidate, other_candidates, weather, time_context)
-    parent_v2 = parent_report
+    del other_candidates  # 새 프롬프트는 추천 경로 수치만 사용
+    structured, parent_mock = generate_parent_report(candidate, time_context)
+    parent_json = json.dumps(structured, ensure_ascii=False)
 
-    if settings.upstage_mock:
-        return {
-            "parent_report": parent_report,
-            "parent_report_v2": parent_v2,
-            "kid_report": _mock_kid_report(candidate, audience_age, weather, time_context),
-            "used_mock": True,
-        }
+    kid_mock = True
+    kid_report = _mock_kid_report(candidate, audience_age, weather, time_context)
 
-    prompts = _build_messages(candidate, other_candidates, audience_age, weather, time_context)
-    try:
-        kid_report = _call_solar(prompts["kid_system"], prompts["shared_facts"], max_tokens=700)
-        return {
-            "parent_report": parent_report,
-            "parent_report_v2": parent_v2,
-            "kid_report": kid_report,
-            "used_mock": False,
-        }
-    except Exception as exc:  # 데모 안정성을 위해 API 실패 시 MOCK으로 폴백
-        return {
-            "parent_report": parent_report,
-            "parent_report_v2": parent_v2,
-            "kid_report": _mock_kid_report(candidate, audience_age, weather, time_context),
-            "used_mock": True,
-            "fallback_note": str(exc),
-        }
+    return {
+        "parent_report": parent_json,
+        "parent_report_v2": parent_json,
+        "parent_structured": structured,
+        "kid_report": kid_report,
+        "used_mock": parent_mock and kid_mock,
+        "weather_note": weather_summary_text(weather),
+    }

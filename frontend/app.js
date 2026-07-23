@@ -1,13 +1,22 @@
 // API_BASE는 auth.js에서 정의 (로컬 8000 / 배포 시 /api 프록시)
 
 const CATEGORY_COLORS = {
-  cctv: "#2f7dd1",
-  hotspot: "#c45c26",
-  docRisk: "#d64545",
-  docRiskEstimated: "#e07070",
-  guardian: "#8e44ad",
-  safetyCctv: "#1a6fbf",
-  safetyStreetlight: "#f5b800",
+  cctv: "#16A34A",
+  hotspot: "#DC2626",
+  docRisk: "#9333EA",
+  docRiskEstimated: "#C084FC",
+  guardian: "#DB2777",
+  safetyCctv: "#0891B2",
+  safetyStreetlight: "#F59E0B",
+};
+
+/** 통학 경로 전용 — 파란 실선 + 흰색 외곽선(헤일로). */
+const ROUTE_LINE = {
+  color: "#2563EB",
+  weight: 6,
+  haloColor: "#ffffff",
+  haloWeight: 10,
+  opacity: 1,
 };
 
 const PUBLIC_DATA_LEGEND = [
@@ -65,6 +74,8 @@ const state = {
   progressStamps: { third: false, twoThirds: false, arrive: false },
   clockTimer: null,
   demoForceNight: false,
+  /** "auto" | "day" | "night" — day/night는 08:00/21:00 고정으로 서버 재계산 */
+  timeMode: "auto",
   // 안전 문서: 큐 → 확인(분석) 또는 반영 안함 → 경로 찾기 가능
   docQueue: [],
   docReady: false,
@@ -110,6 +121,9 @@ function fillDemoCoordinates() {
   document.getElementById("origin-query").value = scenario.origin;
   document.getElementById("dest-query").value = scenario.destination;
   state.demoForceNight = Boolean(scenario.forceNight);
+  if (scenario.forceNight) {
+    setTimeMode("night", { rerun: false });
+  }
   // 아이 나이 입력란을 다시 활성화하면 함께 복원합니다.
   // document.getElementById("audience-age").value = scenario.age;
 
@@ -169,7 +183,7 @@ function safetyGradeInfo(score) {
 function scoreBenchmarkLine(score) {
   const s = Number(score);
   if (!Number.isFinite(s)) return "";
-  return `${s}점 · 강남구 초등 통학로 평균 ${GANGNAM_SCORE_MEDIAN}점`;
+  return `안전점수 ${s}점 · 강남 초등 통학로 중앙값 ${GANGNAM_SCORE_MEDIAN}점`;
 }
 
 function scoreTopPercentLine(score) {
@@ -237,7 +251,6 @@ function buildGroundedWhySummary(candidate, routeData = null) {
   const zoneCctv = features.cctv_count || 0;
   const totalCctv = ansimCctv + zoneCctv;
   const ansimLight = features.safety_facility_streetlight_count || 0;
-  const streetLight = features.streetlight_count || 0;
   const zonePct = features.child_zone_coverage_pct || 0;
   const guardian = features.guardian_house_count || 0;
   const hotspot = features.accident_hotspot_count || 0;
@@ -260,10 +273,9 @@ function buildGroundedWhySummary(candidate, routeData = null) {
           : `.`)
     );
   }
-  if (ansimLight + streetLight > 0) {
+  if (ansimLight > 0) {
     goodPoints.push(
-      `보안등이 ${ansimLight + streetLight}개입니다` +
-        (ansimLight > 0 ? ` (안심귀갓길 ${ansimLight}개 포함). 어두운 시간대에 도움이 됩니다.` : `.`)
+      `안심귀갓길 보안등이 ${ansimLight}개입니다. 어두운 시간대에 도움이 됩니다.`
     );
   }
   if (guardian > 0) {
@@ -361,6 +373,40 @@ function buildGroundedWhySummary(candidate, routeData = null) {
 }
 
 /** 부모용 안전 리포트 모델 */
+function parseSolarParentReport(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  let text = raw.trim();
+  if (!text) return null;
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) text = fence[1].trim();
+  const tryParse = (s) => {
+    try {
+      const obj = JSON.parse(s);
+      if (obj && typeof obj.summary === "string") {
+        return {
+          summary: String(obj.summary || "").trim(),
+          good_points: Array.isArray(obj.good_points)
+            ? obj.good_points.map((x) => String(x).trim()).filter(Boolean).slice(0, 4)
+            : [],
+          caution_points: Array.isArray(obj.caution_points)
+            ? obj.caution_points.map((x) => String(x).trim()).filter(Boolean)
+            : [],
+          night_note: String(obj.night_note || "").trim(),
+        };
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  };
+  const direct = tryParse(text);
+  if (direct) return direct;
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) return tryParse(text.slice(start, end + 1));
+  return null;
+}
+
 function buildParentSafetyModel(candidate, routeData = null) {
   const features = candidate?.features || {};
   const weather = routeData?.weather || null;
@@ -374,23 +420,34 @@ function buildParentSafetyModel(candidate, routeData = null) {
     String(candidate.id || "").includes("avoid-");
 
   const why = buildGroundedWhySummary(candidate, routeData);
+  // Solar 문장은 추천 경로 기준으로만 생성됨 — 다른 후보 선택 시 해당 후보 수치로 재구성
+  const solarForThis =
+    routeData && candidate.id === routeData.recommended_id
+      ? routeData.solarParent || parseSolarParentReport(routeData.parent_report)
+      : null;
+  const solar = solarForThis;
 
-  const safeRows = [
-    { label: "안심귀갓길 CCTV", value: `${features.safety_facility_cctv_count || 0}대` },
-    { label: "어린이보호구역 CCTV", value: `${features.cctv_count || 0}대` },
-    { label: "안심귀갓길 보안등", value: `${features.safety_facility_streetlight_count || 0}개` },
-    { label: "일반 보안등", value: `${features.streetlight_count || 0}개` },
-    { label: "안심벨", value: `${features.safety_bell_count || 0}개` },
-    { label: "112 신고장치", value: `${features.emergency112_count || 0}개` },
-    { label: "어린이보호구역 통과", value: `${features.child_zone_coverage_pct ?? 0}%` },
-    { label: "아동안전지킴이집", value: `${features.guardian_house_count || 0}곳` },
-    { label: "무인 단속카메라", value: `${features.speed_camera_count || 0}곳` },
+  const safeFacilityDefs = [
+    { label: "안심귀갓길 CCTV", count: features.safety_facility_cctv_count || 0, unit: "대" },
+    { label: "어린이보호구역 CCTV", count: features.cctv_count || 0, unit: "대" },
+    { label: "안심귀갓길 보안등", count: features.safety_facility_streetlight_count || 0, unit: "개" },
+    { label: "안심벨", count: features.safety_bell_count || 0, unit: "개" },
+    { label: "112 신고장치", count: features.emergency112_count || 0, unit: "개" },
+    { label: "어린이보호구역 통과", count: Number(features.child_zone_coverage_pct) || 0, unit: "%" },
+    { label: "아동안전지킴이집", count: features.guardian_house_count || 0, unit: "곳" },
+    { label: "무인 단속카메라", count: features.speed_camera_count || 0, unit: "곳" },
   ];
+  const safeRows = safeFacilityDefs
+    .filter((d) => d.count > 0)
+    .map((d) => ({
+      label: d.label,
+      value: d.unit === "%" ? `${d.count}%` : `${d.count}${d.unit}`,
+    }));
+  const absentFacilityLabels = safeFacilityDefs.filter((d) => d.count <= 0).map((d) => d.label);
 
   const cautionRows = [
     { label: "사고다발지역", value: `${features.accident_hotspot_count || 0}곳` },
     { label: "문서 위험 지점", value: `${features.doc_risk_count || riskDocs.length || 0}곳` },
-    { label: "범죄위험 지수", value: `${features.crime_risk_proxy ?? "-"}` },
   ];
   if (riskDocs.length) {
     const byDoc = new Map();
@@ -415,6 +472,12 @@ function buildParentSafetyModel(candidate, routeData = null) {
   if (isRecommended) routeTag = "추천 경로";
   else if (isDetour) routeTag = "우회 경로";
 
+  const paragraphs = solar?.summary
+    ? [solar.summary, solar.night_note].filter(Boolean)
+    : why.paragraphs;
+  const goodPoints = solar ? solar.good_points || [] : why.goodPoints;
+  const watchPoints = solar ? solar.caution_points || [] : why.watchPoints;
+
   return {
     routeTag,
     score: candidate.safety_score,
@@ -422,11 +485,12 @@ function buildParentSafetyModel(candidate, routeData = null) {
     duration: `${mins}분`,
     stars: candidate.star_rating || 0,
     whyTitle: why.title,
-    paragraphs: why.paragraphs,
-    whySummary: why.paragraphs.join(" "),
-    goodPoints: why.goodPoints,
-    watchPoints: why.watchPoints,
+    paragraphs,
+    whySummary: paragraphs.join(" "),
+    goodPoints,
+    watchPoints,
     safeRows,
+    absentFacilityLabels,
     cautionRows,
   };
 }
@@ -441,6 +505,20 @@ function renderSafetyRows(rows) {
       </tr>`
     )
     .join("");
+}
+
+function renderFacilityTableBody(presentRows, absentLabels) {
+  let html = renderSafetyRows(presentRows || []);
+  if (absentLabels?.length) {
+    html += `
+      <tr class="safety-absent-sep">
+        <td colspan="2">─ 이 경로에 없는 시설 ─</td>
+      </tr>
+      <tr class="safety-absent-list">
+        <td colspan="2">${escapeHtml(absentLabels.join(", "))}</td>
+      </tr>`;
+  }
+  return html;
 }
 
 function renderBulletList(items, emptyText) {
@@ -498,7 +576,7 @@ function renderParentSafetyHtml(model) {
         <div class="safety-tables">
           <table class="safety-table">
             <caption>경로 주변 안전 시설</caption>
-            <tbody>${renderSafetyRows(model.safeRows)}</tbody>
+            <tbody>${renderFacilityTableBody(model.safeRows, model.absentFacilityLabels)}</tbody>
           </table>
           <table class="safety-table">
             <caption>주의 수치</caption>
@@ -533,33 +611,64 @@ function buildSelectedRouteSafetyText(candidate, routeData) {
   ].join("\n");
 }
 
-function routeDisplayName(routeId) {
+function isDetourRouteId(routeId) {
+  const id = String(routeId || "").toLowerCase();
+  return id.includes("avoid") || id.includes("via") || id.includes("detour");
+}
+
+function isBaseRouteId(routeId) {
+  const id = String(routeId || "").toLowerCase();
+  return (id.includes("main") || id.includes("direct")) && !isDetourRouteId(id);
+}
+
+function routeDisplayName(routeId, candidate = null) {
+  if (candidate?.display_label) return candidate.display_label;
+  if (isDetourRouteId(routeId)) return "안전 우회";
+  if (isBaseRouteId(routeId)) return "기본 경로";
   if (routeId.includes("seolleung-sidewalk") || routeId.includes("sidewalk")) return "선릉로 보도 경로";
-  if (routeId.includes("avoid-hotspot") || routeId.includes("hotspot-avoid")) return "사고다발 우회 경로";
-  if (routeId.includes("doc-avoid") || routeId.includes("avoid-doc")) return "문서 위험 우회 경로";
-  if (routeId.includes("pedestrian-main") || routeId.includes("direct")) return "보행자 큰길 경로";
-  if (routeId.includes("opt0")) return "보행자 추천 경로";
-  if (routeId.includes("opt4") || routeId.includes("pedestrian-alt")) return "보행자 큰길 경로";
-  if (routeId.includes("opt10")) return "보행자 최단 경로";
-  if (routeId.endsWith("-a") || routeId.includes("grid-a")) return "우회 경로 A";
-  if (routeId.endsWith("-b") || routeId.includes("grid-b")) return "우회 경로 B";
+  if (routeId.includes("opt0") || routeId.includes("opt4") || routeId.includes("opt10") || routeId.includes("pedestrian-alt")) {
+    return "다른 경로";
+  }
+  if (routeId.endsWith("-a") || routeId.includes("grid-a")) return "안전 우회";
+  if (routeId.endsWith("-b") || routeId.includes("grid-b")) return "안전 우회";
   return "보행자 경로";
+}
+
+function detourCompareNote(candidate, routeData) {
+  if (!isDetourRouteId(candidate?.id) || !routeData?.candidates?.length) return "";
+  const base =
+    routeData.candidates.find((c) => isBaseRouteId(c.id)) ||
+    routeData.candidates.find((c) => !isDetourRouteId(c.id));
+  if (!base) return "";
+  const parts = [];
+  const baseHot = base.features?.accident_hotspot_count || 0;
+  const detHot = candidate.features?.accident_hotspot_count || 0;
+  const avoidedHot = Math.max(0, baseHot - detHot);
+  if (avoidedHot > 0) parts.push(`교통사고다발지역 ${avoidedHot}곳 회피`);
+  const baseDoc = base.features?.doc_risk_count || 0;
+  const detDoc = candidate.features?.doc_risk_count || 0;
+  const avoidedDoc = Math.max(0, baseDoc - detDoc);
+  if (avoidedDoc > 0) parts.push(`문서 위험 ${avoidedDoc}곳 회피`);
+  const extra = Math.max(0, Math.round((candidate.distance_m || 0) - (base.distance_m || 0)));
+  if (extra > 0) parts.push(`${extra}m 더 걸음`);
+  return parts.join(" · ");
 }
 
 function routeDisplaySortKey(routeId) {
   if (routeId.includes("seolleung-sidewalk") || routeId.includes("sidewalk")) return 0;
-  if (routeId.includes("pedestrian-main") || routeId.includes("direct")) return 0;
+  if (isBaseRouteId(routeId) || routeId.includes("pedestrian-main") || routeId.includes("direct")) return 0;
   if (routeId.includes("opt0")) return 1;
   if (routeId.includes("opt4") || routeId.includes("pedestrian-alt")) return 2;
   if (routeId.includes("opt10")) return 3;
-  if (routeId.includes("avoid-hotspot") || routeId.includes("hotspot-avoid")) return 4;
-  if (routeId.includes("doc-avoid") || routeId.includes("avoid-doc")) return 5;
+  if (isDetourRouteId(routeId)) return 4;
   if (routeId.endsWith("-a") || routeId.includes("grid-a")) return 5;
   if (routeId.endsWith("-b") || routeId.includes("grid-b")) return 6;
   return 7;
 }
 
 function isDuplicateRouteCard(first, second) {
+  // 기본 vs 우회는 거리가 비슷해도 별도 카드로 유지
+  if (isDetourRouteId(first.id) !== isDetourRouteId(second.id)) return false;
   return (
     Math.abs(first.distance_m - second.distance_m) <= 10 &&
     Math.abs(first.duration_s - second.duration_s) <= 20
@@ -578,14 +687,16 @@ function candidatesForDisplay(routeData) {
     uniqueCandidates[0];
   if (!recommended) return [];
 
-  const alternatives = uniqueCandidates
-    .filter((candidate) => candidate.id !== recommended.id)
-    .sort(
-      (first, second) =>
-        second.safety_score - first.safety_score ||
-        routeDisplaySortKey(first.id) - routeDisplaySortKey(second.id)
+  // 점수순 (추천이 최상단이 되도록 동점이면 추천 우선)
+  const ordered = [...uniqueCandidates].sort((first, second) => {
+    if (first.id === recommended.id) return -1;
+    if (second.id === recommended.id) return 1;
+    return (
+      second.safety_score - first.safety_score ||
+      routeDisplaySortKey(first.id) - routeDisplaySortKey(second.id)
     );
-  return [recommended, ...alternatives];
+  });
+  return ordered;
 }
 
 function activeRouteId(routeData) {
@@ -1009,7 +1120,7 @@ function facilityCounts(features) {
   const f = features || {};
   return {
     cctv: (f.safety_facility_cctv_count || 0) + (f.cctv_count || 0),
-    streetlight: (f.safety_facility_streetlight_count || 0) + (f.streetlight_count || 0),
+    streetlight: f.safety_facility_streetlight_count || 0,
     safetyBell: f.safety_bell_count || 0,
     emergency112: f.emergency112_count || 0,
   };
@@ -1050,15 +1161,28 @@ function updateLiveClock() {
   el.textContent = formatKoreanTime();
 }
 
-function etaMessageForDuration(durationS) {
+function departureBaseDate(routeData) {
+  const iso = routeData?.time_context?.current_time_iso;
+  if (iso) {
+    const d = new Date(iso);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  return new Date();
+}
+
+function etaMessageForDuration(durationS, routeData = null) {
   if (!durationS || durationS <= 0) return "";
-  const arrival = new Date(Date.now() + durationS * 1000);
+  const departure = departureBaseDate(routeData);
+  const arrival = new Date(departure.getTime() + durationS * 1000);
+  if (routeData?.time_context?.is_time_fixed) {
+    return `${formatKoreanTime(departure)} 출발 → ${formatKoreanTime(arrival)} 도착`;
+  }
   return `지금 출발하면 약 ${formatKoreanTime(arrival)} 도착`;
 }
 
-function routeTimeRange(durationS) {
+function routeTimeRange(durationS, routeData = null) {
   if (!durationS || durationS <= 0) return "";
-  const departure = new Date();
+  const departure = departureBaseDate(routeData);
   const arrival = new Date(departure.getTime() + durationS * 1000);
   return `${formatKoreanTime(departure)} 출발 → ${formatKoreanTime(arrival)} 도착`;
 }
@@ -1067,7 +1191,13 @@ function updateEtaForSelectedRoute(routeData) {
   const selected = activeRoute(routeData);
   const eta = document.getElementById("time-eta");
   if (!selected || !eta) return;
-  const msg = etaMessageForDuration(selected.duration_s);
+  const fromApi = routeData?.time_context?.eta_message;
+  // 추천 경로와 동일 길이면 API 문구 우선, 후보 변경 시 고정 시각 기준으로 재계산
+  const recommended = routeData?.candidates?.find((c) => c.id === routeData.recommended_id);
+  const sameAsRecommended =
+    recommended && Math.abs((selected.duration_s || 0) - (recommended.duration_s || 0)) < 0.5;
+  const msg =
+    sameAsRecommended && fromApi ? fromApi : etaMessageForDuration(selected.duration_s, routeData);
   eta.textContent = msg ? ` · ${msg}` : "";
 }
 
@@ -1075,7 +1205,7 @@ function renderTimeContext(routeData) {
   const banner = document.getElementById("time-banner");
   const icon = document.getElementById("time-banner-icon");
   const rec = document.getElementById("time-recommendation");
-  const eta = document.getElementById("time-eta");
+  const fixedLabel = document.getElementById("time-fixed-label");
   const tc = routeData && routeData.time_context;
   if (!banner || !tc) {
     if (banner) banner.hidden = true;
@@ -1086,6 +1216,15 @@ function renderTimeContext(routeData) {
   banner.classList.toggle("night", tc.is_night);
   if (icon) icon.textContent = tc.period_emoji || (tc.is_night ? "🌙" : "☀️");
   if (rec) rec.textContent = tc.recommendation_message || "";
+  if (fixedLabel) {
+    if (tc.is_time_fixed && tc.fixed_time_label) {
+      fixedLabel.hidden = false;
+      fixedLabel.textContent = tc.fixed_time_label;
+    } else {
+      fixedLabel.hidden = true;
+      fixedLabel.textContent = "";
+    }
+  }
   updateEtaForSelectedRoute(routeData);
 
   const modeMsg = document.getElementById("mode-message");
@@ -1093,6 +1232,165 @@ function renderTimeContext(routeData) {
     modeMsg.textContent = tc.recommendation_message;
   }
 }
+
+function syncTimeModeButtons() {
+  document.querySelectorAll("[data-time-mode]").forEach((btn) => {
+    const active = btn.dataset.timeMode === state.timeMode;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-pressed", String(active));
+  });
+}
+
+function applyTimeModeToPayload(payload) {
+  if (state.timeMode === "day" || state.timeMode === "night") {
+    payload.time_mode = state.timeMode;
+  }
+  // auto: time_mode/force_night 생략 → 서버 기본(실제 시각)과 동일
+}
+
+async function setTimeMode(mode, { rerun = true } = {}) {
+  const next = mode === "day" || mode === "night" ? mode : "auto";
+  if (state.timeMode === next) {
+    syncTimeModeButtons();
+    return;
+  }
+  state.timeMode = next;
+  if (next !== "night") state.demoForceNight = false;
+  syncTimeModeButtons();
+
+  if (!rerun) return;
+  if (!state.docReady || !state.lastResult) return;
+  const originQuery = document.getElementById("origin-query")?.value?.trim();
+  const destQuery = document.getElementById("dest-query")?.value?.trim();
+  if (!originQuery || !destQuery) return;
+
+  const submitBtn = document.getElementById("submit-btn");
+  const prevText = submitBtn?.textContent;
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = "시간대 재계산 중...";
+  }
+  try {
+    await fetchAndRenderRoute({ originQuery, destQuery });
+  } catch (err) {
+    console.error(err);
+    alert(err.message || "시간대 재계산에 실패했습니다.");
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = !state.docReady;
+      submitBtn.textContent = prevText || "안전 경로 찾기";
+    }
+  }
+}
+
+function setRouteProgress(message) {
+  const btn = document.getElementById("submit-btn");
+  if (btn && message) btn.textContent = message;
+  const el = document.getElementById("route-progress");
+  if (el) {
+    el.textContent = message || "";
+    el.hidden = !message;
+  }
+}
+
+function clearRouteProgressTimers(timers) {
+  (timers || []).forEach((id) => clearTimeout(id));
+}
+
+function setParentReportPending() {
+  const el = document.getElementById("parent-report");
+  if (!el) return;
+  el.className = "ai-text placeholder pending";
+  el.textContent = "안전 리포트를 작성하고 있어요";
+}
+
+async function pollRouteReports(resultKey, { maxWaitMs = 90_000, intervalMs = 800 } = {}) {
+  if (!resultKey) return null;
+  const started = Date.now();
+  while (Date.now() - started < maxWaitMs) {
+    try {
+      const data = await fetchJson(`/api/route/reports/${encodeURIComponent(resultKey)}`);
+      if (data && data.status === "ready") return data;
+    } catch (err) {
+      console.warn("[리포트]", err.message || err);
+      return null;
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return null;
+}
+
+async function fillReportsAfterRoute(routeData) {
+  setParentReportPending();
+  const key = routeData?.result_key;
+  const reportsPromise =
+    routeData?.reports_status === "ready" && routeData?.parent_report
+      ? Promise.resolve({
+          status: "ready",
+          parent_report: routeData.parent_report,
+          kid_report: routeData.kid_report,
+        })
+      : pollRouteReports(key);
+
+  const reports = await reportsPromise;
+  if (reports?.status === "ready") {
+    routeData.parent_report = reports.parent_report || routeData.parent_report || "";
+    routeData.parent_report_v2 = reports.parent_report_v2 || "";
+    routeData.kid_report = reports.kid_report || "";
+    routeData.reports_status = "ready";
+    routeData.solarParent = parseSolarParentReport(routeData.parent_report);
+    if (state.lastResult?.result_key === key) {
+      state.lastResult.parent_report = routeData.parent_report;
+      state.lastResult.kid_report = routeData.kid_report;
+      state.lastResult.reports_status = "ready";
+      state.lastResult.solarParent = routeData.solarParent;
+    }
+  }
+  renderParentReport(routeData);
+}
+
+async function fetchAndRenderRoute({ originQuery, destQuery, progressTimers = [] }) {
+  const payload = {
+    origin: { query: originQuery, name: originQuery },
+    destination: { query: destQuery, name: destQuery },
+  };
+  applyTimeModeToPayload(payload);
+
+  setRouteProgress("경로를 찾고 있어요");
+  progressTimers.push(
+    setTimeout(() => setRouteProgress("안전 시설을 확인하고 있어요"), 2200)
+  );
+
+  const [routeData, publicData] = await Promise.all([
+    fetchJson("/api/route", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+    fetchJson("/api/public-data"),
+  ]);
+
+  clearRouteProgressTimers(progressTimers);
+  setRouteProgress("안전 리포트를 작성하고 있어요");
+
+  state.lastResult = routeData;
+  state.publicData = publicData;
+  state.selectedRouteId = null;
+
+  renderWeather(routeData.weather);
+  renderTimeContext(routeData);
+  renderCandidates(routeData);
+  renderReports(routeData);
+  renderMap(routeData, publicData);
+  setParentReportPending();
+
+  // 리포트는 논블로킹 — 지도·점수는 이미 표시됨
+  fillReportsAfterRoute(routeData).catch((err) => console.warn("[리포트]", err));
+
+  setRouteProgress("");
+  return routeData;
+}
+
 
 function renderParentReport(routeData) {
   const el = document.getElementById("parent-report");
@@ -1118,11 +1416,12 @@ function startLiveClock() {
 function renderCandidates(data) {
   const el = document.getElementById("candidates-list");
   const displayCandidates = candidatesForDisplay(data);
-  el.innerHTML = displayCandidates
+  const cardsHtml = displayCandidates
     .map((c) => {
-      const isRecommended = c.id === displayCandidates[0]?.id;
+      const isRecommended = c.id === data.recommended_id || c.id === displayCandidates[0]?.id;
       const isActive = c.id === activeRouteId(data);
-      const routeName = isRecommended ? "추천 경로" : routeDisplayName(c.id);
+      const isDetour = isDetourRouteId(c.id);
+      const routeName = routeDisplayName(c.id, c);
       const gapMsg = isRecommended ? scoreGapCompareMessage(c, data) : null;
       let recommendTag = "";
       if (isRecommended) {
@@ -1154,10 +1453,11 @@ function renderCandidates(data) {
         )
         .join("");
       const topLine = scoreTopPercentLine(c.safety_score);
+      const detourNote = isDetour ? detourCompareNote(c, data) : "";
       return `
         <div class="candidate-card ${isRecommended ? "recommended" : ""} ${isActive ? "selected" : ""}" data-route-id="${c.id}" role="button" tabindex="0" aria-pressed="${isActive}">
           <h4>
-            <span>${routeName}${recommendTag}</span>
+            <span>${escapeHtml(routeName)}${recommendTag}</span>
             <span class="score-pill-wrap">
               ${gradeBadgeHtml(c.safety_score)}
               <span class="score-pill" style="background:${scoreColor(c.safety_score)}">${c.safety_score}점</span>
@@ -1165,8 +1465,9 @@ function renderCandidates(data) {
           </h4>
           <div class="score-benchmark">${escapeHtml(scoreBenchmarkLine(c.safety_score))}</div>
           ${topLine ? `<div class="score-percentile">${escapeHtml(topLine)}</div>` : ""}
+          ${detourNote ? `<div class="detour-compare-note">${escapeHtml(detourNote)}</div>` : ""}
           ${gapMsg && isRecommended ? `<div class="score-gap-note">${gapMsg}</div>` : ""}
-          ${isRecommended ? `<div class="candidate-time">${routeTimeRange(c.duration_s)}</div>` : ""}
+          ${isRecommended ? `<div class="candidate-time">${routeTimeRange(c.duration_s, data)}</div>` : ""}
           <div class="candidate-meta candidate-summary">
             <span>거리: ${(c.distance_m / 1000).toFixed(2)}km</span>
             <span>예상 소요: ${Math.round(c.duration_s / 60)}분</span>
@@ -1181,6 +1482,16 @@ function renderCandidates(data) {
         </div>`;
     })
     .join("");
+
+  const compareNote =
+    displayCandidates.length === 1
+      ? data.compare_note || "이 구간은 안전한 대안 경로가 없어 1개만 표시합니다."
+      : "";
+  const noteHtml = compareNote
+    ? `<p class="single-candidate-note" role="status">${escapeHtml(compareNote)}</p>`
+    : "";
+
+  el.innerHTML = cardsHtml + noteHtml;
 }
 
 function renderReports(data) {
@@ -1489,21 +1800,41 @@ function stepKidCard(delta) {
 
 function renderLegend() {
   const el = document.getElementById("legend");
+  const coarse = isCoarsePointerUi();
   el.innerHTML = `
-    <span class="legend-instruction">공공데이터 항목에 커서를 올리면 지도에 표시됩니다.</span>
-    ${PUBLIC_DATA_LEGEND.map(
-      ([layer, color, label]) =>
-        `<button type="button" class="legend-item" data-public-layer="${layer}"><span class="dot" style="background:${CATEGORY_COLORS[color]}"></span>${label}</button>`
-    ).join("")}
-    <span class="legend-route-help">굵은 실선 = 선택한 경로 · 빨간 구간선 = 문서 위험(시작~끝)</span>
+    <span class="legend-instruction">${
+      coarse
+        ? "공공데이터 항목을 탭하면 강조됩니다. 다시 탭하면 해제됩니다."
+        : "공공데이터 항목에 커서를 올리면 강조됩니다."
+    }</span>
+    ${PUBLIC_DATA_LEGEND.map(([layer, color, label]) => {
+      const active = state.activePublicLayer === layer ? " is-active" : "";
+      return `<button type="button" class="legend-item${active}" data-public-layer="${layer}"><span class="dot" style="background:${CATEGORY_COLORS[color]}"></span>${label}</button>`;
+    }).join("")}
+    <span class="legend-route-help">굵은 파란 선 = 통학 경로 · 보라 점선 = 문서 위험 구간</span>
   `;
   el.querySelectorAll("[data-public-layer]").forEach((item) => {
-    const showLayer = () => setActivePublicLayer(item.dataset.publicLayer);
-    item.addEventListener("pointerenter", showLayer);
-    item.addEventListener("focus", showLayer);
-    item.addEventListener("pointerleave", () => setActivePublicLayer(null));
-    item.addEventListener("blur", () => setActivePublicLayer(null));
+    const layer = item.dataset.publicLayer;
+    if (coarse) {
+      item.addEventListener("click", (event) => {
+        event.preventDefault();
+        setActivePublicLayer(state.activePublicLayer === layer ? null : layer);
+      });
+    } else {
+      item.addEventListener("pointerenter", () => setActivePublicLayer(layer));
+      item.addEventListener("focus", () => setActivePublicLayer(layer));
+      item.addEventListener("pointerleave", () => setActivePublicLayer(null));
+      item.addEventListener("blur", () => setActivePublicLayer(null));
+    }
   });
+}
+
+function isCoarsePointerUi() {
+  try {
+    return window.matchMedia("(hover: none), (pointer: coarse)").matches;
+  } catch {
+    return false;
+  }
 }
 
 function setActivePublicLayer(layer) {
@@ -1514,12 +1845,123 @@ function setActivePublicLayer(layer) {
   } else if (state.publicData && state.docMode === "analyzed") {
     renderDocRiskOnlyMap(state.publicData);
   }
+  // 범례 활성 표시만 갱신 (전체 리렌더 없이)
+  document.querySelectorAll("#legend .legend-item").forEach((item) => {
+    item.classList.toggle("is-active", item.dataset.publicLayer === state.activePublicLayer);
+  });
 }
 
-function shouldShowPublicLayer(layer) {
-  // 문서 분석 후에는 범례에 올리지 않아도 문서 위험이 항상 보이게
-  if (layer === "doc-risk" && state.docMode === "analyzed") return true;
+function isLayerEmphasized(layer) {
   return state.activePublicLayer === layer;
+}
+
+const LAYER_ALERT_NEAR_M = 40;
+
+function minDistanceToActiveRoute(pt, routeData) {
+  const selected = activeRoute(routeData);
+  if (!selected?.coordinates?.length || !pt) return Infinity;
+  let best = Infinity;
+  for (const c of selected.coordinates) {
+    const d = distanceMeters(pt, c);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+function isPointNearActiveRoute(pt, routeData, radiusM = LAYER_ALERT_NEAR_M) {
+  return minDistanceToActiveRoute(pt, routeData) <= radiusM;
+}
+
+function isDocRiskNearActiveRoute(d, routeData, radiusM = LAYER_ALERT_NEAR_M) {
+  const samples = [];
+  if (Number.isFinite(d?.lat) && Number.isFinite(d?.lng)) samples.push({ lat: d.lat, lng: d.lng });
+  if (docRiskHasSegment(d)) samples.push({ lat: d.end_lat, lng: d.end_lng });
+  const poly = Array.isArray(d?.polyline) ? d.polyline : [];
+  const step = Math.max(1, Math.floor(poly.length / 10) || 1);
+  for (let i = 0; i < poly.length; i += step) {
+    if (Number.isFinite(poly[i]?.lat) && Number.isFinite(poly[i]?.lng)) samples.push(poly[i]);
+  }
+  return samples.some((p) => isPointNearActiveRoute(p, routeData, radiusM));
+}
+
+function layerDrawStyle(layer, { nearRoute = false } = {}) {
+  const emphasized = isLayerEmphasized(layer);
+  const strong = emphasized || nearRoute;
+  const isDoc = layer === "doc-risk";
+  return {
+    strong,
+    emphasized,
+    opacity: strong ? 1 : 0.3,
+    // 문서 위험: 점선 3px 기준 / 시설: 점만
+    weight: isDoc ? (strong ? 4 : 3) : 0,
+    iconSize: strong ? 18 : 11,
+    showLabel: emphasized,
+  };
+}
+
+/** Tmap 통학 경로: 흰 헤일로 위에 파란 실선. */
+function drawTmapCommuteRoute(path, track) {
+  track(
+    new Tmapv2.Polyline({
+      path,
+      strokeColor: ROUTE_LINE.haloColor,
+      strokeWeight: ROUTE_LINE.haloWeight,
+      strokeStyle: "solid",
+      strokeOpacity: 0.95,
+      map: state.tmap,
+    })
+  );
+  track(
+    new Tmapv2.Polyline({
+      path,
+      strokeColor: ROUTE_LINE.color,
+      strokeWeight: ROUTE_LINE.weight,
+      strokeStyle: "solid",
+      strokeOpacity: ROUTE_LINE.opacity,
+      map: state.tmap,
+    })
+  );
+}
+
+/** SVG 통학 경로: 흰 외곽선 + 파란 실선. */
+function drawSvgCommuteRoute(svg, ns, pts) {
+  const points = pts.map((p) => `${p.x},${p.y}`).join(" ");
+  const halo = document.createElementNS(ns, "polyline");
+  halo.setAttribute("points", points);
+  halo.setAttribute("fill", "none");
+  halo.setAttribute("stroke", ROUTE_LINE.haloColor);
+  halo.setAttribute("stroke-width", String(ROUTE_LINE.haloWeight));
+  halo.setAttribute("stroke-opacity", "0.95");
+  halo.setAttribute("stroke-linecap", "round");
+  halo.setAttribute("stroke-linejoin", "round");
+  svg.appendChild(halo);
+  const path = document.createElementNS(ns, "polyline");
+  path.setAttribute("points", points);
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", ROUTE_LINE.color);
+  path.setAttribute("stroke-width", String(ROUTE_LINE.weight));
+  path.setAttribute("stroke-opacity", String(ROUTE_LINE.opacity));
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
+  svg.appendChild(path);
+}
+
+function docRiskShortLabel(d) {
+  const raw = String(d?.location_text || d?.risk_type || "위험구간").trim();
+  const cleaned = raw
+    .replace(/^서울특별시\s*/u, "")
+    .replace(/^강남구\s*/u, "")
+    .trim();
+  const text = cleaned || raw || "위험구간";
+  return text.length > 22 ? `${text.slice(0, 20)}…` : text;
+}
+
+/** 공공 레이어는 경로 근처를 기본(흐림)으로 항상 그리고, 범례 강조 시 진하게. */
+function shouldDrawPublicLayer(layer) {
+  if (layer === "doc-risk") {
+    return state.docMode === "analyzed" || Boolean(state.activePublicLayer === "doc-risk");
+  }
+  return true;
 }
 
 function documentRiskPointsForMap(publicData, routeData) {
@@ -1560,11 +2002,13 @@ function docRiskInfoHtml(d) {
 }
 
 /** 문서 위험: pedestrian 폴리라인 우선, 없으면 시작~끝 직선은 그리지 않음(검증 실패분). */
-function drawDocRiskOverlays(points, { track, bounds, onBounds }) {
+function drawDocRiskOverlays(points, { track, bounds, onBounds, routeData = null }) {
   let segmentCount = 0;
   points.forEach((d) => {
     const color = d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk;
-    const title = docRiskTitle(d);
+    const near = routeData ? isDocRiskNearActiveRoute(d, routeData) : false;
+    const style = layerDrawStyle("doc-risk", { nearRoute: near });
+    const shortLabel = docRiskShortLabel(d);
     const start = new Tmapv2.LatLng(d.lat, d.lng);
     bounds.extend(start);
     if (onBounds) onBounds();
@@ -1580,22 +2024,23 @@ function drawDocRiskOverlays(points, { track, bounds, onBounds }) {
         new Tmapv2.Polyline({
           path,
           strokeColor: color,
-          strokeWeight: 5,
-          strokeStyle: "solid",
-          strokeOpacity: 0.9,
+          strokeWeight: style.weight,
+          strokeStyle: "dash",
+          strokeDashArray: [6, 4],
+          strokeOpacity: style.opacity,
           map: state.tmap,
         })
       );
       segmentCount += 1;
-      [path[0], path[path.length - 1]].forEach((latlng) => {
-        const m = track(
-          new Tmapv2.Marker({
-            position: latlng,
-            icon: tmapDotIcon(color),
-            iconSize: new Tmapv2.Size(14, 14),
-            map: state.tmap,
-          })
-        );
+      [path[0], path[path.length - 1]].forEach((latlng, idx) => {
+        const opts = {
+          position: latlng,
+          icon: tmapDotIcon(color, { size: style.iconSize, opacity: style.opacity }),
+          iconSize: new Tmapv2.Size(style.iconSize, style.iconSize),
+          map: state.tmap,
+        };
+        if (style.showLabel && idx === 0) opts.label = shortLabel;
+        const m = track(new Tmapv2.Marker(opts));
         m.addListener("click", () => {
           if (state.infoWindow) state.infoWindow.setMap(null);
           state.infoWindow = new Tmapv2.InfoWindow({
@@ -1616,15 +2061,15 @@ function drawDocRiskOverlays(points, { track, bounds, onBounds }) {
       bounds.extend(markers[1]);
       if (onBounds) onBounds();
     }
-    markers.forEach((latlng) => {
-      const m = track(
-        new Tmapv2.Marker({
-          position: latlng,
-          icon: tmapDotIcon(color),
-          iconSize: new Tmapv2.Size(14, 14),
-          map: state.tmap,
-        })
-      );
+    markers.forEach((latlng, idx) => {
+      const opts = {
+        position: latlng,
+        icon: tmapDotIcon(color, { size: style.iconSize, opacity: style.opacity }),
+        iconSize: new Tmapv2.Size(style.iconSize, style.iconSize),
+        map: state.tmap,
+      };
+      if (style.showLabel && idx === 0) opts.label = shortLabel;
+      const m = track(new Tmapv2.Marker(opts));
       m.addListener("click", () => {
         if (state.infoWindow) state.infoWindow.setMap(null);
         state.infoWindow = new Tmapv2.InfoWindow({
@@ -1758,90 +2203,161 @@ function renderSvgMap(routeData, publicData) {
   bg.setAttribute("fill", "#eef3f8");
   svg.appendChild(bg);
 
-  // 선택한 경로만 폴리라인으로 표시
+  // 선택한 통학 경로만 (파란 실선 + 흰 헤일로)
   if (active && active.coordinates.length >= 2) {
     const pts = active.coordinates.map((pt) => project(pt, bounds, size, padding));
-    const path = document.createElementNS(ns, "polyline");
-    path.setAttribute("points", pts.map((p) => `${p.x},${p.y}`).join(" "));
-    path.setAttribute("fill", "none");
-    path.setAttribute("stroke", scoreColor(active.safety_score));
-    path.setAttribute("stroke-width", 5);
-    path.setAttribute("stroke-opacity", 0.95);
-    path.setAttribute("stroke-linecap", "round");
-    svg.appendChild(path);
+    drawSvgCommuteRoute(svg, ns, pts);
   }
 
-  function drawMarker(pt, color, shape, title) {
+  function drawMarker(pt, color, shape, title, { opacity = 1, sizeScale = 1, label = "" } = {}) {
     const p = project(pt, bounds, size, padding);
+    const r = Math.max(3, Math.round(6 * sizeScale));
     let node;
     if (shape === "circle") {
       node = document.createElementNS(ns, "circle");
       node.setAttribute("cx", p.x);
       node.setAttribute("cy", p.y);
-      node.setAttribute("r", 6);
+      node.setAttribute("r", r);
     } else if (shape === "triangle") {
       node = document.createElementNS(ns, "polygon");
-      const s = 8;
+      const s = Math.max(4, Math.round(8 * sizeScale));
       node.setAttribute("points", `${p.x},${p.y - s} ${p.x - s},${p.y + s} ${p.x + s},${p.y + s}`);
     } else if (shape === "diamond") {
       node = document.createElementNS(ns, "polygon");
-      const s = 7;
+      const s = Math.max(4, Math.round(7 * sizeScale));
       node.setAttribute("points", `${p.x},${p.y - s} ${p.x + s},${p.y} ${p.x},${p.y + s} ${p.x - s},${p.y}`);
     } else {
+      const half = Math.max(3, Math.round(6 * sizeScale));
       node = document.createElementNS(ns, "rect");
-      node.setAttribute("x", p.x - 6);
-      node.setAttribute("y", p.y - 6);
-      node.setAttribute("width", 12);
-      node.setAttribute("height", 12);
+      node.setAttribute("x", p.x - half);
+      node.setAttribute("y", p.y - half);
+      node.setAttribute("width", half * 2);
+      node.setAttribute("height", half * 2);
     }
     node.setAttribute("fill", color);
+    node.setAttribute("fill-opacity", String(opacity));
     node.setAttribute("stroke", "white");
+    node.setAttribute("stroke-opacity", String(opacity));
     node.setAttribute("stroke-width", 1.5);
     const titleEl = document.createElementNS(ns, "title");
     titleEl.textContent = title;
     node.appendChild(titleEl);
     svg.appendChild(node);
+    if (label) {
+      const text = document.createElementNS(ns, "text");
+      text.setAttribute("x", p.x + r + 4);
+      text.setAttribute("y", p.y + 4);
+      text.setAttribute("font-size", "11");
+      text.setAttribute("font-weight", "700");
+      text.setAttribute("fill", "#333");
+      text.textContent = label;
+      svg.appendChild(text);
+    }
   }
 
-  if (shouldShowPublicLayer("cctv")) {
+  function drawPublicPoint(pt, color, shape, title, layer, nameForLabel = "") {
+    const near = isPointNearActiveRoute(pt, routeData);
+    const style = layerDrawStyle(layer, { nearRoute: near });
+    drawMarker(pt, color, shape, title, {
+      opacity: style.opacity,
+      sizeScale: style.strong ? 1 : 0.65,
+      label: style.showLabel ? nameForLabel : "",
+    });
+  }
+
+  if (shouldDrawPublicLayer("cctv")) {
     childZones.forEach((z) =>
-      drawMarker(z, CATEGORY_COLORS.cctv, "circle", `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`)
+      drawPublicPoint(z, CATEGORY_COLORS.cctv, "circle", `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`, "cctv", z.name || "어린이보호구역")
     );
   }
-  if (shouldShowPublicLayer("safety-cctv")) sf.cctv.forEach((f) =>
-    drawMarker(f, CATEGORY_COLORS.safetyCctv, "circle", `📹 ${f.label} ${f.install_count > 1 ? `x${f.install_count}` : ""} · ${f.dong || f.district || ""}`)
-  );
-  if (shouldShowPublicLayer("safety-streetlight")) sf.streetlight.forEach((f) =>
-    drawMarker(f, CATEGORY_COLORS.safetyStreetlight, "circle", `💡 ${f.label} · ${f.dong || f.district || ""}`)
-  );
-  if (shouldShowPublicLayer("hotspot")) accidentHotspots.forEach((h) =>
-    drawMarker(h, CATEGORY_COLORS.hotspot, "triangle", `${h.name || "사고다발지역"} (${h.occurrence_count}건)`)
-  );
-  if (shouldShowPublicLayer("guardian")) guardianHouses.forEach((g) =>
-    drawMarker(g, CATEGORY_COLORS.guardian, "diamond", `🏪 ${g.name || "아동안전지킴이집"}`)
-  );
-  if (shouldShowPublicLayer("doc-risk")) {
+  if (shouldDrawPublicLayer("safety-cctv")) {
+    sf.cctv.forEach((f) =>
+      drawPublicPoint(
+        f,
+        CATEGORY_COLORS.safetyCctv,
+        "circle",
+        `📹 ${f.label} ${f.install_count > 1 ? `x${f.install_count}` : ""} · ${f.dong || f.district || ""}`,
+        "safety-cctv",
+        f.label || "CCTV"
+      )
+    );
+  }
+  if (shouldDrawPublicLayer("safety-streetlight")) {
+    sf.streetlight.forEach((f) =>
+      drawPublicPoint(f, CATEGORY_COLORS.safetyStreetlight, "circle", `💡 ${f.label} · ${f.dong || f.district || ""}`, "safety-streetlight", f.label || "가로등")
+    );
+  }
+  if (shouldDrawPublicLayer("hotspot")) {
+    accidentHotspots.forEach((h) =>
+      drawPublicPoint(h, CATEGORY_COLORS.hotspot, "circle", `${h.name || "사고다발지역"} (${h.occurrence_count}건)`, "hotspot", h.name || "사고다발")
+    );
+  }
+  if (shouldDrawPublicLayer("guardian")) {
+    guardianHouses.forEach((g) =>
+      drawPublicPoint(g, CATEGORY_COLORS.guardian, "circle", `🏪 ${g.name || "아동안전지킴이집"}`, "guardian", g.name || "지킴이집")
+    );
+  }
+  if (shouldDrawPublicLayer("doc-risk")) {
     documentPoints.forEach((d) => {
       const color = d.is_estimated ? CATEGORY_COLORS.docRiskEstimated : CATEGORY_COLORS.docRisk;
       const title = docRiskTitle(d);
-      if (docRiskHasSegment(d)) {
+      const near = isDocRiskNearActiveRoute(d, routeData);
+      const style = layerDrawStyle("doc-risk", { nearRoute: near });
+      const shortLabel = style.showLabel ? docRiskShortLabel(d) : "";
+      const poly = Array.isArray(d.polyline) ? d.polyline.filter((p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lng)) : [];
+      if (poly.length >= 2) {
+        const pts = poly.map((p) => project(p, bounds, size, padding));
+        const path = document.createElementNS(ns, "polyline");
+        path.setAttribute("points", pts.map((p) => `${p.x},${p.y}`).join(" "));
+        path.setAttribute("fill", "none");
+        path.setAttribute("stroke", color);
+        path.setAttribute("stroke-width", String(style.weight));
+        path.setAttribute("stroke-opacity", String(style.opacity));
+        path.setAttribute("stroke-linecap", "round");
+        path.setAttribute("stroke-dasharray", "6 4");
+        const titleEl = document.createElementNS(ns, "title");
+        titleEl.textContent = title;
+        path.appendChild(titleEl);
+        svg.appendChild(path);
+        drawMarker(poly[0], color, "circle", title, {
+          opacity: style.opacity,
+          sizeScale: style.strong ? 1 : 0.65,
+          label: shortLabel,
+        });
+        drawMarker(poly[poly.length - 1], color, "circle", title, {
+          opacity: style.opacity,
+          sizeScale: style.strong ? 1 : 0.65,
+        });
+      } else if (docRiskHasSegment(d)) {
         const a = project(d, bounds, size, padding);
         const b = project({ lat: d.end_lat, lng: d.end_lng }, bounds, size, padding);
         const path = document.createElementNS(ns, "polyline");
         path.setAttribute("points", `${a.x},${a.y} ${b.x},${b.y}`);
         path.setAttribute("fill", "none");
         path.setAttribute("stroke", color);
-        path.setAttribute("stroke-width", 4);
-        path.setAttribute("stroke-opacity", 0.9);
+        path.setAttribute("stroke-width", String(style.weight));
+        path.setAttribute("stroke-opacity", String(style.opacity));
         path.setAttribute("stroke-linecap", "round");
+        path.setAttribute("stroke-dasharray", "6 4");
         const titleEl = document.createElementNS(ns, "title");
         titleEl.textContent = title;
         path.appendChild(titleEl);
         svg.appendChild(path);
-        drawMarker(d, color, "square", title);
-        drawMarker({ lat: d.end_lat, lng: d.end_lng }, color, "square", title);
+        drawMarker(d, color, "circle", title, {
+          opacity: style.opacity,
+          sizeScale: style.strong ? 1 : 0.65,
+          label: shortLabel,
+        });
+        drawMarker({ lat: d.end_lat, lng: d.end_lng }, color, "circle", title, {
+          opacity: style.opacity,
+          sizeScale: style.strong ? 1 : 0.65,
+        });
       } else {
-        drawMarker(d, color, "square", title);
+        drawMarker(d, color, "circle", title, {
+          opacity: style.opacity,
+          sizeScale: style.strong ? 1 : 0.65,
+          label: shortLabel,
+        });
       }
     });
   }
@@ -2039,10 +2555,16 @@ async function tryInitTmap() {
 }
 
 // Leaflet circleMarker 대체: 카테고리 색상 원을 data-URI SVG 아이콘으로 만든다.
-function tmapDotIcon(color) {
+function tmapDotIcon(color, { size = 18, opacity = 1 } = {}) {
+  const s = Math.max(8, Math.round(size));
+  const cx = s / 2;
+  const r = Math.max(3, Math.round(s * 0.33));
+  const strokeW = Math.max(1, Math.round(s * 0.11));
+  const op = Math.max(0.15, Math.min(1, Number(opacity) || 1));
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18">` +
-    `<circle cx="9" cy="9" r="6" fill="${color}" stroke="white" stroke-width="2"/></svg>`;
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}">` +
+    `<circle cx="${cx}" cy="${cx}" r="${r}" fill="${color}" fill-opacity="${op}" ` +
+    `stroke="white" stroke-opacity="${op}" stroke-width="${strokeW}"/></svg>`;
   return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
 }
 
@@ -2129,29 +2651,22 @@ function renderTmapRoutes(routeData, publicData, { fitToRoute = true } = {}) {
       hasPoint = true;
       return latlng;
     });
-    track(
-      new Tmapv2.Polyline({
-        path,
-        strokeColor: scoreColor(active.safety_score),
-        strokeWeight: 6,
-        strokeStyle: "solid",
-        strokeOpacity: 0.95,
-        map: state.tmap,
-      })
-    );
+    drawTmapCommuteRoute(path, track);
   }
 
-  function marker(pt, color, title, label) {
+  function marker(pt, color, title, layer, nameForLabel = "") {
+    const near = isPointNearActiveRoute(pt, routeData);
+    const style = layerDrawStyle(layer, { nearRoute: near });
     const latlng = new Tmapv2.LatLng(pt.lat, pt.lng);
     bounds.extend(latlng);
     hasPoint = true;
     const options = {
       position: latlng,
-      icon: tmapDotIcon(color),
-      iconSize: new Tmapv2.Size(18, 18),
+      icon: tmapDotIcon(color, { size: style.iconSize, opacity: style.opacity }),
+      iconSize: new Tmapv2.Size(style.iconSize, style.iconSize),
       map: state.tmap,
     };
-    if (label) options.label = label;
+    if (style.showLabel && nameForLabel) options.label = nameForLabel;
     const m = track(new Tmapv2.Marker(options));
     if (title) {
       m.addListener("click", () => {
@@ -2198,27 +2713,42 @@ function renderTmapRoutes(routeData, publicData, { fitToRoute = true } = {}) {
     return m;
   }
 
-  if (shouldShowPublicLayer("cctv")) {
+  if (shouldDrawPublicLayer("cctv")) {
     childZones.forEach((z) =>
-      marker(z, CATEGORY_COLORS.cctv, `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`)
+      marker(z, CATEGORY_COLORS.cctv, `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`, "cctv", z.name || "어린이보호구역")
     );
   }
-  if (shouldShowPublicLayer("safety-cctv")) sf.cctv.forEach((f) =>
-    marker(f, CATEGORY_COLORS.safetyCctv, `📹 ${f.label} ${f.install_count > 1 ? `x${f.install_count}` : ""} · ${f.dong || f.district || ""}`)
-  );
-  if (shouldShowPublicLayer("safety-streetlight")) sf.streetlight.forEach((f) =>
-    marker(f, CATEGORY_COLORS.safetyStreetlight, `💡 ${f.label} · ${f.dong || f.district || ""}`)
-  );
-  if (shouldShowPublicLayer("hotspot")) accidentHotspots.forEach((h) =>
-    marker(h, CATEGORY_COLORS.hotspot, `${h.name || "사고다발지역"} (${h.occurrence_count}건)`)
-  );
-  if (shouldShowPublicLayer("guardian")) guardianHouses.forEach((g) =>
-    marker(g, CATEGORY_COLORS.guardian, `🏪 ${g.name || "아동안전지킴이집"}`)
-  );
-  if (shouldShowPublicLayer("doc-risk")) {
+  if (shouldDrawPublicLayer("safety-cctv")) {
+    sf.cctv.forEach((f) =>
+      marker(
+        f,
+        CATEGORY_COLORS.safetyCctv,
+        `📹 ${f.label} ${f.install_count > 1 ? `x${f.install_count}` : ""} · ${f.dong || f.district || ""}`,
+        "safety-cctv",
+        f.label || "CCTV"
+      )
+    );
+  }
+  if (shouldDrawPublicLayer("safety-streetlight")) {
+    sf.streetlight.forEach((f) =>
+      marker(f, CATEGORY_COLORS.safetyStreetlight, `💡 ${f.label} · ${f.dong || f.district || ""}`, "safety-streetlight", f.label || "가로등")
+    );
+  }
+  if (shouldDrawPublicLayer("hotspot")) {
+    accidentHotspots.forEach((h) =>
+      marker(h, CATEGORY_COLORS.hotspot, `${h.name || "사고다발지역"} (${h.occurrence_count}건)`, "hotspot", h.name || "사고다발")
+    );
+  }
+  if (shouldDrawPublicLayer("guardian")) {
+    guardianHouses.forEach((g) =>
+      marker(g, CATEGORY_COLORS.guardian, `🏪 ${g.name || "아동안전지킴이집"}`, "guardian", g.name || "지킴이집")
+    );
+  }
+  if (shouldDrawPublicLayer("doc-risk")) {
     drawDocRiskOverlays(documentPoints, {
       track,
       bounds,
+      routeData,
       onBounds: () => {
         hasPoint = true;
       },
@@ -2279,7 +2809,8 @@ async function handleSubmit(event) {
 
   const submitBtn = document.getElementById("submit-btn");
   submitBtn.disabled = true;
-  submitBtn.textContent = "계산 중...";
+  const progressTimers = [];
+  setRouteProgress("경로를 찾고 있어요");
 
   try {
     const originQuery = document.getElementById("origin-query").value.trim();
@@ -2289,32 +2820,7 @@ async function handleSubmit(event) {
       return;
     }
 
-    const payload = {
-      origin: { query: originQuery, name: originQuery },
-      destination: { query: destQuery, name: destQuery },
-    };
-    if (state.demoForceNight) payload.force_night = true;
-
-    const [routeData, publicData] = await Promise.all([
-      fetchJson("/api/route", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }),
-      fetchJson("/api/public-data"),
-    ]);
-
-    state.lastResult = routeData;
-    state.publicData = publicData;
-    state.selectedRouteId = null;
-    if (state.docMode === "analyzed") state.activePublicLayer = "doc-risk";
-
-    renderWeather(routeData.weather);
-    renderTimeContext(routeData);
-    renderParentReport(routeData);
-    renderCandidates(routeData);
-    renderReports(routeData);
-    renderMap(routeData, publicData);
+    const routeData = await fetchAndRenderRoute({ originQuery, destQuery, progressTimers });
 
     if (routeData.used_mock && routeData.used_mock.routing) {
       console.warn("[경로] MOCK 모드 — Tmap 보행자 API 미사용");
@@ -2323,6 +2829,9 @@ async function handleSubmit(event) {
       if (main) {
         console.log(`[경로] Tmap 보행자 경로 좌표 ${main.coordinates.length}개`);
       }
+    }
+    if (routeData.from_cache) {
+      console.log("[경로] 캐시된 결과 사용");
     }
   } catch (err) {
     const msg = err.message || String(err);
@@ -2334,6 +2843,8 @@ async function handleSubmit(event) {
     alert(`경로 계산 중 오류가 발생했습니다: ${friendly}`);
     console.error(err);
   } finally {
+    clearRouteProgressTimers(progressTimers);
+    setRouteProgress("");
     const btn = document.getElementById("submit-btn");
     if (btn) btn.textContent = "안전 경로 찾기";
     syncRouteSubmitButton();
@@ -2358,39 +2869,78 @@ function hideDocReviewPanel() {
 function hideDocPlacedPanel() {
   const panel = document.getElementById("doc-placed-panel");
   const list = document.getElementById("doc-placed-list");
+  const summary = document.getElementById("doc-placed-summary");
   if (panel) panel.hidden = true;
   if (list) list.innerHTML = "";
+  if (summary) {
+    summary.hidden = true;
+    summary.textContent = "";
+  }
 }
 
-function renderDocPlacedPanel(createdPoints) {
+function docPointQueryLine(pt) {
+  const startQ = pt.start_geocode_query || pt.geocode_query || "";
+  const endQ = pt.end_geocode_query || "";
+  return endQ ? `${startQ} ~ ${endQ}` : startQ;
+}
+
+function renderDocPlacedPanel(createdPoints, pendingPoints = []) {
   const panel = document.getElementById("doc-placed-panel");
   const list = document.getElementById("doc-placed-list");
+  const summary = document.getElementById("doc-placed-summary");
   if (!panel || !list) return;
 
   const points = Array.isArray(createdPoints) ? createdPoints : [];
+  const pending = Array.isArray(pendingPoints) ? pendingPoints : [];
+  const total = points.length + pending.length;
+  if (!points.length && !pending.length) {
+    hideDocPlacedPanel();
+    return;
+  }
+  // 성공분만 이 패널에 표시 (실패분은 위 review 패널)
   if (!points.length) {
     hideDocPlacedPanel();
     return;
   }
 
+  if (summary) {
+    summary.hidden = false;
+    summary.textContent = `${total || points.length}개 구간 중 ${points.length}개 위치 확인 완료`;
+  }
+
   list.innerHTML = "";
   points.forEach((pt) => {
     const li = document.createElement("li");
-    li.className = "doc-review-item";
+    li.className = "doc-review-item doc-placed-item is-ok";
+
+    const head = document.createElement("div");
+    head.className = "doc-placed-item-head";
+
     const title = document.createElement("p");
     title.className = "doc-review-item-title";
     title.textContent = pt.location_text || pt.geocode_query || "구간";
+
+    const status = document.createElement("span");
+    status.className = "doc-geo-status is-ok";
+    status.textContent = "✓ 위치 확인됨";
+
+    head.append(title, status);
+
+    const queryLine = docPointQueryLine(pt);
+    const match = pt.matched_label || "";
+    const details = document.createElement("details");
+    details.className = "doc-placed-query-details";
+    const summaryEl = document.createElement("summary");
+    summaryEl.textContent = "검색어 보기";
     const meta = document.createElement("p");
     meta.className = "doc-review-item-meta";
-    const startQ = pt.start_geocode_query || pt.geocode_query || "";
-    const endQ = pt.end_geocode_query || "";
-    const queryLine = endQ ? `${startQ} ~ ${endQ}` : startQ;
-    const match = pt.matched_label || "";
     const matchClean = match.replace(/\s+/g, "");
     const queryClean = queryLine.replace(/\s+/g, "");
     const showMatch = match && matchClean && matchClean !== queryClean;
-    meta.textContent = showMatch ? `검색어: ${queryLine} → ${match}` : `검색어: ${queryLine}`;
-    li.append(title, meta);
+    meta.textContent = showMatch ? `검색어: ${queryLine} → ${match}` : `검색어: ${queryLine || "(없음)"}`;
+    details.append(summaryEl, meta);
+
+    li.append(head, details);
     list.appendChild(li);
   });
   panel.hidden = false;
@@ -2410,18 +2960,31 @@ function renderDocReviewPanel(pendingPoints) {
   list.innerHTML = "";
   points.forEach((pt, idx) => {
     const li = document.createElement("li");
-    li.className = "doc-review-item";
+    li.className = "doc-review-item doc-review-item-pending";
     li.dataset.index = String(idx);
+
+    const head = document.createElement("div");
+    head.className = "doc-placed-item-head";
 
     const title = document.createElement("p");
     title.className = "doc-review-item-title";
     title.textContent = pt.location_text || pt.geocode_query || `지점 ${idx + 1}`;
 
+    const status = document.createElement("span");
+    status.className = "doc-geo-status is-warn";
+    status.textContent = "⚠ 위치 확인 필요";
+
+    head.append(title, status);
+
+    const queryLine = docPointQueryLine(pt);
     const meta = document.createElement("p");
     meta.className = "doc-review-item-meta";
     const conf =
       typeof pt.confidence === "number" ? ` · 확신 ${(pt.confidence * 100).toFixed(0)}%` : "";
-    meta.textContent = `${pt.reason || "위치 확인 필요"}${conf}${pt.risk_type ? ` · ${pt.risk_type}` : ""}`;
+    const reason = pt.reason || "위치 확인 필요";
+    meta.textContent = queryLine
+      ? `검색어: ${queryLine} · ${reason}${conf}${pt.risk_type ? ` · ${pt.risk_type}` : ""}`
+      : `${reason}${conf}${pt.risk_type ? ` · ${pt.risk_type}` : ""}`;
 
     const label = document.createElement("label");
     label.setAttribute("for", `doc-review-query-${idx}`);
@@ -2466,7 +3029,7 @@ function renderDocReviewPanel(pendingPoints) {
     });
 
     actions.append(confirmBtn, skipBtn);
-    li.append(title, meta, label, input, endLabel, endInput, actions);
+    li.append(head, meta, label, input, endLabel, endInput, actions);
     list.appendChild(li);
   });
 
@@ -2527,7 +3090,7 @@ async function confirmPendingDocPoint(pt, inputEl, endInputEl, btn, itemEl) {
 async function refreshPublicDataAndMap({ focusDocRisk = false } = {}) {
   const publicData = await fetchJson("/api/public-data");
   state.publicData = publicData;
-  if (focusDocRisk) state.activePublicLayer = "doc-risk";
+  // focusDocRisk: 문서 반영 후 지도만 갱신 (기본은 흐림, 범례로 강조)
   if (state.lastResult) {
     renderMap(state.lastResult, publicData, true);
   } else if (focusDocRisk || state.docMode === "analyzed") {
@@ -2541,28 +3104,17 @@ async function maybeRerunRouteAfterDocument() {
   const destQuery = document.getElementById("dest-query")?.value?.trim();
   if (!originQuery || !destQuery || !state.lastResult) return false;
 
-  const payload = {
-    origin: { query: originQuery, name: originQuery },
-    destination: { query: destQuery, name: destQuery },
-  };
-  if (state.demoForceNight) payload.force_night = true;
-  const [routeData, publicData] = await Promise.all([
-    fetchJson("/api/route", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }),
-    fetchJson("/api/public-data"),
-  ]);
-  state.lastResult = routeData;
-  state.publicData = publicData;
-  state.activePublicLayer = "doc-risk";
-  renderWeather(routeData.weather);
-  if (typeof renderTimeContext === "function") renderTimeContext(routeData);
-  renderParentReport(routeData);
-  renderCandidates(routeData);
-  renderReports(routeData);
-  renderMap(routeData, publicData);
+  const progressTimers = [];
+  try {
+    setRouteProgress("경로를 찾고 있어요");
+    await fetchAndRenderRoute({ originQuery, destQuery, progressTimers });
+  } finally {
+    clearRouteProgressTimers(progressTimers);
+    setRouteProgress("");
+    const btn = document.getElementById("submit-btn");
+    if (btn) btn.textContent = "안전 경로 찾기";
+    syncRouteSubmitButton();
+  }
   return true;
 }
 
@@ -2771,7 +3323,7 @@ async function confirmDocumentQueue() {
     state.docMode = "analyzed";
     syncRouteSubmitButton();
     renderDocReviewPanel(allPending);
-    renderDocPlacedPanel(allCreated);
+    renderDocPlacedPanel(allCreated, allPending);
 
     const errHint = errors.length ? ` · 일부 실패 ${errors.length}건` : "";
     if (totalCreated > 0) {
@@ -2894,6 +3446,10 @@ function bindAppUi() {
   document.querySelectorAll(".mode-button").forEach((button) => {
     button.addEventListener("click", () => setMode(button.dataset.mode));
   });
+  document.querySelectorAll("[data-time-mode]").forEach((button) => {
+    button.addEventListener("click", () => setTimeMode(button.dataset.timeMode));
+  });
+  syncTimeModeButtons();
   document.getElementById("theme-toggle")?.addEventListener("click", () => {
     setTheme(document.body.classList.contains("theme-dark") ? "light" : "dark");
   });

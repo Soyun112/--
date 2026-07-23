@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from concurrent.futures import ThreadPoolExecutor
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from ..config import settings
 from ..models import (
@@ -14,9 +16,9 @@ from ..models import (
     NavigationStep,
     PublicDataResponse,
     RouteCandidate,
+    RouteReportsResponse,
     RouteRequest,
     RouteResponse,
-    SafetyFeatures,
     SafetyFacilityPoint,
     SpeedCameraPoint,
     StampOut,
@@ -26,17 +28,31 @@ from ..models import (
 )
 from ..services import gamification, geocoding, public_data, solar, weather
 from ..console_safe import safe_print
+from ..services import route_cache
 from ..services.routing import (
     access_warning_for_ratio,
+    compare_note_for_candidates,
     detour_ratio_for_route,
     ensure_navigation_steps_for_coords,
+    get_last_route_build_meta,
     get_route_candidates,
 )
 from ..services.safety_facilities import get_safety_facilities
 from ..services.scoring import score_candidates
-from ..services.time_context import build_time_context, is_nighttime
+from ..services.time_context import build_time_context, is_nighttime, resolve_evaluation_now
 
 router = APIRouter(prefix="/api", tags=["route"])
+
+
+def _display_label_for_candidate(raw_id: str, raw_label: str) -> str:
+    cid = (raw_id or "").lower()
+    if "avoid" in cid or "via" in cid or "detour" in cid:
+        return "안전 우회"
+    if "main" in cid or "direct" in cid:
+        return "기본 경로"
+    if "opt" in cid or "pedestrian-alt" in cid:
+        return "다른 경로"
+    return raw_label or "보행자 경로"
 
 
 def _parse_doc_polyline(raw) -> list[LatLng] | None:
@@ -164,21 +180,65 @@ def get_public_data_layers() -> PublicDataResponse:
 
 
 @router.post("/route", response_model=RouteResponse)
-def compute_route(req: RouteRequest) -> RouteResponse:
-    origin = _resolve_waypoint(req.origin, "출발지")
-    destination = _resolve_waypoint(
-        req.destination,
-        "목적지",
-        near=(origin.lat, origin.lng),
-    )
+def compute_route(req: RouteRequest, background_tasks: BackgroundTasks) -> RouteResponse:
+    # 출발·도착 지오코딩 병렬 (둘 다 query일 때)
+    origin_ready = req.origin.lat is not None and req.origin.lng is not None
+    dest_ready = req.destination.lat is not None and req.destination.lng is not None
+    if not origin_ready and not dest_ready:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fut_o = pool.submit(_resolve_waypoint, req.origin, "출발지")
+            fut_d = pool.submit(_resolve_waypoint, req.destination, "목적지")
+            origin = fut_o.result()
+            destination = fut_d.result()
+    else:
+        origin = _resolve_waypoint(req.origin, "출발지")
+        destination = _resolve_waypoint(
+            req.destination,
+            "목적지",
+            near=(origin.lat, origin.lng) if origin.lat is not None else None,
+        )
 
     origin_xy = (origin.lat, origin.lng)
     dest_xy = (destination.lat, destination.lng)
 
+    eval_now, time_mode = resolve_evaluation_now(time_mode=req.time_mode)
+    if time_mode == "auto" and req.force_night is not None:
+        night = bool(req.force_night)
+    else:
+        night = is_nighttime(eval_now)
+
     routing_mock = settings.routing_mock if req.mock is None else req.mock
+    result_key = route_cache.make_route_key(
+        origin.lat,
+        origin.lng,
+        destination.lat,
+        destination.lng,
+        time_mode=time_mode,
+        is_night=night,
+        mock=routing_mock,
+    )
+
+    cached = route_cache.get_route(result_key)
+    if cached:
+        safe_print(f"[API /route] 캐시 히트 key={result_key}")
+        payload = dict(cached)
+        payload["from_cache"] = True
+        # 리포트가 이미 있으면 ready
+        reports = route_cache.get_reports(result_key)
+        if reports:
+            payload["parent_report"] = reports.get("parent_report") or ""
+            payload["parent_report_v2"] = reports.get("parent_report_v2") or ""
+            payload["kid_report"] = reports.get("kid_report") or ""
+            payload["reports_status"] = "ready"
+            used = dict(payload.get("used_mock") or {})
+            if "used_mock" in reports:
+                used["upstage"] = reports["used_mock"]
+            payload["used_mock"] = used
+        return RouteResponse(**payload)
+
     safe_print(
         f"\n[API /route] 요청 - {origin.name or origin.lat} -> {destination.name or destination.lat} "
-        f"(mock={routing_mock})"
+        f"(mock={routing_mock}, time_mode={time_mode})"
     )
 
     raw_candidates = get_route_candidates(
@@ -197,11 +257,13 @@ def compute_route(req: RouteRequest) -> RouteResponse:
                 "Render에 TMAP_APP_KEY가 설정되어 있는지도 확인해 주세요."
             ),
         )
-    if req.force_night is None:
-        night = is_nighttime()
-    else:
-        night = bool(req.force_night)
-    scored = score_candidates(raw_candidates, is_night=night)
+
+    # 채점과 날씨 병렬
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_score = pool.submit(score_candidates, raw_candidates, night)
+        fut_weather = pool.submit(weather.fetch_weather, destination.lat, destination.lng)
+        scored = fut_score.result()
+        current_weather = fut_weather.result()
 
     for s in scored:
         n = len(s.raw.navigation_steps)
@@ -248,35 +310,118 @@ def compute_route(req: RouteRequest) -> RouteResponse:
                 ],
                 detour_ratio=ratio,
                 access_warning=access_warning_for_ratio(ratio),
+                display_label=_display_label_for_candidate(s.raw.id, s.raw.label),
             )
         )
 
     recommended = next(c for c in candidates if c.is_recommended)
     others = [c for c in candidates if c.id != recommended.id]
 
-    # 목적지 실시간 날씨(있으면 Solar 설명에 "비 오는 날 통학로" 맥락으로 반영)
-    current_weather = weather.fetch_weather(destination.lat, destination.lng)
-
-    time_ctx_data = build_time_context(recommended.duration_s, force_night=req.force_night)
-    time_context = TimeContext(**time_ctx_data)
-
-    reports = solar.generate_reports(
-        recommended, others, req.audience_age, weather=current_weather, time_context=time_ctx_data
+    time_ctx_data = build_time_context(
+        recommended.duration_s,
+        now=eval_now,
+        force_night=req.force_night if time_mode == "auto" else None,
+        time_mode=time_mode,
     )
+    time_context = TimeContext(**time_ctx_data)
+    compare_note = compare_note_for_candidates(len(candidates), get_last_route_build_meta())
 
-    return RouteResponse(
+    # 1단계: 경로·점수 즉시 반환. Solar 리포트는 백그라운드.
+    response = RouteResponse(
         origin=origin,
         destination=destination,
         candidates=candidates,
         recommended_id=recommended.id,
-        parent_report=reports["parent_report"],
-        parent_report_v2=reports.get("parent_report_v2") or "",
-        kid_report=reports["kid_report"],
+        parent_report="",
+        parent_report_v2="",
+        kid_report="",
         used_mock={
-            "routing": settings.routing_mock if req.mock is None else req.mock,
+            "routing": routing_mock,
             "public_data": settings.public_data_mock,
-            "upstage": reports["used_mock"],
+            "upstage": None,
         },
         weather=current_weather,
         time_context=time_context,
+        compare_note=compare_note,
+        result_key=result_key,
+        reports_status="pending",
+        from_cache=False,
+    )
+    route_cache.put_route(result_key, response.model_dump())
+    background_tasks.add_task(
+        _generate_reports_background,
+        result_key,
+        recommended,
+        others,
+        req.audience_age,
+        current_weather,
+        time_ctx_data,
+    )
+    return response
+
+
+def _generate_reports_background(
+    result_key: str,
+    recommended: RouteCandidate,
+    others: list[RouteCandidate],
+    audience_age: int,
+    current_weather: dict | None,
+    time_ctx_data: dict,
+) -> None:
+    """Solar(또는 MOCK) 부모 리포트 JSON을 생성해 캐시에 저장."""
+    try:
+        reports = solar.generate_reports(
+            recommended,
+            others,
+            audience_age,
+            weather=current_weather,
+            time_context=time_ctx_data,
+        )
+        route_cache.put_reports(
+            result_key,
+            {
+                "parent_report": reports.get("parent_report") or "",
+                "parent_report_v2": reports.get("parent_report_v2") or "",
+                "kid_report": reports.get("kid_report") or "",
+                "used_mock": reports.get("used_mock"),
+            },
+        )
+        cached = route_cache.get_route(result_key)
+        if cached:
+            cached = dict(cached)
+            cached["parent_report"] = reports.get("parent_report") or ""
+            cached["parent_report_v2"] = reports.get("parent_report_v2") or ""
+            cached["kid_report"] = reports.get("kid_report") or ""
+            cached["reports_status"] = "ready"
+            used = dict(cached.get("used_mock") or {})
+            used["upstage"] = reports.get("used_mock")
+            cached["used_mock"] = used
+            route_cache.put_route(result_key, cached)
+        safe_print(f"[API /route/reports] 생성 완료 key={result_key}")
+    except Exception as exc:
+        safe_print(f"[API /route/reports] 실패 key={result_key}: {exc}")
+        route_cache.put_reports(
+            result_key,
+            {
+                "parent_report": "",
+                "parent_report_v2": "",
+                "kid_report": "",
+                "used_mock": True,
+                "error": str(exc),
+            },
+        )
+
+
+@router.get("/route/reports/{result_key}", response_model=RouteReportsResponse)
+def get_route_reports(result_key: str) -> RouteReportsResponse:
+    reports = route_cache.get_reports(result_key)
+    if not reports:
+        return RouteReportsResponse(result_key=result_key, status="pending")
+    return RouteReportsResponse(
+        result_key=result_key,
+        status="ready",
+        parent_report=reports.get("parent_report") or "",
+        parent_report_v2=reports.get("parent_report_v2") or "",
+        kid_report=reports.get("kid_report") or "",
+        used_mock=reports.get("used_mock"),
     )

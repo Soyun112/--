@@ -227,12 +227,22 @@ def nearest_facility_distance_m(
     resampled: list[tuple[float, float]],
     facilities: list[dict[str, Any]] | None = None,
 ) -> float | None:
-    """경로에서 가장 가까운 안심귀갓길 시설까지 거리(m). 없으면 None."""
-    from .geo import min_distance_to_route
+    """경로에서 가장 가까운 안심귀갓길 시설까지 거리(m). 없으면 None.
+
+    facilities를 넘기지 않으면 전체 CSV를 bbox로 줄인 뒤 계산한다.
+    """
+    from .geo import BBOX_SLACK_M, min_distance_to_route, route_bbox_with_margin
 
     fac = facilities if facilities is not None else get_safety_facilities()
     if not resampled or not fac:
         return None
+    if facilities is None:
+        min_lat, max_lat, min_lng, max_lng = route_bbox_with_margin(
+            resampled, BBOX_SLACK_M + 200.0
+        )
+        fac = facilities_in_bbox(fac, min_lat, max_lat, min_lng, max_lng)
+        if not fac:
+            return None
     best: float | None = None
     for f in fac:
         d = float(min_distance_to_route(resampled, (f["lat"], f["lng"])))

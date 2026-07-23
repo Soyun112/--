@@ -27,7 +27,11 @@ class RouteRequest(BaseModel):
     mock: Optional[bool] = Field(default=None, description="지정 시 서버 기본 MOCK 설정을 덮어씀")
     force_night: Optional[bool] = Field(
         default=None,
-        description="True면 실제 시각과 무관하게 야간 가중치·배너로 채점",
+        description="(하위 호환) True면 실제 시각과 무관하게 야간 가중치·배너로 채점. time_mode 우선.",
+    )
+    time_mode: Optional[str] = Field(
+        default=None,
+        description="auto|day|night — day=08:00, night=21:00 고정으로 재계산. 기본 auto(실제 시각).",
     )
 
 
@@ -107,12 +111,14 @@ class RouteCandidate(BaseModel):
     # 경로길이 ÷ 직선거리. 2.5 초과면 access_warning 표시
     detour_ratio: Optional[float] = None
     access_warning: Optional[str] = None
+    display_label: Optional[str] = None
 
 
 class TimeContext(BaseModel):
     """현재 시각·낮/밤·도착 예상·시간대별 추천 안내."""
 
     current_time: str
+    current_time_iso: Optional[str] = None
     is_night: bool
     period_label: str
     period_emoji: str = "☀️"
@@ -122,8 +128,12 @@ class TimeContext(BaseModel):
     night_start_time: str
     night_end_time: str = "오전 6:00"
     arrival_time: Optional[str] = None
+    arrival_time_iso: Optional[str] = None
     eta_message: Optional[str] = None
     duration_minutes: Optional[int] = None
+    time_mode: str = "auto"
+    is_time_fixed: bool = False
+    fixed_time_label: Optional[str] = None
 
 
 class RouteResponse(BaseModel):
@@ -137,6 +147,19 @@ class RouteResponse(BaseModel):
     used_mock: dict
     weather: Optional[dict] = None
     time_context: Optional[TimeContext] = None
+    compare_note: Optional[str] = None
+    result_key: Optional[str] = None
+    reports_status: str = "ready"  # pending | ready
+    from_cache: bool = False
+
+
+class RouteReportsResponse(BaseModel):
+    result_key: str
+    status: str  # pending | ready
+    parent_report: str = ""
+    parent_report_v2: str = ""
+    kid_report: str = ""
+    used_mock: Optional[bool] = None
 
 
 class DocumentIngestResult(BaseModel):

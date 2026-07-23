@@ -14,7 +14,7 @@ import numpy as np
 from ..config import settings
 from ..models import DocMatch, SafetyFeatures
 from . import public_data
-from .geo import buffer_match, min_distance_to_route, resample_route, route_length_m
+from .geo import buffer_match, min_distance_to_route, resample_route, route_bbox_with_margin, route_length_m
 from ..console_safe import safe_print
 from .routing import RouteCandidateRaw
 from .safety_facilities import (
@@ -51,7 +51,16 @@ def _child_zone_coverage_pct(resampled_points, child_zones: list[dict], radius_m
     """
     if not resampled_points or not child_zones:
         return 0.0
-    zone_points = [(z["lat"], z["lng"]) for z in child_zones]
+    min_lat, max_lat, min_lng, max_lng = route_bbox_with_margin(
+        resampled_points, radius_m + 50.0
+    )
+    zone_points = [
+        (z["lat"], z["lng"])
+        for z in child_zones
+        if min_lat <= z["lat"] <= max_lat and min_lng <= z["lng"] <= max_lng
+    ]
+    if not zone_points:
+        return 0.0
     weights: list[float] = []
     for pt in resampled_points:
         dist = min(float(min_distance_to_route([pt], zp)) for zp in zone_points)
@@ -59,10 +68,10 @@ def _child_zone_coverage_pct(resampled_points, child_zones: list[dict], radius_m
     return 100.0 * float(np.mean(weights))
 
 
-def _bbox_for_route(coords: list[tuple[float, float]], margin_deg: float = 0.004) -> tuple[float, float, float, float]:
-    lats = [c[0] for c in coords]
-    lngs = [c[1] for c in coords]
-    return min(lats) - margin_deg, max(lats) + margin_deg, min(lngs) - margin_deg, max(lngs) + margin_deg
+def _bbox_for_route(coords: list[tuple[float, float]], margin_m: float | None = None) -> tuple[float, float, float, float]:
+    """경로 bbox + (시설 버퍼 + 50m) 여유."""
+    slack = settings.safety_facility_buffer_m + 50.0 if margin_m is None else margin_m
+    return route_bbox_with_margin(coords, slack)
 
 
 def _count_safety_facilities_near_route(
@@ -313,9 +322,12 @@ def score_candidates(raw_candidates: List[RouteCandidateRaw], is_night: bool | N
         f = s.features
         tag = "★추천" if s.is_recommended else "  "
         cov = "" if s.data_coverage else " · 데이터희소"
-        nearest = nearest_facility_distance_m(
-            resample_route(s.raw.coordinates, interval_m=settings.resample_interval_m)
+        resampled = resample_route(s.raw.coordinates, interval_m=settings.resample_interval_m)
+        nearby = facilities_in_bbox(
+            get_safety_facilities(),
+            *_bbox_for_route(s.raw.coordinates),
         )
+        nearest = nearest_facility_distance_m(resampled, nearby)
         near_txt = f" · 안심귀갓길 {nearest:.0f}m" if nearest is not None else ""
         safe_print(
             f"{tag} [{s.raw.id}] 안전점수 {s.safety_score}점{cov}{near_txt} | "

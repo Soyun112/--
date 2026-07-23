@@ -313,6 +313,15 @@ def test_geometric_overlap_drops_near_duplicate():
         (37.5000, 127.0520),
         (37.4995, 127.0512),
     ]
+    # 우회: 기본과 상당 부분 겹치지만 via 후보는 유지해야 함
+    detour_coords = [
+        (37.5012, 127.0499),
+        (37.5008, 127.0502),
+        (37.5006, 127.0508),
+        (37.5004, 127.0505),
+        (37.5000, 127.0508),
+        (37.4995, 127.0512),
+    ]
     main = RouteCandidateRaw(
         id="route-tmap-pedestrian-main",
         label="main",
@@ -337,11 +346,36 @@ def test_geometric_overlap_drops_near_duplicate():
         duration_s=450,
         source="TEST",
     )
-    kept = _deduplicate_candidates([main, twin, other])
+    detour = RouteCandidateRaw(
+        id="route-tmap-pedestrian-avoid-hotspot-1",
+        label="안전 우회",
+        coordinates=detour_coords,
+        distance_m=480,
+        duration_s=430,
+        source="TEST",
+    )
+    kept = _deduplicate_candidates([main, twin, other, detour])
     ids = [c.id for c in kept]
     assert "route-tmap-pedestrian-main" in ids
     assert "route-tmap-pedestrian-opt0" not in ids
     assert "route-tmap-pedestrian-opt10" in ids
+    assert "route-tmap-pedestrian-avoid-hotspot-1" in ids
+
+
+def test_compare_note_for_single_candidate():
+    from app.services.routing import RouteBuildMeta, compare_note_for_candidates
+
+    assert compare_note_for_candidates(2) is None
+    assert "1개만 표시" in (compare_note_for_candidates(1, RouteBuildMeta()) or "")
+    assert "되돌아" in (
+        compare_note_for_candidates(1, RouteBuildMeta(detour_rejected_backtrack=True)) or ""
+    )
+    assert "위험을 줄이지" in (
+        compare_note_for_candidates(1, RouteBuildMeta(detour_rejected_ineffective=True)) or ""
+    )
+    assert "다른 길이 없습니다" in (
+        compare_note_for_candidates(1, RouteBuildMeta(option_paths=3, unique_after_dedupe=1)) or ""
+    )
 
 
 def test_force_densify_waypoints_fills_from_tmap(monkeypatch):

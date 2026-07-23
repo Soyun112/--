@@ -87,7 +87,7 @@ def format_korean_time(dt: datetime) -> str:
 def recommendation_message(is_night: bool) -> str:
     if is_night:
         return "지금은 밤이라 밝고 CCTV 많은 길을 추천해요"
-    return "지금은 낮이라 사고 위험 적은 길을 추천해요"
+    return "지금은 낮이라 차량이 적고 시야가 트인 길을 추천해요"
 
 
 def scoring_context_label(is_night: bool) -> str:
@@ -105,23 +105,57 @@ def apply_time_weights(base_weights: dict[str, float], is_night: bool) -> dict[s
     return scoring_weights(is_night)
 
 
-def build_time_context(
-    duration_s: float | None = None,
-    now: datetime | None = None,
+def normalize_time_mode(time_mode: str | None) -> str:
+    mode = (time_mode or "auto").strip().lower()
+    return mode if mode in ("auto", "day", "night") else "auto"
+
+
+def resolve_evaluation_now(
     *,
-    force_night: bool | None = None,
-) -> dict[str, Any]:
-    """API·리포트용 시간 맥락 dict."""
+    time_mode: str | None = None,
+    now: datetime | None = None,
+) -> tuple[datetime, str]:
+    """채점·ETA에 쓸 기준 시각.
+
+    - auto: 실제 현재 시각
+    - day:  오늘 08:00 KST
+    - night: 오늘 21:00 KST
+    """
     current = now or datetime.now(KST)
     if current.tzinfo is None:
         current = current.replace(tzinfo=KST)
     else:
         current = current.astimezone(KST)
 
-    night = bool(force_night) if force_night is not None else is_nighttime(current)
+    mode = normalize_time_mode(time_mode)
+    if mode == "day":
+        return current.replace(hour=8, minute=0, second=0, microsecond=0), mode
+    if mode == "night":
+        return current.replace(hour=21, minute=0, second=0, microsecond=0), mode
+    return current, mode
+
+
+def build_time_context(
+    duration_s: float | None = None,
+    now: datetime | None = None,
+    *,
+    force_night: bool | None = None,
+    time_mode: str | None = None,
+) -> dict[str, Any]:
+    """API·리포트용 시간 맥락 dict."""
+    mode = normalize_time_mode(time_mode)
+    current, mode = resolve_evaluation_now(time_mode=mode, now=now)
+
+    # auto + force_night: 기존처럼 시계는 실제 시각, 밤 여부만 덮어씀
+    if mode == "auto" and force_night is not None:
+        night = bool(force_night)
+    else:
+        night = is_nighttime(current)
+
     sh, sm = sunset_time_for(current)
     ns_h = night_start_minutes(current) // 60
     ns_m = night_start_minutes(current) % 60
+    is_fixed = mode in ("day", "night")
 
     ctx: dict[str, Any] = {
         "current_time": format_korean_time(current),
@@ -132,15 +166,25 @@ def build_time_context(
         "recommendation_message": recommendation_message(night),
         "scoring_context": scoring_context_label(night),
         "sunset_time": f"{sh}:{sm:02d}",
-        "night_start_time": format_korean_time(current.replace(hour=ns_h, minute=ns_m, second=0, microsecond=0)),
+        "night_start_time": format_korean_time(
+            current.replace(hour=ns_h, minute=ns_m, second=0, microsecond=0)
+        ),
         "night_end_time": f"오전 {NIGHT_END_HOUR}:00",
+        "time_mode": mode,
+        "is_time_fixed": is_fixed,
+        "fixed_time_label": ("밤 기준으로 보는 중" if night else "낮 기준으로 보는 중") if is_fixed else None,
     }
 
     if duration_s is not None and duration_s > 0:
         arrival = current + timedelta(seconds=duration_s)
         ctx["arrival_time"] = format_korean_time(arrival)
         ctx["arrival_time_iso"] = arrival.isoformat()
-        ctx["eta_message"] = f"지금 출발하면 약 {format_korean_time(arrival)} 도착"
+        if is_fixed:
+            ctx["eta_message"] = (
+                f"{format_korean_time(current)} 출발 → {format_korean_time(arrival)} 도착"
+            )
+        else:
+            ctx["eta_message"] = f"지금 출발하면 약 {format_korean_time(arrival)} 도착"
         ctx["duration_minutes"] = round(duration_s / 60)
 
     return ctx

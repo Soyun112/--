@@ -50,7 +50,14 @@
         </div>
         <button type="button" id="logout-btn" class="logout-btn">로그아웃</button>
       </div>
-      <div id="live-clock" class="live-clock" aria-live="polite">--:--</div>
+      <div class="time-controls">
+        <div id="live-clock" class="live-clock" aria-live="polite">--:--</div>
+        <div class="time-mode-toggle" role="group" aria-label="시간대 선택">
+          <button type="button" class="time-mode-btn active" data-time-mode="auto" aria-pressed="true">자동</button>
+          <button type="button" class="time-mode-btn" data-time-mode="day" aria-pressed="false">낮</button>
+          <button type="button" class="time-mode-btn" data-time-mode="night" aria-pressed="false">밤</button>
+        </div>
+      </div>
       <div class="mode-toggle" role="group" aria-label="안내 화면 선택">
         <button type="button" class="mode-button active" data-mode="parent" aria-pressed="true">부모 모드</button>
         <button type="button" class="mode-button" data-mode="kid" aria-pressed="false">아이 모드</button>
@@ -63,6 +70,7 @@
     <span id="time-banner-icon" class="time-banner-icon" aria-hidden="true">☀️</span>
     <div class="time-banner-text">
       <strong id="time-recommendation">안전 경로를 찾으면 시간대 맞춤 안내가 표시됩니다.</strong>
+      <span id="time-fixed-label" class="time-fixed-label" hidden></span>
       <span id="time-eta" class="time-eta"></span>
     </div>
   </div>
@@ -103,7 +111,8 @@
       </div>
       <div id="doc-placed-panel" class="doc-review-panel" hidden>
         <h4 class="doc-review-title">지도에 올린 검색어</h4>
-        <p class="hint doc-review-hint">핀/구간을 찍을 때 쓴 검색어예요. 위치가 어긋나면 참고해 다시 분석하거나 위 확인란에서 수정하세요.</p>
+        <p id="doc-placed-summary" class="doc-placed-summary" hidden></p>
+        <p class="hint doc-review-hint">위치가 어긋나면 항목을 눌러 검색어를 확인하고, 위 「위치 확인」란에서 수정하세요.</p>
         <ul id="doc-placed-list" class="doc-review-list"></ul>
       </div>
     </section>
@@ -122,6 +131,7 @@
         </fieldset>
         <div class="form-actions">
           <button type="submit" id="submit-btn" disabled title="먼저 안전 문서를 확인하거나 반영 안함을 선택해 주세요.">안전 경로 찾기</button>
+          <p id="route-progress" class="route-progress" hidden aria-live="polite"></p>
         </div>
       </form>
       <p class="hint route-panel-hint">위에서 문서 확인(또는 반영 안함) 후, 출발·도착을 넣고 안전한 길을 찾아보세요.</p>

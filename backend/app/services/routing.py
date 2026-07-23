@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, List, Tuple
 
@@ -53,6 +54,40 @@ class RouteCandidateRaw:
     source: str
     navigation_steps: List[NavigationStepRaw] = field(default_factory=list)
     main_road_distance_m: float = 0.0
+
+
+@dataclass
+class RouteBuildMeta:
+    """후보 1개일 때 UI 안내용 — 대안/우회가 왜 빠졌는지."""
+
+    option_paths: int = 0
+    unique_after_dedupe: int = 0
+    detour_attempted: bool = False
+    detour_added: bool = False
+    detour_rejected_ineffective: bool = False
+    detour_rejected_backtrack: bool = False
+    detour_rejected_unreachable: bool = False
+
+
+_last_route_build_meta = RouteBuildMeta()
+
+
+def get_last_route_build_meta() -> RouteBuildMeta:
+    return _last_route_build_meta
+
+
+def compare_note_for_candidates(n_candidates: int, meta: RouteBuildMeta | None = None) -> str | None:
+    """후보 1개일 때만 표시할 안내 문구."""
+    if n_candidates >= 2:
+        return None
+    m = meta or _last_route_build_meta
+    if m.detour_rejected_backtrack and not m.detour_added:
+        return "우회 경로가 크게 되돌아가는 형태라 제외했습니다."
+    if m.detour_rejected_ineffective and not m.detour_added:
+        return "우회 경로가 위험을 줄이지 못해 제외했습니다."
+    if m.option_paths > 1 and m.unique_after_dedupe <= 1 and not m.detour_added:
+        return "이 구간은 통행 가능한 다른 길이 없습니다."
+    return "이 구간은 안전한 대안 경로가 없어 1개만 표시합니다."
 
 
 def _bearing(a: Tuple[float, float], b: Tuple[float, float]) -> float:
@@ -1044,8 +1079,22 @@ def _is_detour_candidate(candidate: RouteCandidateRaw) -> bool:
     return "avoid" in cid or "via" in cid or "detour" in cid
 
 
+def _is_main_candidate(candidate: RouteCandidateRaw) -> bool:
+    cid = candidate.id.lower()
+    return ("main" in cid or "direct" in cid) and not _is_detour_candidate(candidate)
+
+
+def _is_search_option_alt(candidate: RouteCandidateRaw) -> bool:
+    """searchOption 0/4/10 대안 (via 우회 제외)."""
+    if _is_detour_candidate(candidate):
+        return False
+    cid = candidate.id.lower()
+    return "opt0" in cid or "opt4" in cid or "opt10" in cid or "pedestrian-alt" in cid
+
+
 def _drop_backtracking_candidates(candidates: List[RouteCandidateRaw]) -> List[RouteCandidateRaw]:
     """왕복 필터는 via 우회 후보에만 적용. main/alt는 Tmap 결과를 그대로 채택."""
+    global _last_route_build_meta
     if not candidates:
         return candidates
     kept: List[RouteCandidateRaw] = []
@@ -1053,6 +1102,7 @@ def _drop_backtracking_candidates(candidates: List[RouteCandidateRaw]) -> List[R
     for c in candidates:
         if _is_detour_candidate(c) and _has_backtrack(c.coordinates):
             dropped += 1
+            _last_route_build_meta.detour_rejected_backtrack = True
             total = route_length_m(c.coordinates)
             wasted = _max_backtrack_waste_m(c.coordinates)
             thr = max(60.0, 0.10 * total) if total > 0 else 60.0
@@ -1166,31 +1216,76 @@ def _routes_highly_overlapping(first: RouteCandidateRaw, second: RouteCandidateR
 
 
 def _deduplicate_candidates(candidates: List[RouteCandidateRaw]) -> List[RouteCandidateRaw]:
-    """해시·등가·기하 겹침(30m/70%)으로 유사 경로를 제거. main 우선."""
+    """유사 경로 제거.
+
+    - 기본 경로(main/direct, via 없음): 항상 유지
+    - 기하 겹침(30m/70%): searchOption 0/4/10 대안끼리만
+    - via 우회: 겹침 제거 대상 아님 (기본과 일부 공유하는 것이 정상)
+    """
+    if not candidates:
+        return candidates
+
+    bases = [c for c in candidates if not _is_detour_candidate(c)]
+    detours = [c for c in candidates if _is_detour_candidate(c)]
+
     unique: List[RouteCandidateRaw] = []
     seen_hashes: set[str] = set()
-    for candidate in sorted(candidates, key=_candidate_sort_key):
+
+    for candidate in sorted(bases, key=_candidate_sort_key):
         h = _polyline_hash(candidate.coordinates)
+        keep_always = _is_main_candidate(candidate)
+
         if h and h in seen_hashes:
+            if keep_always:
+                # 동일 해시 main이 둘이면 하나만
+                print(f"[경로] 폴리라인 해시 중복 제외: {candidate.id}")
+                continue
             print(f"[경로] 폴리라인 해시 중복 제외: {candidate.id}")
             continue
+
         matching = next((existing for existing in unique if _routes_are_equivalent(existing, candidate)), None)
-        if matching:
+        if matching and not keep_always:
             print(f"[경로] 중복 후보 제외: {candidate.id} (기존 {matching.id}와 동일)")
             continue
-        overlapping = next(
-            (existing for existing in unique if _routes_highly_overlapping(existing, candidate)),
-            None,
-        )
-        if overlapping:
-            print(
-                f"[경로] 기하 겹침 제외: {candidate.id} "
-                f"(기존 {overlapping.id}와 overlap>{settings.route_overlap_max_ratio:.0%})"
-            )
+        if matching and keep_always:
+            # main은 유지; 이미 들어간 동일 궤적이 있으면 스킵
+            print(f"[경로] 기본 경로 동일 궤적 스킵: {candidate.id} (기존 {matching.id})")
             continue
+
+        if _is_search_option_alt(candidate):
+            overlapping = next(
+                (
+                    existing
+                    for existing in unique
+                    if _is_search_option_alt(existing) and _routes_highly_overlapping(existing, candidate)
+                ),
+                None,
+            )
+            if overlapping:
+                print(
+                    f"[경로] 기하 겹침 제외: {candidate.id} "
+                    f"(기존 {overlapping.id}와 overlap>{settings.route_overlap_max_ratio:.0%})"
+                )
+                continue
+
         if h:
             seen_hashes.add(h)
         unique.append(candidate)
+
+    # via 우회는 겹침·등가 제거 없이 추가 (동일 id/해시 중복만 방지)
+    for detour in detours:
+        h = _polyline_hash(detour.coordinates)
+        if h and h in seen_hashes:
+            # 기본과 완전히 동일하면 우회 의미 없음
+            print(f"[경로] 우회가 기본과 동일 궤적이라 제외: {detour.id}")
+            continue
+        if any(_routes_are_equivalent(existing, detour) for existing in unique if not _is_detour_candidate(existing)):
+            print(f"[경로] 우회가 기본과 동일해 제외: {detour.id}")
+            continue
+        if h:
+            seen_hashes.add(h)
+        unique.append(detour)
+
     return unique
 
 
@@ -1326,6 +1421,8 @@ def _append_avoid_point_detours(
         return candidates
 
     print(f"[경로] 우회 지점 {len(near)}곳이 기본 경로 {trigger:.0f}m 이내 → 우회 후보 요청")
+    global _last_route_build_meta
+    _last_route_build_meta.detour_attempted = True
     out = list(candidates)
     max_pts = max(1, settings.avoid_detour_max_points)
     # 수직 오프셋: 좌/우 × 100/140/180m (via가 막다른 골목이면 왕복 아티팩트 생김)
@@ -1346,6 +1443,7 @@ def _append_avoid_point_detours(
                 if via is None:
                     continue
                 if not _via_is_reachable(via, origin, search_option=search_option):
+                    _last_route_build_meta.detour_rejected_unreachable = True
                     continue
                 detour = _call_tmap(
                     origin,
@@ -1358,6 +1456,7 @@ def _append_avoid_point_detours(
                     continue
                 waste = _max_backtrack_waste_m(detour.coordinates)
                 if waste >= accept_waste_m:
+                    _last_route_build_meta.detour_rejected_backtrack = True
                     print(
                         f"[경로] 우회 via 기각: 왕복 낭비 {waste:.0f}m ≥ {accept_waste_m:.0f}m "
                         f"(side={side:+.0f}, offset={offset_m:.0f}m, via={via[0]:.5f},{via[1]:.5f})"
@@ -1366,6 +1465,7 @@ def _append_avoid_point_detours(
                 new_dist = min_distance_to_route(detour.coordinates, risk_pt)
                 # 채점 버퍼(40m) 밖으로 나가야 함 — dist0 대비 소폭 개선만으로는 부족
                 if new_dist <= settings.buffer_radius_m:
+                    _last_route_build_meta.detour_rejected_ineffective = True
                     print(
                         f"[경로] 우회 후보 기각: {d['label']}까지 {new_dist:.0f}m "
                         f"(채점 버퍼 {settings.buffer_radius_m:.0f}m 미달, 기존 {dist0:.0f}m)"
@@ -1387,6 +1487,7 @@ def _append_avoid_point_detours(
                 base_hits = _hits(base_rs)
                 detour_hits = _hits(detour_rs)
                 if detour_hits >= base_hits:
+                    _last_route_build_meta.detour_rejected_ineffective = True
                     print(
                         f"[경로] 우회 후보 기각: {kind} 노출 {base_hits}→{detour_hits} "
                         f"(대상 {dist0:.0f}m→{new_dist:.0f}m이나 다른 지점 잔존)"
@@ -1397,6 +1498,7 @@ def _append_avoid_point_detours(
                 else:
                     detour.label = f"문서 위험 우회 · {d['label']}"
                 out.append(detour)
+                _last_route_build_meta.detour_added = True
                 print(
                     f"[경로] 우회 후보 추가: {detour.id} "
                     f"({d['source']} {dist0:.0f}m → {new_dist:.0f}m, "
@@ -1442,7 +1544,9 @@ def get_route_candidates(
     origin_name: str | None = None,
     destination_name: str | None = None,
 ) -> List[RouteCandidateRaw]:
+    global _last_route_build_meta
     del origin_name, destination_name  # 이름 기반 특수 경로 분기 제거 후 시그니처 유지
+    _last_route_build_meta = RouteBuildMeta()
     use_mock = settings.routing_mock if force_mock is None else force_mock
     mode_label = "MOCK" if use_mock else "LIVE (Tmap)"
     print(f"\n[경로] === 경로 후보 계산 시작 ({mode_label}) ===")
@@ -1450,26 +1554,46 @@ def get_route_candidates(
 
     if use_mock:
         print("[경로] MOCK 모드 — 합성 턴바이턴 안내 사용 (route-direct 등)")
-        return _finalize_candidates(_deduplicate_candidates(_mock_candidates(origin, destination)))
+        mock = _mock_candidates(origin, destination)
+        _last_route_build_meta.option_paths = len(mock)
+        finalized = _finalize_candidates(_deduplicate_candidates(mock))
+        _last_route_build_meta.unique_after_dedupe = len(finalized)
+        return finalized
 
     candidates: List[RouteCandidateRaw] = []
 
     # Tmap 보행자: searchOption 0/4/10 다중 후보 + 사고다발·문서위험 우회
     primary_option = settings.tmap_pedestrian_search_option
-    # 건물·존 중심점이 도로 밖이면 왕복 스파이크가 나므로 보행망에 스냅
-    origin_s = _snap_to_pedestrian_network(origin, search_option=primary_option)
-    dest_s = _snap_to_pedestrian_network(destination, search_option=primary_option)
+    # 건물·존 중심점이 도로 밖이면 왕복 스파이크가 나므로 보행망에 스냅 (O/D 병렬)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_o = pool.submit(_snap_to_pedestrian_network, origin, search_option=primary_option)
+        fut_d = pool.submit(_snap_to_pedestrian_network, destination, search_option=primary_option)
+        origin_s = fut_o.result()
+        dest_s = fut_d.result()
 
-    for i, opt in enumerate(_pedestrian_search_options(primary_option)):
+    option_list = list(enumerate(_pedestrian_search_options(primary_option)))
+
+    def _fetch_option(item: tuple[int, str]) -> tuple[int, RouteCandidateRaw | None]:
+        i, opt = item
         suffix = "main" if i == 0 else f"opt{opt}"
-        cand = _call_tmap(
+        return i, _call_tmap(
             origin_s,
             dest_s,
             search_option=opt,
             route_suffix=suffix,
         )
+
+    # searchOption 0/4/10 동시 호출
+    fetched: list[tuple[int, RouteCandidateRaw | None]] = []
+    with ThreadPoolExecutor(max_workers=max(1, len(option_list))) as pool:
+        futures = [pool.submit(_fetch_option, item) for item in option_list]
+        for fut in as_completed(futures):
+            fetched.append(fut.result())
+    for _, cand in sorted(fetched, key=lambda x: x[0]):
         if cand:
             candidates.append(cand)
+
+    _last_route_build_meta.option_paths = len(candidates)
 
     candidates = _append_avoid_point_detours(
         origin_s,
@@ -1482,4 +1606,9 @@ def get_route_candidates(
         print("[경로] Tmap 보행자 API 전부 실패 - MOCK 폴백 없이 빈 결과 반환")
         return []
     print(f"[경로] === Tmap 보행자 API 성공: 후보 {len(candidates)}개 (옵션 {_pedestrian_search_options(primary_option)}) ===")
-    return _finalize_candidates(_deduplicate_candidates(candidates))
+    deduped = _deduplicate_candidates(candidates)
+    # 우회 추가 전 옵션만의 unique 수 (안내용)
+    base_only = [c for c in deduped if not _is_detour_candidate(c)]
+    _last_route_build_meta.unique_after_dedupe = len(base_only)
+    finalized = _finalize_candidates(deduped)
+    return finalized

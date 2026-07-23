@@ -6,11 +6,14 @@ PostGIS의 ST_DWithin으로 교체하는 것을 향후 로드맵으로 남겨둔
 """
 from __future__ import annotations
 
-from typing import Iterable, List, Sequence, Tuple
+import math
+from typing import List, Sequence, Tuple
 
 import numpy as np
 
 EARTH_RADIUS_M = 6_371_000.0
+# bbox 여유(미터) — 반경 매칭 전 사각형 1차 필터
+BBOX_SLACK_M = 50.0
 
 
 def haversine_m(lat1: np.ndarray, lng1: np.ndarray, lat2: np.ndarray, lng2: np.ndarray) -> np.ndarray:
@@ -30,6 +33,36 @@ def route_length_m(coords: Sequence[Tuple[float, float]]) -> float:
     lngs = np.array([c[1] for c in coords])
     d = haversine_m(lats[:-1], lngs[:-1], lats[1:], lngs[1:])
     return float(np.sum(d))
+
+
+def route_bbox_with_margin(
+    route_points: Sequence[Tuple[float, float]],
+    margin_m: float,
+) -> tuple[float, float, float, float]:
+    """경로 bounding box + margin_m(위·경도). (min_lat, max_lat, min_lng, max_lng)."""
+    if not route_points:
+        return 0.0, 0.0, 0.0, 0.0
+    lats = [p[0] for p in route_points]
+    lngs = [p[1] for p in route_points]
+    mid_lat = 0.5 * (min(lats) + max(lats))
+    dlat = margin_m / 111_320.0
+    dlng = margin_m / (111_320.0 * max(0.2, math.cos(math.radians(mid_lat))))
+    return min(lats) - dlat, max(lats) + dlat, min(lngs) - dlng, max(lngs) + dlng
+
+
+def points_in_bbox(
+    data_points: Sequence[Tuple[float, float]],
+    min_lat: float,
+    max_lat: float,
+    min_lng: float,
+    max_lng: float,
+) -> List[tuple[int, float, float]]:
+    """bbox 안 점만 (원본 인덱스, lat, lng)로 반환."""
+    out: List[tuple[int, float, float]] = []
+    for idx, (dlat, dlng) in enumerate(data_points):
+        if min_lat <= dlat <= max_lat and min_lng <= dlng <= max_lng:
+            out.append((idx, dlat, dlng))
+    return out
 
 
 def resample_route(coords: Sequence[Tuple[float, float]], interval_m: float = 20.0) -> List[Tuple[float, float]]:
@@ -59,17 +92,32 @@ def buffer_match(
     data_points: Sequence[Tuple[float, float]],
     radius_m: float,
 ) -> List[int]:
-    """route_points 중 하나라도 반경 radius_m 이내에 있는 data_points의 인덱스 목록을 반환."""
+    """route_points 중 하나라도 반경 radius_m 이내에 있는 data_points의 인덱스 목록을 반환.
+
+    경로 bbox + (radius + 50m)로 1차 사각형 필터 후 Haversine — 전체 시설 스캔을 피한다.
+    """
     if not route_points or not data_points:
         return []
 
-    route_lat = np.array([p[0] for p in route_points])
-    route_lng = np.array([p[1] for p in route_points])
+    min_lat, max_lat, min_lng, max_lng = route_bbox_with_margin(
+        route_points, radius_m + BBOX_SLACK_M
+    )
+    candidates = points_in_bbox(data_points, min_lat, max_lat, min_lng, max_lng)
+    if not candidates:
+        return []
+
+    route_lat = np.array([p[0] for p in route_points], dtype=float)
+    route_lng = np.array([p[1] for p in route_points], dtype=float)
 
     matched_indices: List[int] = []
-    for idx, (dlat, dlng) in enumerate(data_points):
-        dists = haversine_m(route_lat, route_lng, np.full_like(route_lat, dlat), np.full_like(route_lng, dlng))
-        if np.min(dists) <= radius_m:
+    for idx, dlat, dlng in candidates:
+        dists = haversine_m(
+            route_lat,
+            route_lng,
+            np.full_like(route_lat, dlat),
+            np.full_like(route_lng, dlng),
+        )
+        if float(np.min(dists)) <= radius_m:
             matched_indices.append(idx)
     return matched_indices
 
