@@ -3327,10 +3327,8 @@ async function confirmDocumentQueue() {
 
     const errHint = errors.length ? ` · 일부 실패 ${errors.length}건` : "";
     if (totalCreated > 0) {
-      setDocUploadStatus(
-        `이전 핀 지운 뒤 ①텍스트추출 → ②주소변환(도로명주소 우선) → ③구간 ${totalCreated}개 표시${errHint}. 검색 실패한 곳은 아래에서 수정하세요.`,
-        "ok"
-      );
+      // 성공 구간은 아래 「지도에 올린 검색어」 패널로 안내. 처리 단계 문구는 노출하지 않음.
+      setDocUploadStatus(errors.length ? `일부 문서 분석 실패 ${errors.length}건` : "", "");
     } else if (allPending.length > 0) {
       setDocUploadStatus(
         `①~②까지는 됐지만 ③지도 검색에 실패한 곳이 있어요. 아래 검색어를 고치면 올라가요.${errHint}`,
