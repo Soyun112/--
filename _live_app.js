@@ -20,40 +20,29 @@ const PUBLIC_DATA_LEGEND = [
 
 const DEMO_SCENARIOS = {
   morning_school: {
-    origin: "개나리SK뷰5차아파트",
-    destination: "도성초등학교",
+    origin: "선릉로 221",
+    destination: "선릉로64길 33",
     age: 8,
-    note: "도성초등학교 주변 통학로를 비교해 CCTV·보호구역이 많은 길을 추천합니다.",
-  },
-  night_academy: {
-    origin: "필수학학원",
-    destination: "개나리SK뷰5차아파트",
-    age: 11,
-    note: "야간 하원도 Tmap 보행자 큰길(대로 우선) 경로로 안내합니다.",
+    note: "등교: 도곡렉슬아파트(선릉로 221) → 도곡초등학교(선릉로64길 33).",
   },
   school_to_academy: {
-    origin: "도성초등학교",
-    destination: "필수학학원",
+    origin: "선릉로64길 33",
+    destination: "도곡로 313",
     age: 8,
-    note: "도성초등학교에서 필수학학원으로 이동하는 길의 안전시설을 비교해 보여줍니다.",
+    note: "학원: 도곡초등학교(선릉로64길 33) → 게이트대치어학원(도곡로 313).",
   },
-  daehyun_safe: {
-    origin: "대현초 안심출발",
-    destination: "역삼로98길 16",
-    age: 8,
-    note: "같은 대현초(역삼로98길 16)라도 출발지에 따라 점수가 갈립니다 — 안심 출발(~93점).",
+  night_academy: {
+    origin: "도곡로 313",
+    destination: "선릉로 221",
+    age: 11,
+    forceNight: true,
+    note: "야간 하원: 게이트대치어학원(도곡로 313) → 도곡렉슬아파트(선릉로 221). 야간 가중치로 채점합니다.",
   },
-  daehyun_mid: {
-    origin: "대현초 보통출발",
-    destination: "역삼로98길 16",
+  academy_detour: {
+    origin: "도곡로 445",
+    destination: "선릉로64길 33",
     age: 8,
-    note: "같은 대현초라도 출발지에 따라 점수가 갈립니다 — 보통 출발(~69점).",
-  },
-  daehyun_caution: {
-    origin: "대현초 주의출발",
-    destination: "역삼로98길 16",
-    age: 8,
-    note: "같은 대현초라도 출발지에 따라 점수가 갈립니다 — 주의 출발(~59점). 세 출발지를 바꿔 비교하세요.",
+    note: "우회: 깊은생각수학학원(도곡로 445) → 도곡초등학교(선릉로64길 33).",
   },
 };
 

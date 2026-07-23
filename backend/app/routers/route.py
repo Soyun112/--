@@ -197,7 +197,10 @@ def compute_route(req: RouteRequest) -> RouteResponse:
                 "Render에 TMAP_APP_KEY가 설정되어 있는지도 확인해 주세요."
             ),
         )
-    night = is_nighttime()
+    if req.force_night is None:
+        night = is_nighttime()
+    else:
+        night = bool(req.force_night)
     scored = score_candidates(raw_candidates, is_night=night)
 
     for s in scored:
@@ -254,7 +257,7 @@ def compute_route(req: RouteRequest) -> RouteResponse:
     # 목적지 실시간 날씨(있으면 Solar 설명에 "비 오는 날 통학로" 맥락으로 반영)
     current_weather = weather.fetch_weather(destination.lat, destination.lng)
 
-    time_ctx_data = build_time_context(recommended.duration_s)
+    time_ctx_data = build_time_context(recommended.duration_s, force_night=req.force_night)
     time_context = TimeContext(**time_ctx_data)
 
     reports = solar.generate_reports(

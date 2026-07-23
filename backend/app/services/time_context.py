@@ -105,7 +105,12 @@ def apply_time_weights(base_weights: dict[str, float], is_night: bool) -> dict[s
     return scoring_weights(is_night)
 
 
-def build_time_context(duration_s: float | None = None, now: datetime | None = None) -> dict[str, Any]:
+def build_time_context(
+    duration_s: float | None = None,
+    now: datetime | None = None,
+    *,
+    force_night: bool | None = None,
+) -> dict[str, Any]:
     """API·리포트용 시간 맥락 dict."""
     current = now or datetime.now(KST)
     if current.tzinfo is None:
@@ -113,7 +118,7 @@ def build_time_context(duration_s: float | None = None, now: datetime | None = N
     else:
         current = current.astimezone(KST)
 
-    night = is_nighttime(current)
+    night = bool(force_night) if force_night is not None else is_nighttime(current)
     sh, sm = sunset_time_for(current)
     ns_h = night_start_minutes(current) // 60
     ns_m = night_start_minutes(current) % 60

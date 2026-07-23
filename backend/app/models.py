@@ -25,6 +25,10 @@ class RouteRequest(BaseModel):
     destination: Waypoint
     audience_age: int = Field(default=8, ge=3, le=15, description="아이용 설명 난이도 조정을 위한 나이")
     mock: Optional[bool] = Field(default=None, description="지정 시 서버 기본 MOCK 설정을 덮어씀")
+    force_night: Optional[bool] = Field(
+        default=None,
+        description="True면 실제 시각과 무관하게 야간 가중치·배너로 채점",
+    )
 
 
 class GeocodeResponse(BaseModel):
