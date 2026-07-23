@@ -555,6 +555,47 @@ body.theme-dark .doc-upload-status { color: #c5d3e0; }
   color: #627d98;
 }
 
+.doc-placed-fold {
+  margin: 0;
+}
+
+.doc-placed-fold-summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #243b53;
+  line-height: 1.35;
+}
+
+.doc-placed-fold-summary::-webkit-details-marker {
+  display: none;
+}
+
+.doc-placed-fold-summary::before {
+  content: "▸";
+  flex-shrink: 0;
+  font-size: 0.85em;
+  color: #627d98;
+  transition: transform 0.15s ease;
+}
+
+.doc-placed-fold[open] > .doc-placed-fold-summary::before {
+  content: "▾";
+}
+
+.doc-placed-fold-title {
+  min-width: 0;
+}
+
+.doc-placed-fold-body {
+  margin-top: 10px;
+}
+
 .doc-placed-summary {
   margin: 0 0 8px;
   font-size: 0.88rem;
@@ -684,6 +725,8 @@ body.theme-dark .doc-review-panel {
 }
 
 body.theme-dark .doc-review-title { color: #e2e8f0; }
+body.theme-dark .doc-placed-fold-summary { color: #e2e8f0; }
+body.theme-dark .doc-placed-fold-summary::before { color: #9fb3c8; }
 body.theme-dark .doc-review-item {
   background: #243447;
   border-color: #334e68;

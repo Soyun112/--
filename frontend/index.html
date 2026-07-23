@@ -110,10 +110,16 @@
         <ul id="doc-review-list" class="doc-review-list"></ul>
       </div>
       <div id="doc-placed-panel" class="doc-review-panel" hidden>
-        <h4 class="doc-review-title">지도에 올린 검색어</h4>
-        <p id="doc-placed-summary" class="doc-placed-summary" hidden></p>
-        <p class="hint doc-review-hint">위치가 어긋나면 항목을 눌러 검색어를 확인하세요.</p>
-        <ul id="doc-placed-list" class="doc-review-list"></ul>
+        <details class="doc-placed-fold" id="doc-placed-fold">
+          <summary class="doc-placed-fold-summary">
+            <span class="doc-placed-fold-title">문서 기반 위험 지역</span>
+          </summary>
+          <div class="doc-placed-fold-body">
+            <p id="doc-placed-summary" class="doc-placed-summary" hidden></p>
+            <p class="hint doc-review-hint">위치가 어긋나면 항목을 눌러 검색어를 확인하세요.</p>
+            <ul id="doc-placed-list" class="doc-review-list"></ul>
+          </div>
+        </details>
       </div>
     </section>
 

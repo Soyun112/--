@@ -3280,7 +3280,7 @@ async function confirmDocumentQueue() {
 
     const errHint = errors.length ? ` · 일부 실패 ${errors.length}건` : "";
     if (totalCreated > 0) {
-      // 성공 구간은 아래 「지도에 올린 검색어」 패널로 안내. 처리 단계 문구는 노출하지 않음.
+      // 성공 구간은 아래 「문서 기반 위험 지역」 패널로 안내. 처리 단계 문구는 노출하지 않음.
       setDocUploadStatus(errors.length ? `일부 문서 분석 실패 ${errors.length}건` : "", "");
     } else if (allPending.length > 0) {
       setDocUploadStatus(
