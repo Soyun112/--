@@ -215,10 +215,17 @@ function readInlineGuidePayload() {
 function readShareIdFromLocation() {
   const params = new URLSearchParams(window.location.search);
   const queryId = params.get("id");
-  if (queryId) return queryId;
+  if (queryId) return queryId.trim();
+
+  // /guide/a7k2m9 또는 /g/a7k2m9 (짧은 ID — 긴 인코딩 문자열과 구분)
+  const path = (window.location.pathname || "").replace(/\/+$/, "") || "/";
+  const guideMatch = path.match(/^\/guide\/([a-z0-9_-]{4,16})$/i);
+  if (guideMatch) return guideMatch[1];
+  const gMatch = path.match(/^\/g\/([a-z0-9_-]{4,16})$/i);
+  if (gMatch) return gMatch[1];
 
   const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
-  if (hash.startsWith("id=")) return hash.slice(3);
+  if (hash.startsWith("id=")) return hash.slice(3).trim();
   return null;
 }
 
@@ -241,6 +248,7 @@ function resolveKidGuideFrontendBase() {
   return window.location.origin;
 }
 
+/** @deprecated 긴 ?d= URL — 카톡 미리보기/길이 제한으로 사용 중단. 폴백만 유지. */
 function buildKidGuideShareUrl(payload) {
   const encoded = encodeKidGuidePayload(payload);
   const base = resolveKidGuideFrontendBase();
@@ -254,6 +262,46 @@ function buildKidGuideShareUrl(payload) {
   return `${base}/guide?${query}`;
 }
 
+/** 서버에 저장한 짧은 ID → https://…/guide/a7k2m9 */
 function buildKidGuideShortUrl(id) {
-  return `${resolveKidGuideFrontendBase()}/guide?id=${encodeURIComponent(id)}`;
+  const clean = String(id || "").trim();
+  return `${resolveKidGuideFrontendBase()}/guide/${encodeURIComponent(clean)}`;
+}
+
+/**
+ * POST /api/share 로 경로 데이터를 저장하고 짧은 URL을 반환.
+ * @returns {Promise<string>}
+ */
+async function createKidGuideShareOnServer(payload, apiBase, headers = {}) {
+  const base = (apiBase || "").replace(/\/$/, "");
+  const endpoints = [`${base}/api/share`, `${base}/api/share/kid-guide`];
+  let lastError = null;
+
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(headers || {}),
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const detail = await res.text();
+        lastError = new Error(`공유 링크 생성 실패 (${res.status}): ${detail}`);
+        continue;
+      }
+      const data = await res.json();
+      if (!data?.id) {
+        lastError = new Error("공유 ID를 받지 못했습니다.");
+        continue;
+      }
+      return buildKidGuideShortUrl(data.id);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error("공유 링크를 만들지 못했습니다.");
 }

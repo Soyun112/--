@@ -7,7 +7,7 @@
 (function () {
   var q = new URLSearchParams(location.search);
   var path = location.pathname.replace(/\/+$/, "") || "/";
-  var onGuidePage = /kid-guide\.html$/i.test(path) || path === "/g" || /\/g\.html$/i.test(path) || path === "/guide";
+  var onGuidePage = /kid-guide\.html$/i.test(path) || path === "/g" || /\/g\.html$/i.test(path) || path === "/guide" || /^\/guide\//i.test(path) || /^\/g\//i.test(path);
   if (!onGuidePage && (q.has("d") || q.has("id"))) {
     location.replace("guide" + location.search + location.hash);
   }
@@ -218,28 +218,7 @@
 
   <div id="kid-card-overlay" class="kid-card-overlay" hidden>
     <div id="kid-card" class="kid-card">
-      <div id="kid-progress-stamps" class="kid-progress-stamps" aria-label="길 따라가기 스탬프">
-        <div class="kid-progress-stamp" data-stamp="third" title="1/3 지점">
-          <span class="kid-progress-stamp-emoji">⭐</span>
-          <span class="kid-progress-stamp-label">1/3</span>
-        </div>
-        <div class="kid-progress-stamp" data-stamp="twoThirds" title="2/3 지점">
-          <span class="kid-progress-stamp-emoji">🌟</span>
-          <span class="kid-progress-stamp-label">2/3</span>
-        </div>
-        <div class="kid-progress-stamp arrive" data-stamp="arrive" title="도착">
-          <span class="kid-progress-stamp-emoji">👑</span>
-          <span class="kid-progress-stamp-label">도착</span>
-        </div>
-      </div>
       <div id="kid-card-progress" class="kid-card-progress">1 / 1</div>
-      <div id="kid-card-cheer" class="kid-card-cheer" hidden role="status"></div>
-      <div id="kid-stamp-burst" class="kid-stamp-burst" hidden aria-hidden="true">
-        <div class="kid-stamp-burst-glow"></div>
-        <div id="kid-stamp-burst-emoji" class="kid-stamp-burst-emoji">⭐</div>
-        <div id="kid-stamp-burst-text" class="kid-stamp-burst-text">스탬프 겟!</div>
-        <div id="kid-stamp-burst-particles" class="kid-stamp-burst-particles" aria-hidden="true"></div>
-      </div>
       <div class="kid-card-stage">
         <div id="kid-card-icon" class="kid-card-icon" aria-hidden="true">↑</div>
         <div id="kid-card-text" class="kid-card-text">직진</div>

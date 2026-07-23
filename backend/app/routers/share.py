@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-from typing import Annotated
-
-import jwt
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from ..config import settings
-from ..services.jwt_tokens import decode_token
 from ..services.kid_guide_share import create_share, get_share
 
 router = APIRouter(prefix="/api/share", tags=["share"])
@@ -37,31 +32,37 @@ class KidGuideShareResponse(BaseModel):
     expires_at: str
 
 
-def _require_user(authorization: Annotated[str | None, Header()] = None) -> None:
-    if not settings.auth_enabled:
-        return
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
-    token = authorization[7:].strip()
-    try:
-        payload = decode_token(token)
-        if payload.get("typ") != "access":
-            raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.")
-    except jwt.ExpiredSignatureError as exc:
-        raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.") from exc
-    except jwt.PyJWTError as exc:
-        raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.") from exc
-
-
-@router.post("/kid-guide", response_model=KidGuideShareResponse)
-def post_kid_guide_share(body: KidGuideShareCreate) -> KidGuideShareResponse:
-    # 공유 링크는 로그인 없이 생성 (짧은 id URL — 카톡 URL 잘림 방지)
+def _create_response(body: KidGuideShareCreate) -> KidGuideShareResponse:
     result = create_share(body.model_dump())
     return KidGuideShareResponse(**result)
 
 
+@router.post("", response_model=KidGuideShareResponse)
+@router.post("/", response_model=KidGuideShareResponse, include_in_schema=False)
+def post_share(body: KidGuideShareCreate) -> KidGuideShareResponse:
+    """짧은 ID 공유 링크 생성. POST /api/share"""
+    return _create_response(body)
+
+
+@router.post("/kid-guide", response_model=KidGuideShareResponse)
+def post_kid_guide_share(body: KidGuideShareCreate) -> KidGuideShareResponse:
+    """하위 호환: POST /api/share/kid-guide"""
+    return _create_response(body)
+
+
 @router.get("/kid-guide/{share_id}")
 def get_kid_guide_share(share_id: str) -> dict:
+    payload = get_share(share_id.strip())
+    if not payload:
+        raise HTTPException(status_code=404, detail="공유 링크를 찾을 수 없거나 만료되었습니다.")
+    return payload
+
+
+@router.get("/{share_id}")
+def get_share_by_id(share_id: str) -> dict:
+    """짧은 경로: GET /api/share/{id}"""
+    if share_id in {"kid-guide", ""}:
+        raise HTTPException(status_code=404, detail="공유 링크를 찾을 수 없거나 만료되었습니다.")
     payload = get_share(share_id.strip())
     if not payload:
         raise HTTPException(status_code=404, detail="공유 링크를 찾을 수 없거나 만료되었습니다.")

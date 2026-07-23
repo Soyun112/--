@@ -21,6 +21,7 @@ const config = {
     },
     { source: "/g/:path*", destination: "/kid-guide.html" },
     { source: "/g", destination: "/kid-guide.html" },
+    { source: "/guide/:path*", destination: "/kid-guide.html" },
     { source: "/guide", destination: "/kid-guide.html" },
   ],
 };

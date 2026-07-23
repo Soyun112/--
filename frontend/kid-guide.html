@@ -10,7 +10,10 @@
   <meta property="og:type" content="website">
   <meta property="og:title" id="og-title" content="👶 오늘의 안전 길">
   <meta property="og:description" id="og-description" content="링크를 누르면 길 안내 카드가 바로 열려요!">
-  <meta property="og:url" id="og-url" content="">
+  <meta property="og:image" id="og-image" content="https://kids-abcd.vercel.app/og-guide.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:url" id="og-url" content="https://kids-abcd.vercel.app/guide">
   <title id="page-title">👶 오늘의 안전 길</title>
   <script>
     (function normalizeGuideUrl() {
@@ -18,9 +21,19 @@
         var params = new URLSearchParams(location.search);
         if (params.has("d") || params.has("id") || params.has("p0")) return;
         var path = location.pathname.replace(/\/+$/, "") || "/";
-        var match = path.match(/^\/g\/(.+)$/i);
-        if (!match) return;
-        history.replaceState(null, "", "/guide?d=" + encodeURIComponent(match[1]));
+        // 이미 /guide/{id} 형태면 유지
+        if (/^\/guide\/[a-z0-9_-]{4,16}$/i.test(path)) return;
+        // /g/{짧은id} → /guide/{id}
+        var shortMatch = path.match(/^\/g\/([a-z0-9_-]{4,16})$/i);
+        if (shortMatch) {
+          history.replaceState(null, "", "/guide/" + shortMatch[1]);
+          return;
+        }
+        // 예전 긴 인코딩 /g/{huge} → ?d= 폴백
+        var legacy = path.match(/^\/g\/(.+)$/i);
+        if (legacy && legacy[1].length > 16) {
+          history.replaceState(null, "", "/guide?d=" + encodeURIComponent(legacy[1]));
+        }
       } catch (e) { /* ignore */ }
     })();
   </script>
@@ -60,13 +73,6 @@
 
   <div id="kid-guide-app" class="kid-guide-shell" hidden>
     <div id="kid-guide-story-bar" class="kid-guide-story-bar" aria-hidden="true"></div>
-
-    <div id="kid-guide-progress-stamps" class="kid-progress-stamps" aria-label="길 따라가기 스탬프">
-      <div class="kid-progress-stamp" data-stamp="third"><span class="kid-progress-stamp-emoji">⭐</span><span class="kid-progress-stamp-label">1/3</span></div>
-      <div class="kid-progress-stamp" data-stamp="twoThirds"><span class="kid-progress-stamp-emoji">🌟</span><span class="kid-progress-stamp-label">2/3</span></div>
-      <div class="kid-progress-stamp arrive" data-stamp="arrive"><span class="kid-progress-stamp-emoji">👑</span><span class="kid-progress-stamp-label">도착</span></div>
-    </div>
-    <div id="kid-guide-cheer" class="kid-card-cheer" hidden role="status"></div>
 
     <main id="kid-guide-card" class="kid-guide-card-full">
       <div id="kid-guide-tap-prev" class="kid-guide-tap-left" aria-label="이전"></div>

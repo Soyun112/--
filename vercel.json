@@ -15,6 +15,10 @@
       "destination": "/kid-guide.html"
     },
     {
+      "source": "/guide/:path*",
+      "destination": "/kid-guide.html"
+    },
+    {
       "source": "/guide",
       "destination": "/kid-guide.html"
     }

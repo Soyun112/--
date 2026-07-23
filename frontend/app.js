@@ -78,8 +78,6 @@ const state = {
   activePublicLayer: null,
   kidCardSteps: [],
   kidCardIndex: 0,
-  // 구간 진행 스탬프 (안전 스탬프와 별개, 세션 단위)
-  progressStamps: { third: false, twoThirds: false, arrive: false },
   clockTimer: null,
   demoForceNight: false,
   /** "auto" | "day" | "night" — day/night는 08:00/21:00 고정으로 서버 재계산 */
@@ -90,12 +88,6 @@ const state = {
   docMode: null, // "analyzed" | "skipped" | null
   docQueueSeq: 0,
 };
-
-const PROGRESS_STAMP_DEFS = [
-  { id: "third", at: 1 / 3, cheer: "잘했어! 1/3 왔어요 ⭐" },
-  { id: "twoThirds", at: 2 / 3, cheer: "멋져요! 거의 다 왔어요 🌟" },
-  { id: "arrive", at: 1, cheer: "도착! 오늘도 안전하게 와줘서 고마워요 👑" },
-];
 
 async function fetchJson(path, options = {}) {
   const url = `${API_BASE}${path}`;
@@ -921,139 +913,12 @@ function kidSafetyTip(step, { isArrive = false, weather = null } = {}) {
   return "휴대폰 보지 말고 앞을 봐요";
 }
 
-function totalStepDistanceM(steps) {
-  return (steps || []).reduce((sum, s) => sum + (Number(s.distance_m) || 0), 0);
-}
+function resetProgressStamps() {}
 
-/** 현재 카드까지 진행률 (0~1). 마지막 카드는 항상 1 */
-function kidProgressRatio(steps, index) {
-  const list = steps || [];
-  if (!list.length) return 0;
-  if (index >= list.length - 1) return 1;
-  const total = totalStepDistanceM(list);
-  if (total <= 0) return (index + 1) / list.length;
-  let walked = 0;
-  for (let i = 0; i <= index; i += 1) walked += Number(list[i].distance_m) || 0;
-  return Math.min(1, walked / total);
-}
-
-function resetProgressStamps() {
-  state.progressStamps = { third: false, twoThirds: false, arrive: false };
-  renderProgressStampSlots();
-  hideKidCardCheer();
-  hideStampBurst();
-}
-
-function renderProgressStampSlots(justUnlockedIds = []) {
-  const root = document.getElementById("kid-progress-stamps");
-  if (!root) return;
-  PROGRESS_STAMP_DEFS.forEach((def) => {
-    const el = root.querySelector(`[data-stamp="${def.id}"]`);
-    if (!el) return;
-    const unlocked = Boolean(state.progressStamps[def.id]);
-    el.classList.toggle("unlocked", unlocked);
-    if (justUnlockedIds.includes(def.id)) {
-      el.classList.remove("just-unlocked");
-      void el.offsetWidth;
-      el.classList.add("just-unlocked");
-      clearTimeout(el._stampAnimTimer);
-      el._stampAnimTimer = setTimeout(() => el.classList.remove("just-unlocked"), 1400);
-    }
-  });
-}
-
-function hideKidCardCheer() {
-  const el = document.getElementById("kid-card-cheer");
-  if (!el) return;
-  el.hidden = true;
-  el.textContent = "";
-  el.classList.remove("pop");
-}
-
-function hideStampBurst() {
-  const burst = document.getElementById("kid-stamp-burst");
-  if (!burst) return;
-  burst.hidden = true;
-  burst.classList.remove("show");
-  document.getElementById("kid-card")?.classList.remove("stamp-celebrate");
-  const particles = document.getElementById("kid-stamp-burst-particles");
-  if (particles) particles.innerHTML = "";
-}
-
-function showStampBurst(stampId, message) {
-  const burst = document.getElementById("kid-stamp-burst");
-  const card = document.getElementById("kid-card");
-  if (!burst || !card) return;
-
-  const def = PROGRESS_STAMP_DEFS.find((d) => d.id === stampId);
-  const stampEl = document.querySelector(`#kid-progress-stamps [data-stamp="${stampId}"]`);
-  const emoji = stampEl?.querySelector(".kid-progress-stamp-emoji")?.textContent?.trim() || "⭐";
-  const shortLabel =
-    stampId === "arrive" ? "도착 스탬프!" : stampId === "twoThirds" ? "2/3 스탬프!" : "1/3 스탬프!";
-
-  document.getElementById("kid-stamp-burst-emoji").textContent = emoji;
-  document.getElementById("kid-stamp-burst-text").textContent = message || shortLabel;
-
-  const particles = document.getElementById("kid-stamp-burst-particles");
-  if (particles) {
-    const bits = ["✨", "⭐", "🌟", "💛", "🎉", "✦", "✸", "💫"];
-    particles.innerHTML = Array.from({ length: 14 }, (_, i) => {
-      const angle = (i / 14) * 360;
-      const dist = 72 + (i % 3) * 18;
-      return `<span class="kid-stamp-particle" style="--a:${angle}deg;--d:${dist}px;--delay:${i * 0.03}s">${bits[i % bits.length]}</span>`;
-    }).join("");
-  }
-
-  burst.hidden = false;
-  burst.classList.remove("show");
-  card.classList.remove("stamp-celebrate");
-  void burst.offsetWidth;
-  burst.classList.add("show");
-  card.classList.add("stamp-celebrate");
-
-  clearTimeout(showStampBurst._timer);
-  showStampBurst._timer = setTimeout(() => hideStampBurst(), 1600);
-}
-
-function showKidCardCheer(message) {
-  const el = document.getElementById("kid-card-cheer");
-  if (!el || !message) return;
-  el.textContent = message;
-  el.hidden = false;
-  el.classList.remove("pop");
-  void el.offsetWidth;
-  el.classList.add("pop");
-  clearTimeout(showKidCardCheer._timer);
-  showKidCardCheer._timer = setTimeout(() => {
-    el.classList.remove("pop");
-    el.hidden = true;
-  }, 2200);
-}
-
-/** 진행률에 맞춰 구간 스탬프 unlock (뒤로 가도 잠그지 않음) */
-function updateProgressStamps(ratio, { announce = true } = {}) {
-  const justUnlocked = [];
-  let cheer = "";
-  let lastId = "";
-  PROGRESS_STAMP_DEFS.forEach((def) => {
-    if (ratio + 1e-9 >= def.at && !state.progressStamps[def.id]) {
-      state.progressStamps[def.id] = true;
-      justUnlocked.push(def.id);
-      cheer = def.cheer;
-      lastId = def.id;
-    }
-  });
-  renderProgressStampSlots(justUnlocked);
-  if (announce && lastId) {
-    showStampBurst(lastId, cheer);
-    showKidCardCheer(cheer);
-  }
-  return cheer;
-}
-
-function progressStampSummaryText() {
-  const n = PROGRESS_STAMP_DEFS.filter((d) => state.progressStamps[d.id]).length;
-  return `🚶 길 스탬프 ${n}/3`;
+function updateKidProgressSummaryOnBoard() {
+  const board = document.getElementById("kid-stamp-board");
+  if (!board) return;
+  board.querySelector(".kid-progress-summary")?.remove();
 }
 
 // API navigation_steps가 비어 있을 때(구버전 백엔드 등) 경로 좌표로 턴바이턴을 합성한다.
@@ -1638,25 +1503,7 @@ function openKidCardMode() {
 
 function closeKidCardMode() {
   document.getElementById("kid-card-overlay").hidden = true;
-  hideKidCardCheer();
   updateKidProgressSummaryOnBoard();
-}
-
-function updateKidProgressSummaryOnBoard() {
-  const board = document.getElementById("kid-stamp-board");
-  if (!board) return;
-  let line = board.querySelector(".kid-progress-summary");
-  const unlocked = PROGRESS_STAMP_DEFS.filter((d) => state.progressStamps[d.id]).length;
-  if (unlocked === 0 && !line) return;
-  if (!line) {
-    line = document.createElement("div");
-    line.className = "kid-progress-summary";
-    board.prepend(line);
-  }
-  line.textContent =
-    unlocked >= 3
-      ? "🚶 오늘 길 스탬프 3/3 · 안전하게 도착했어요!"
-      : `${progressStampSummaryText()} · 「아이가 보기 쉽게」에서 받아요`;
 }
 
 let cachedKidGuideShareUrl = null;
@@ -1702,7 +1549,9 @@ function buildKidGuideShareText() {
 }
 
 async function ensureKidGuideShareUrl() {
-  cachedKidGuideShareUrl = buildKidGuideShareUrl(buildKidGuideSharePayload());
+  if (cachedKidGuideShareUrl) return cachedKidGuideShareUrl;
+  const payload = buildKidGuideSharePayload();
+  cachedKidGuideShareUrl = await createKidGuideShareOnServer(payload, API_BASE, authHeaders());
   return cachedKidGuideShareUrl;
 }
 
@@ -1847,8 +1696,6 @@ function renderKidCard(direction = 0) {
   const shareRow = document.getElementById("kid-card-share-row");
   if (shareRow) shareRow.hidden = !isArrive;
 
-  const ratio = kidProgressRatio(steps, index);
-  updateProgressStamps(ratio, { announce: direction !== 0 || index === 0 });
   animateKidCard(direction);
 }
 
