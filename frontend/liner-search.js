@@ -109,16 +109,22 @@
 
     const meta = document.createElement("p");
     meta.className = "liner-result-meta";
-    const parts = [item.hostname, item.date].filter(Boolean);
+    const parts = [];
+    if (item.date) parts.push(item.date);
+    if (item.hostname) parts.push(item.hostname);
     meta.textContent = parts.join(" · ");
-
-    const desc = document.createElement("p");
-    desc.className = "liner-result-desc";
-    desc.textContent = item.description || "";
 
     li.appendChild(row);
     if (parts.length) li.appendChild(meta);
-    if (item.description) li.appendChild(desc);
+
+    // 스니펫에 도로명·주소가 있으면만 한 줄 표시 (해설용 요약 숨김에 가깝게)
+    const descText = (item.description || "").trim();
+    if (descText && /로|길|대로|거리|동|가\b|번지|공사|통행/.test(descText)) {
+      const desc = document.createElement("p");
+      desc.className = "liner-result-desc";
+      desc.textContent = descText;
+      li.appendChild(desc);
+    }
     return li;
   }
 
