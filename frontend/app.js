@@ -1144,18 +1144,22 @@ function renderTimeContext(routeData) {
   if (icon) icon.textContent = tc.period_emoji || (tc.is_night ? "🌙" : "☀️");
   if (rec) rec.textContent = tc.recommendation_message || "";
   if (fixedLabel) {
-    // 자동일 때만 낮/밤 기준 안내 (수동 낮·밤은 토글이 기준이라 숨김)
+    // 낮·밤 수동 선택일 때만 "○ 기준으로 보는 중" 표시 (자동은 실제 시각이라 생략)
     const basisLabel =
-      state.timeMode === "auto"
-        ? tc.fixed_time_label ||
-          (tc.is_night ? "밤 기준으로 보는 중" : "낮 기준으로 보는 중")
+      state.timeMode === "day" || state.timeMode === "night"
+        ? (tc.fixed_time_label ||
+            (tc.is_night || state.timeMode === "night"
+              ? "밤 기준으로 보는 중"
+              : "낮 기준으로 보는 중")).trim()
         : "";
     if (basisLabel) {
       fixedLabel.hidden = false;
       fixedLabel.textContent = basisLabel;
+      fixedLabel.style.display = "";
     } else {
       fixedLabel.hidden = true;
       fixedLabel.textContent = "";
+      fixedLabel.style.display = "none";
     }
   }
   updateEtaForSelectedRoute(routeData);

@@ -141,6 +141,15 @@ body {
   white-space: nowrap;
 }
 
+/* 빈 알약(낮·밤 수동 선택 시)이 보이지 않도록 */
+.time-fixed-label[hidden],
+.time-fixed-label:empty {
+  display: none !important;
+  padding: 0 !important;
+  border: none !important;
+  margin: 0 !important;
+}
+
 .time-banner.night .time-fixed-label {
   background: rgba(250, 204, 21, 0.18);
   color: #fde68a;
