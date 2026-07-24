@@ -1800,13 +1800,23 @@ function setActivePublicLayer(layer) {
   state.activePublicLayer = layer;
   if (state.lastResult && state.publicData) {
     renderMap(state.lastResult, state.publicData, false);
-  } else if (state.publicData && state.docMode === "analyzed") {
-    renderDocRiskOnlyMap(state.publicData);
+  } else if (state.publicData) {
+    renderPublicPreviewMap(state.publicData, { fitBounds: true });
+  } else if (layer) {
+    ensurePublicDataForPreview();
   }
   // 범례 활성 표시만 갱신 (전체 리렌더 없이)
   document.querySelectorAll("#legend .legend-item").forEach((item) => {
     item.classList.toggle("is-active", item.dataset.publicLayer === state.activePublicLayer);
   });
+}
+
+async function ensurePublicDataForPreview() {
+  try {
+    await refreshPublicDataAndMap({ focusPreview: true });
+  } catch (err) {
+    console.warn("공공데이터 미리보기 로드 실패", err);
+  }
 }
 
 function isLayerEmphasized(layer) {
@@ -2043,35 +2053,199 @@ function drawDocRiskOverlays(points, { track, bounds, onBounds, routeData = null
 }
 
 function renderDocRiskOnlyMap(publicData) {
+  renderPublicPreviewMap(publicData, { fitBounds: true });
+}
+
+/** 경로 찾기 전: 데모 중심 근처 공공 레이어 미리보기 (범례 호버로 강조). */
+const PREVIEW_RADIUS_M = 1600;
+const PREVIEW_FACILITY_RADIUS_M = 1000;
+
+function previewMapCenter() {
+  const c = state.config?.demo_center;
+  return {
+    lat: Number(c?.lat) || 37.5013,
+    lng: Number(c?.lng) || 127.0396,
+  };
+}
+
+function pointsNearCenter(points, center, radiusM) {
+  return (points || []).filter(
+    (p) =>
+      Number.isFinite(p?.lat) &&
+      Number.isFinite(p?.lng) &&
+      distanceMeters({ lat: p.lat, lng: p.lng }, center) <= radiusM
+  );
+}
+
+function safetyFacilitiesNearCenter(publicData, center, radiusM = PREVIEW_FACILITY_RADIUS_M) {
+  const all = pointsNearCenter(publicData?.safety_facilities || [], center, radiusM);
+  return {
+    cctv: all.filter((p) => p.facility_type === "cctv"),
+    streetlight: all.filter((p) => p.facility_type === "streetlight"),
+    safetyBell: all.filter((p) => p.facility_type === "safety_bell"),
+    emergency112: all.filter((p) => p.facility_type === "emergency112"),
+    all,
+  };
+}
+
+/** 경로 없을 때 그릴 레이어: 호버 중이면 해당 항목만, 아니면 문서 위험(분석 후). */
+function shouldDrawPreviewLayer(layerName) {
+  if (state.activePublicLayer) return state.activePublicLayer === layerName;
+  return layerName === "doc-risk" && state.docMode === "analyzed";
+}
+
+function renderPublicPreviewMap(publicData, { fitBounds = true } = {}) {
   if (!state.tmapReady || !state.tmap) {
-    setMapStatus("지도를 준비한 뒤 문서 위험이 표시됩니다.", false);
+    setMapStatus("지도를 준비한 뒤 공공데이터가 표시됩니다.", false);
     return;
   }
+  if (!publicData) return;
+
   setMapStatus("", false);
   document.getElementById("tmap").style.display = "block";
   document.getElementById("svg-map").style.display = "none";
   clearTmapOverlays();
 
-  const points = documentRiskPointsForMap(publicData, null);
-  if (!points.length) {
-    setMapStatus("표시할 문서 위험 지점이 아직 없어요.", false);
-    return;
-  }
-
+  const center = previewMapCenter();
   const bounds = new Tmapv2.LatLngBounds();
+  let hasPoint = false;
   const track = (overlay) => {
     state.tmapOverlays.push(overlay);
     return overlay;
   };
 
-  const segmentCount = drawDocRiskOverlays(points, { track, bounds });
-  state.tmap.fitBounds(bounds);
-  const pinOnly = points.length - segmentCount;
-  const parts = [];
-  if (segmentCount) parts.push(`구간 선 ${segmentCount}개`);
-  if (pinOnly > 0) parts.push(`핀 ${pinOnly}곳`);
-  setMapStatus(`문서 위험 ${parts.join(" · ") || `${points.length}곳`} 표시`, false);
-  renderLegend();
+  const childZones = pointsNearCenter(publicData.child_zones || [], center, PREVIEW_RADIUS_M);
+  const accidentHotspots = pointsNearCenter(
+    publicData.accident_hotspots || [],
+    center,
+    PREVIEW_RADIUS_M
+  );
+  const guardianHouses = pointsNearCenter(publicData.guardian_houses || [], center, PREVIEW_RADIUS_M);
+  const sf = safetyFacilitiesNearCenter(publicData, center);
+  const documentPoints = documentRiskPointsForMap(publicData, null);
+
+  function marker(pt, color, title, layer, nameForLabel = "") {
+    const style = layerDrawStyle(layer, { nearRoute: false });
+    const latlng = new Tmapv2.LatLng(pt.lat, pt.lng);
+    bounds.extend(latlng);
+    hasPoint = true;
+    const options = {
+      position: latlng,
+      icon: tmapDotIcon(color, { size: style.iconSize, opacity: style.opacity }),
+      iconSize: new Tmapv2.Size(style.iconSize, style.iconSize),
+      map: state.tmap,
+    };
+    if (style.showLabel && nameForLabel) options.label = nameForLabel;
+    const m = track(new Tmapv2.Marker(options));
+    if (title) {
+      m.addListener("click", () => {
+        if (state.infoWindow) state.infoWindow.setMap(null);
+        state.infoWindow = new Tmapv2.InfoWindow({
+          position: latlng,
+          content: `<div style="padding:6px 8px;font-size:12px;max-width:220px">${title}</div>`,
+          type: 2,
+          border: "1px solid #888",
+          map: state.tmap,
+        });
+      });
+    }
+    return m;
+  }
+
+  let drawn = 0;
+  if (shouldDrawPreviewLayer("cctv")) {
+    childZones.forEach((z) => {
+      marker(
+        z,
+        CATEGORY_COLORS.cctv,
+        `${z.name || "어린이보호구역"} (CCTV ${z.cctv_count}대)`,
+        "cctv",
+        z.name || "어린이보호구역"
+      );
+      drawn += 1;
+    });
+  }
+  if (shouldDrawPreviewLayer("safety-cctv")) {
+    sf.cctv.forEach((f) => {
+      marker(
+        f,
+        CATEGORY_COLORS.safetyCctv,
+        `📹 ${f.label} ${f.install_count > 1 ? `x${f.install_count}` : ""} · ${f.dong || f.district || ""}`,
+        "safety-cctv",
+        f.label || "CCTV"
+      );
+      drawn += 1;
+    });
+  }
+  if (shouldDrawPreviewLayer("safety-streetlight")) {
+    sf.streetlight.forEach((f) => {
+      marker(
+        f,
+        CATEGORY_COLORS.safetyStreetlight,
+        `💡 ${f.label} · ${f.dong || f.district || ""}`,
+        "safety-streetlight",
+        f.label || "가로등"
+      );
+      drawn += 1;
+    });
+  }
+  if (shouldDrawPreviewLayer("hotspot")) {
+    accidentHotspots.forEach((h) => {
+      marker(
+        h,
+        CATEGORY_COLORS.hotspot,
+        `${h.name || "사고다발지역"} (${h.occurrence_count}건)`,
+        "hotspot",
+        h.name || "사고다발"
+      );
+      drawn += 1;
+    });
+  }
+  if (shouldDrawPreviewLayer("guardian")) {
+    guardianHouses.forEach((g) => {
+      marker(g, CATEGORY_COLORS.guardian, `🏪 ${g.name || "아동안전지킴이집"}`, "guardian", g.name || "지킴이집");
+      drawn += 1;
+    });
+  }
+  if (shouldDrawPreviewLayer("doc-risk")) {
+    if (!documentPoints.length && state.activePublicLayer === "doc-risk") {
+      setMapStatus("표시할 문서 위험 지점이 아직 없어요.", false);
+    } else {
+      const segmentCount = drawDocRiskOverlays(documentPoints, {
+        track,
+        bounds,
+        onBounds: () => {
+          hasPoint = true;
+        },
+      });
+      drawn += documentPoints.length;
+      if (!state.activePublicLayer && documentPoints.length) {
+        const pinOnly = documentPoints.length - segmentCount;
+        const parts = [];
+        if (segmentCount) parts.push(`구간 선 ${segmentCount}개`);
+        if (pinOnly > 0) parts.push(`핀 ${pinOnly}곳`);
+        setMapStatus(`문서 위험 ${parts.join(" · ") || `${documentPoints.length}곳`} 표시`, false);
+      }
+    }
+  }
+
+  if (state.activePublicLayer && drawn > 0) {
+    const label =
+      PUBLIC_DATA_LEGEND.find(([id]) => id === state.activePublicLayer)?.[2] || "공공데이터";
+    setMapStatus(`${label} ${drawn}곳 미리보기 (경로 찾기 전 · 도곡 일대)`, false);
+  } else if (state.activePublicLayer && drawn === 0) {
+    const label =
+      PUBLIC_DATA_LEGEND.find(([id]) => id === state.activePublicLayer)?.[2] || "공공데이터";
+    setMapStatus(`이 근처에는 표시할 ${label}가 없어요.`, false);
+  }
+
+  if (fitBounds && hasPoint) {
+    try {
+      state.tmap.fitBounds(bounds, { top: 48, right: 48, bottom: 48, left: 48 });
+    } catch {
+      state.tmap.fitBounds(bounds);
+    }
+  }
 }
 
 // ---------- SVG 스키매틱 지도 (Leaflet/OSM 로드 실패 시 오프라인 폴백) ----------
@@ -3068,14 +3242,14 @@ async function confirmPendingDocPoint(pt, inputEl, endInputEl, btn, itemEl) {
   }
 }
 
-async function refreshPublicDataAndMap({ focusDocRisk = false } = {}) {
+async function refreshPublicDataAndMap({ focusDocRisk = false, focusPreview = false } = {}) {
   const publicData = await fetchJson("/api/public-data");
   state.publicData = publicData;
   // focusDocRisk: 문서 반영 후 지도만 갱신 (기본은 흐림, 범례로 강조)
   if (state.lastResult) {
     renderMap(state.lastResult, publicData, true);
-  } else if (focusDocRisk || state.docMode === "analyzed") {
-    renderDocRiskOnlyMap(publicData);
+  } else if (focusDocRisk || focusPreview || state.docMode === "analyzed" || state.activePublicLayer) {
+    renderPublicPreviewMap(publicData, { fitBounds: true });
   }
   return publicData;
 }
@@ -3198,11 +3372,16 @@ function skipDocumentReflection() {
   state.docReady = true;
   state.docMode = "skipped";
   hideDocReviewPanel();
+  hideDocPlacedPanel();
   renderDocQueue();
   syncRouteSubmitButton();
   setDocUploadStatus(
     "문서를 반영하지 않아요. 이제 「안전 경로 찾기」를 눌러 주세요.",
     "ok"
+  );
+  // 범례 호버 미리보기용 공공데이터 미리 로드
+  refreshPublicDataAndMap({ focusPreview: false }).catch((err) =>
+    console.warn("공공데이터 미리 로드 실패", err)
   );
 }
 
