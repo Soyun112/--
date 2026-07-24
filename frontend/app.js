@@ -1863,7 +1863,8 @@ function layerDrawStyle(layer, { nearRoute = false } = {}) {
     // 문서 위험: 점선 3px 기준 / 시설: 점만
     weight: isDoc ? (strong ? 4 : 3) : 0,
     iconSize: strong ? 18 : 11,
-    showLabel: emphasized,
+    // Tmap 기본 라벨(검은 글씨)은 쓰지 않음 — 클릭 InfoWindow로만 안내
+    showLabel: false,
   };
 }
 
