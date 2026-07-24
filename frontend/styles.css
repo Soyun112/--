@@ -27,7 +27,7 @@ body {
   justify-content: space-between;
   gap: 16px;
   padding: 20px 32px;
-  background: #2563EB;
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
   color: white;
   flex-wrap: wrap;
 }
