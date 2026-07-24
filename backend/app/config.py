@@ -25,6 +25,7 @@ class Settings:
     tmap_app_key: str = os.getenv("TMAP_APP_KEY", "").strip()
     data_go_kr_service_key: str = os.getenv("DATA_GO_KR_SERVICE_KEY", "").strip()
     upstage_api_key: str = os.getenv("UPSTAGE_API_KEY", "").strip()
+    liner_api_key: str = os.getenv("LINER_API_KEY", "").strip()
 
     # 건물명/역이름 -> 좌표 지오코딩용 키 (없으면 Tmap POI + 내장 사전으로 폴백)
     kakao_rest_api_key: str = os.getenv("KAKAO_REST_API_KEY", "").strip()

@@ -2242,3 +2242,198 @@ body.theme-dark .kid-card.arrived { background: linear-gradient(160deg, #3a3010,
 .theme-dark .login-screen { background: linear-gradient(160deg, #1a2430 0%, #121820 100%); }
 .theme-dark .login-card { background: #1e2834; }
 .theme-dark .google-login-btn { background: #263242; color: #e8eef5; border-color: #3a4a5c; }
+
+/* —— Liner 주변 안전문서 검색 (추가 전용) —— */
+.doc-upload-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+.doc-upload-title-row .doc-upload-title {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+.liner-search-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.liner-search-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  color: var(--primary-dark);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  line-height: 0;
+}
+.liner-search-btn:hover {
+  background: #e8f3ff;
+  border-color: #9bb8d6;
+}
+.liner-search-btn[aria-expanded="true"] {
+  background: #e8f3ff;
+  border-color: var(--primary);
+}
+.liner-search-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  width: min(320px, calc(100vw - 48px));
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel-bg);
+  box-shadow: 0 8px 24px rgba(28, 39, 51, 0.12);
+}
+.liner-search-form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.liner-region-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel-bg);
+}
+.liner-search-submit {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid #9bb8d6;
+  background: var(--primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.liner-search-submit:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+.liner-search-status {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  min-height: 1.2em;
+}
+.liner-search-status.is-error {
+  color: var(--accent-red);
+}
+.liner-search-results {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.liner-result-card {
+  padding: 8px 0 0;
+  border-top: 1px solid var(--border);
+}
+.liner-result-card:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+.liner-result-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.liner-result-favicon {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  border-radius: 2px;
+}
+.liner-result-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary-dark);
+  text-decoration: none;
+  line-height: 1.35;
+}
+.liner-result-title:hover {
+  text-decoration: underline;
+}
+.liner-result-meta {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.liner-result-desc {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.liner-search-expand {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #eef2f7;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.liner-search-expand:hover {
+  background: #e2e8f0;
+}
+.liner-search-disclaimer {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+.theme-dark .liner-search-btn {
+  background: #1e2834;
+  color: #9cc4ef;
+  border-color: #3a4a5c;
+}
+.theme-dark .liner-search-btn:hover,
+.theme-dark .liner-search-btn[aria-expanded="true"] {
+  background: #263242;
+}
+.theme-dark .liner-search-panel {
+  background: #1e2834;
+  border-color: #3a4a5c;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.theme-dark .liner-region-input {
+  background: #263242;
+  border-color: #3a4a5c;
+  color: #e8eef5;
+}
+.theme-dark .liner-search-expand {
+  background: #263242;
+  border-color: #3a4a5c;
+  color: #e8eef5;
+}
+.theme-dark .liner-result-title {
+  color: #9cc4ef;
+}

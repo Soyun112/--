@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db
 from .config import settings
+from . import liner
 from .routers import auth, documents, route, share
 from .services import public_data
 
@@ -43,6 +44,7 @@ app.include_router(auth.router)
 app.include_router(route.router)
 app.include_router(documents.router)
 app.include_router(share.router)
+app.include_router(liner.router)
 
 
 @app.on_event("startup")
