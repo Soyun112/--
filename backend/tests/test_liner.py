@@ -59,7 +59,8 @@ def test_safety_docs_fallback_when_few_results():
     # first call has date_range, second does not
     assert post.call_args_list[0].kwargs["json"]["date_range"] == "past_year"
     assert "date_range" not in post.call_args_list[1].kwargs["json"]
-    assert "최근 3개월 공고" in post.call_args_list[0].kwargs["json"]["query"]
+    assert "현재 공사중" in post.call_args_list[0].kwargs["json"]["query"]
+    assert "진행 중인 공사만" in post.call_args_list[0].kwargs["json"]["query"]
     assert "공식 출처" in post.call_args_list[0].kwargs["json"]["query"]
 
 
