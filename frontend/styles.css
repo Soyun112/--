@@ -27,7 +27,7 @@ body {
   justify-content: space-between;
   gap: 16px;
   padding: 20px 32px;
-  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+  background: #2563EB;
   color: white;
   flex-wrap: wrap;
 }
@@ -1010,6 +1010,9 @@ body.theme-dark .doc-review-skip {
   padding: 2px 10px;
   border-radius: 999px;
   color: white;
+  white-space: nowrap;
+  flex-shrink: 0;
+  writing-mode: horizontal-tb;
 }
 .candidate-meta { font-size: 12px; color: var(--muted); display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 .access-warning {
@@ -1075,6 +1078,8 @@ body.theme-dark .doc-review-skip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .grade-badge {
   display: inline-flex;
@@ -1088,6 +1093,9 @@ body.theme-dark .doc-review-skip {
   letter-spacing: -0.02em;
   line-height: 1.4;
   border: 1px solid transparent;
+  white-space: nowrap;
+  flex-shrink: 0;
+  writing-mode: horizontal-tb;
 }
 .grade-badge.grade-safe {
   background: #e7f7ed;

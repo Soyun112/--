@@ -253,7 +253,7 @@ function gradeBadgeHtml(score) {
   return `<span class="grade-badge ${g.className}" title="70↑ 안전 · 55~70 보통 · 55↓ 주의">${g.label}</span>`;
 }
 
-/** 추천 vs 차순위 점수 격차에 따른 정직한 비교 문구. */
+/** 추천 vs 차순위 점수·거리 격차에 따른 정직한 비교 문구. */
 function scoreGapCompareMessage(candidate, routeData) {
   if (!routeData?.candidates?.length || !candidate) return null;
   const others = routeData.candidates.filter((c) => c.id !== candidate.id);
@@ -262,8 +262,41 @@ function scoreGapCompareMessage(candidate, routeData) {
   const gap = Number(candidate.safety_score) - Number(bestOther.safety_score);
   if (gap >= 8) return "이 경로가 더 안전합니다.";
   if (gap >= 4) return "안전도가 약간 높습니다.";
-  // 비슷하면 짧은 쪽 권유 (점수가 같거나 근소)
-  return "두 경로의 안전도가 비슷합니다. 짧은 쪽을 추천합니다.";
+
+  // 점수 비슷할 때: 실제 거리로 이유 구분 (짧은 쪽이 아닌데 "짧은 길"이라고 쓰지 않음)
+  const candDist = Number(candidate.distance_m) || 0;
+  const otherDist = Number(bestOther.distance_m) || 0;
+  const shorterByM = otherDist - candDist; // +면 추천이 더 짧음
+  if (candDist > 0 && otherDist > 0 && shorterByM >= 15) {
+    return "두 경로의 안전도가 비슷합니다. 짧은 쪽을 추천합니다.";
+  }
+  if (gap > 0.05) {
+    return "두 경로의 안전도가 비슷합니다. 조금 더 안전한 쪽을 추천합니다.";
+  }
+  if (candDist > 0 && otherDist > 0 && shorterByM <= -15) {
+    return "두 경로의 안전도가 비슷합니다. 조금 더 안전한 쪽을 추천합니다.";
+  }
+  return "두 경로의 안전도가 비슷합니다.";
+}
+
+/** 추천 태그 부제 (점수 격차·거리 사실에 맞춤). */
+function recommendTagForGap(gapMsg, displayCount) {
+  if (displayCount < 2) {
+    return '<span class="recommended-tag">추천 경로</span>';
+  }
+  if (gapMsg && gapMsg.includes("비슷") && gapMsg.includes("짧은")) {
+    return '<span class="recommended-tag">★ 추천 (안전도 비슷 · 짧은 길)</span>';
+  }
+  if (gapMsg && gapMsg.includes("비슷") && gapMsg.includes("안전한")) {
+    return '<span class="recommended-tag">★ 추천 (안전도 비슷 · 조금 더 안전)</span>';
+  }
+  if (gapMsg && gapMsg.includes("비슷")) {
+    return '<span class="recommended-tag">★ 추천 (안전도 비슷)</span>';
+  }
+  if (gapMsg && gapMsg.includes("약간")) {
+    return '<span class="recommended-tag">★ 조금 더 안전</span>';
+  }
+  return '<span class="recommended-tag">★ 가장 안전한 길</span>';
 }
 
 function escapeHtml(value) {
@@ -1365,15 +1398,7 @@ function renderCandidates(data) {
       const gapMsg = isRecommended ? scoreGapCompareMessage(c, data) : null;
       let recommendTag = "";
       if (isRecommended) {
-        if (displayCandidates.length < 2) {
-          recommendTag = '<span class="recommended-tag">추천 경로</span>';
-        } else if (gapMsg && gapMsg.includes("비슷")) {
-          recommendTag = '<span class="recommended-tag">★ 추천 (안전도 비슷 · 짧은 길)</span>';
-        } else if (gapMsg && gapMsg.includes("약간")) {
-          recommendTag = '<span class="recommended-tag">★ 조금 더 안전</span>';
-        } else {
-          recommendTag = '<span class="recommended-tag">★ 가장 안전한 길</span>';
-        }
+        recommendTag = recommendTagForGap(gapMsg, displayCandidates.length);
       }
       const docsHtml = (c.features.matched_documents || [])
         .map((d) => {
